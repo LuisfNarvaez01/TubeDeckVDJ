@@ -38,3 +38,4 @@ describe('BpmAndWaveformEngine', () => {
     expect(Math.min(...peaks)).toBeGreaterThanOrEqual(0);
   });
 });
+

@@ -95,3 +95,4 @@ describe('DatabaseService (sql.js WASM)', () => {
     db2.close();
   });
 });
+

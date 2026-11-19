@@ -94,3 +94,4 @@ describe('RamStreamProxy', () => {
     expect(resolver.invalidateAndResolve).toHaveBeenCalledTimes(1);
   });
 });
+

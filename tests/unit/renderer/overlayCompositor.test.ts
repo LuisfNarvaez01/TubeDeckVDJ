@@ -67,3 +67,4 @@ describe('OverlayCompositor', () => {
     expect(firstX - secondX).toBeCloseTo(120, 1);
   });
 });
+

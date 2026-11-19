@@ -117,3 +117,4 @@ describe('WebGLVideoCompositor & GLSL transitions', () => {
     compositor.dispose();
   });
 });
+

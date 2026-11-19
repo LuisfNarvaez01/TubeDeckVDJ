@@ -48,3 +48,4 @@ describe('DeckPanel (Full DJ Controls)', () => {
     expect(onAutoLoop).toHaveBeenCalledWith('A', 4);
   });
 });
+

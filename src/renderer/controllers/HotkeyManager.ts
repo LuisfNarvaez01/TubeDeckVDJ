@@ -96,3 +96,4 @@ export class HotkeyManager {
     return this.bindings[combo] ?? null;
   }
 }
+

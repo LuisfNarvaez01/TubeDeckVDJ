@@ -45,3 +45,4 @@ describe('SessionExporter', () => {
     expect(parsed.entries).toHaveLength(1);
   });
 });
+

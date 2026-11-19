@@ -232,3 +232,4 @@ export class OverlayCompositor {
     return drewAnything;
   }
 }
+

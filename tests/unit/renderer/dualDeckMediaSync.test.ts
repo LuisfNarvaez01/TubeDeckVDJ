@@ -98,3 +98,4 @@ describe('DualDeckMediaSync', () => {
     expect(videoEl.currentTime).toBe(45.5);
   });
 });
+

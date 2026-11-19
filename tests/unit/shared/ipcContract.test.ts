@@ -8,3 +8,4 @@ describe('IPC_CHANNELS', () => {
     expect(new Set(values).size).toBe(values.length);
   });
 });
+

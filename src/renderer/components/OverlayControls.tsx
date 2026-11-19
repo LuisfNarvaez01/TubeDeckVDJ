@@ -127,3 +127,4 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
     </div>
   );
 }
+

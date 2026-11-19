@@ -39,3 +39,4 @@ describe('CueLoopTempoController', () => {
     expect(ctrl.getHotCues()).toHaveLength(0);
   });
 });
+

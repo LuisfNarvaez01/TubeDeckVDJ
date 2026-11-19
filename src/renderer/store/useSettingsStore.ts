@@ -74,3 +74,4 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setTransition: (transition) => set({ transition }),
   setMasterFx: (masterFx) => set({ masterFx })
 }));
+

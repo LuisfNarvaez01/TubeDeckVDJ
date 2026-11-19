@@ -245,3 +245,4 @@ export class WebGLVideoCompositor {
     this.ctx2d = null;
   }
 }
+

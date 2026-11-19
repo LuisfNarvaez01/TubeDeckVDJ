@@ -109,3 +109,4 @@ export class BpmAndWaveformEngine {
     return Math.min(1.5, Math.max(0.5, Number(rate.toFixed(4))));
   }
 }
+

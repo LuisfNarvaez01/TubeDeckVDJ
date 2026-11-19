@@ -150,3 +150,4 @@ export class YtDlpBinaryManager {
     return targetPath;
   }
 }
+

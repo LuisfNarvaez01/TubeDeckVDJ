@@ -27,3 +27,4 @@ export const useLibraryStore = create<LibraryStore>((set) => ({
   searchResults: [],
   setSearchResults: (searchResults) => set({ searchResults })
 }));
+

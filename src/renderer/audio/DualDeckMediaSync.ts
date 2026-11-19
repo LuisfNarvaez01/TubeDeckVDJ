@@ -208,3 +208,4 @@ export class DualDeckMediaSync {
     this.videoEl.src = '';
   }
 }
+

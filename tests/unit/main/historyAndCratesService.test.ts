@@ -85,3 +85,4 @@ describe('HistoryAndCratesService', () => {
     expect(service.listMidiMappings('Pioneer DDJ-FLX4')).toHaveLength(0);
   });
 });
+

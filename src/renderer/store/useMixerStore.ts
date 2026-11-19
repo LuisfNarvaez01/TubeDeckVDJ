@@ -80,3 +80,4 @@ export const useMixerStore = create<MixerStore>((set) => ({
   setCueGain: (cueGain) => set({ cueGain }),
   setCueMix: (cueMix) => set({ cueMix })
 }));
+

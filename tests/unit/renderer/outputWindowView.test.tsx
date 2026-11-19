@@ -13,3 +13,4 @@ describe('OutputWindowView', () => {
     expect(video.srcObject).toBe(fakeStream);
   });
 });
+

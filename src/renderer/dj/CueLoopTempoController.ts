@@ -138,3 +138,4 @@ export class CueLoopTempoController {
     this.media.setPlaybackRate(rate, keyLock);
   }
 }
+

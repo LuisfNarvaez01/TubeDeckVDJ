@@ -57,3 +57,4 @@ describe('VideoFxPipeline', () => {
     expect(uniforms.u_fxStrobe).toBe(0);
   });
 });
+

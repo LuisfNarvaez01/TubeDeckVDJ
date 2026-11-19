@@ -49,3 +49,4 @@ describe('MidiLearnEngine', () => {
     expect(onControl.mock.calls[0][0]).toBe('deckA.playPause');
   });
 });
+

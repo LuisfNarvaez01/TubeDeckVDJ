@@ -133,3 +133,4 @@ export const TRANSITION_SHADERS: Record<VideoTransitionId, string> = {
     : sampleFitted(u_texB, u_hasB, sB, u_aspectB);
   `)
 };
+

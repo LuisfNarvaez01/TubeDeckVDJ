@@ -35,3 +35,4 @@ describe('RotaryKnob', () => {
     expect(onChange).toHaveBeenCalledWith(0);
   });
 });
+
