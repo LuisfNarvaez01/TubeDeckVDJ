@@ -1,8 +1,12 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import type {
+  Crate,
   DeckStreamEndpoints,
   DisplayInfo,
+  HistoryEntry,
+  MidiMapping,
+  MixSession,
   Result,
   RtcSignalPayload,
   TrackMetadataRecord,
@@ -35,6 +39,19 @@ export interface TubeDeckAPI {
   onOutputClosed: (cb: () => void) => () => void;
   onSignalFromMain: (cb: (signal: RtcSignalPayload) => void) => () => void;
   onSignalFromOutput: (cb: (signal: RtcSignalPayload) => void) => () => void;
+  startSession: (title?: string) => Promise<Result<MixSession>>;
+  endSession: (sessionId: string) => Promise<Result<void>>;
+  listSessions: () => Promise<Result<MixSession[]>>;
+  logTrackPlay: (entry: Omit<HistoryEntry, 'id'>) => Promise<Result<HistoryEntry>>;
+  getSessionHistory: (sessionId: string) => Promise<Result<HistoryEntry[]>>;
+  exportSession: (sessionId: string, format: 'json' | 'csv' | 'm3u') => Promise<Result<string | null>>;
+  listCrates: () => Promise<Result<Crate[]>>;
+  createCrate: (name: string, color?: string) => Promise<Result<Crate>>;
+  addTrackToCrate: (crateId: string, track: YouTubeTrack) => Promise<Result<void>>;
+  getCrateTracks: (crateId: string) => Promise<Result<YouTubeTrack[]>>;
+  listMidiMappings: (deviceName?: string) => Promise<Result<MidiMapping[]>>;
+  saveMidiMapping: (mapping: Omit<MidiMapping, 'id'>) => Promise<Result<MidiMapping>>;
+  deleteMidiMapping: (id: string) => Promise<Result<void>>;
 }
 
 function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -71,7 +88,21 @@ const api: TubeDeckAPI = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.DISPLAY_OUTPUT_CLOSED_EVENT, listener);
   },
   onSignalFromMain: (cb) => subscribeChannel(IPC_CHANNELS.DISPLAY_SIGNAL_TO_OUTPUT, cb),
-  onSignalFromOutput: (cb) => subscribeChannel(IPC_CHANNELS.DISPLAY_SIGNAL_TO_MAIN, cb)
+  onSignalFromOutput: (cb) => subscribeChannel(IPC_CHANNELS.DISPLAY_SIGNAL_TO_MAIN, cb),
+  startSession: (title) => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_START_SESSION, title),
+  endSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_END_SESSION, sessionId),
+  listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_LIST_SESSIONS),
+  logTrackPlay: (entry) => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_LOG_PLAY, entry),
+  getSessionHistory: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_GET_ENTRIES, sessionId),
+  exportSession: (sessionId, format) =>
+    ipcRenderer.invoke(IPC_CHANNELS.HISTORY_EXPORT_SESSION, sessionId, format),
+  listCrates: () => ipcRenderer.invoke(IPC_CHANNELS.CRATE_LIST),
+  createCrate: (name, color) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_CREATE, name, color),
+  addTrackToCrate: (crateId, track) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_ADD_TRACK, crateId, track),
+  getCrateTracks: (crateId) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_GET_TRACKS, crateId),
+  listMidiMappings: (deviceName) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_LIST_MAPPINGS, deviceName),
+  saveMidiMapping: (mapping) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_SAVE_MAPPING, mapping),
+  deleteMidiMapping: (id) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_DELETE_MAPPING, id)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);

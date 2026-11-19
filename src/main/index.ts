@@ -5,7 +5,9 @@ import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc/registerHandlers';
 import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
+import { HistoryAndCratesService } from './services/HistoryAndCratesService';
 import { RamStreamProxy } from './services/RamStreamProxy';
+import { SessionExporter } from './services/SessionExporter';
 import {
   createDefaultYtDlpRunner,
   StreamResolverService
@@ -90,6 +92,9 @@ function createMainWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  if (process.env.TUBEDECK_USER_DATA_DIR) {
+    app.setPath('userData', process.env.TUBEDECK_USER_DATA_DIR);
+  }
   configureSecurityHeaders();
 
   const userDataDir = app.getPath('userData');
@@ -110,7 +115,9 @@ app.whenReady().then(async () => {
   displayManager = displays;
 
   const search = new YouTubeSearchService();
-  registerIpcHandlers({ db, search, ytDlp, resolver, proxy, displays });
+  const history = new HistoryAndCratesService(db);
+  const exporter = new SessionExporter();
+  registerIpcHandlers({ db, search, ytDlp, resolver, proxy, displays, history, exporter });
 
   mainWindow = createMainWindow();
   displays.attachMainWindow(

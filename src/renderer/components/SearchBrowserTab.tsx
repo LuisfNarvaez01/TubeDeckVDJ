@@ -1,11 +1,13 @@
 import { useState, type FormEvent, type ReactElement } from 'react';
 import { Search, Loader2, ListPlus } from 'lucide-react';
-import type { DeckId, YouTubeTrack } from '../../shared/types';
+import type { Crate, DeckId, YouTubeTrack } from '../../shared/types';
 import { useLibraryStore } from '../store/useLibraryStore';
 
 interface SearchBrowserTabProps {
   onLoadToDeck: (deck: DeckId, track: YouTubeTrack) => void;
   onAddToQueue: (tracks: YouTubeTrack[]) => void;
+  crates?: Crate[];
+  onAddToCrate?: (crateId: string, track: YouTubeTrack) => void;
 }
 
 function formatDuration(sec: number): string {
@@ -16,8 +18,11 @@ function formatDuration(sec: number): string {
 
 export function SearchBrowserTab({
   onLoadToDeck,
-  onAddToQueue
+  onAddToQueue,
+  crates = [],
+  onAddToCrate
 }: SearchBrowserTabProps): ReactElement {
+  const [targetCrateId, setTargetCrateId] = useState<string>('');
   const query = useLibraryStore((s) => s.searchInput);
   const setQuery = useLibraryStore((s) => s.setSearchInput);
   const results = useLibraryStore((s) => s.searchResults);
@@ -128,6 +133,28 @@ export function SearchBrowserTab({
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
+                {crates.length > 0 && onAddToCrate ? (
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={targetCrateId || crates[0].id}
+                      onChange={(e) => setTargetCrateId(e.target.value)}
+                      className="max-w-24 rounded border border-[#1F2735] bg-[#131822] px-1 py-1 text-[11px]"
+                    >
+                      {crates.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => onAddToCrate(targetCrateId || crates[0].id, track)}
+                      className="rounded border border-[#8B5CF6]/40 bg-[#8B5CF6]/10 px-2 py-1 text-xs text-[#C4B5FD] cursor-pointer"
+                    >
+                      + Crate
+                    </button>
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => onAddToQueue([track])}

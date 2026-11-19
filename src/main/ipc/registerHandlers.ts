@@ -1,10 +1,12 @@
-import { ipcMain } from 'electron';
+import { dialog, ipcMain } from 'electron';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
-import type { DeckStreamEndpoints, Result, RtcSignalPayload } from '../../shared/types';
+import type { DeckStreamEndpoints, Result, RtcSignalPayload, YouTubeTrack } from '../../shared/types';
 import type { DatabaseService } from '../services/DatabaseService';
 import type { DisplayWindowManager } from '../services/DisplayWindowManager';
+import type { HistoryAndCratesService } from '../services/HistoryAndCratesService';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
+import type { ExportFormat, SessionExporter } from '../services/SessionExporter';
 import type { StreamResolverService } from '../services/StreamResolverService';
 import type { YouTubeSearchService } from '../services/YouTubeSearchService';
 import type { YtDlpBinaryManager } from '../services/YtDlpBinaryManager';
@@ -42,6 +44,8 @@ export interface MainServices {
   resolver: StreamResolverService;
   proxy: RamStreamProxy;
   displays: DisplayWindowManager;
+  history: HistoryAndCratesService;
+  exporter: SessionExporter;
 }
 
 function buildEndpoints(
@@ -191,6 +195,140 @@ export function registerIpcHandlers(services: MainServices): void {
     wrapResult(() => {
       const signal = RtcSignalSchema.parse(rawSignal) as RtcSignalPayload;
       return services.displays.relaySignalToMain(signal);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.HISTORY_START_SESSION, (_event, rawTitle: unknown) =>
+    wrapResult(() => {
+      const title = typeof rawTitle === 'string' ? rawTitle.slice(0, 120) : undefined;
+      return services.history.startSession(title);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.HISTORY_END_SESSION, (_event, rawSessionId: unknown) =>
+    wrapResult(() => {
+      const sessionId = NonEmptyStringSchema.parse(rawSessionId);
+      services.history.endSession(sessionId);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.HISTORY_LIST_SESSIONS, () =>
+    wrapResult(() => services.history.listSessions())
+  );
+
+  ipcMain.handle(IPC_CHANNELS.HISTORY_LOG_PLAY, (_event, rawEntry: unknown) =>
+    wrapResult(() => {
+      const parsed = z
+        .object({
+          sessionId: NonEmptyStringSchema,
+          deck: z.enum(['A', 'B']),
+          videoId: VideoIdSchema,
+          title: NonEmptyStringSchema,
+          channel: z.string(),
+          durationSec: z.number().nonnegative(),
+          playedAt: z.number(),
+          endedAt: z.number().nullable(),
+          bpm: z.number().nullable(),
+          transitionUsed: z.string().nullable()
+        })
+        .parse(rawEntry);
+      return services.history.logTrackPlay(parsed);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.HISTORY_GET_ENTRIES, (_event, rawSessionId: unknown) =>
+    wrapResult(() => {
+      const sessionId = NonEmptyStringSchema.parse(rawSessionId);
+      return services.history.getSessionHistory(sessionId);
+    })
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.HISTORY_EXPORT_SESSION,
+    (_event, rawSessionId: unknown, rawFormat: unknown) =>
+      wrapResult(async () => {
+        const sessionId = NonEmptyStringSchema.parse(rawSessionId);
+        const format = z.enum(['json', 'csv', 'm3u']).parse(rawFormat) as ExportFormat;
+        const session = services.history.listSessions().find((s) => s.id === sessionId);
+        if (!session) throw new Error('Sesión no encontrada');
+        const entries = services.history.getSessionHistory(sessionId);
+        const safeName = session.title.replace(/[^a-zA-Z0-9_-]+/g, '_');
+        const { canceled, filePath } = await dialog.showSaveDialog({
+          title: 'Exportar Sesión Mix',
+          defaultPath: `${safeName}.${format}`,
+          filters: [{ name: format.toUpperCase(), extensions: [format] }]
+        });
+        if (canceled || !filePath) return null;
+        await services.exporter.exportToFile(filePath, session, entries, format);
+        return filePath;
+      })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.CRATE_LIST, () =>
+    wrapResult(() => services.history.listCrates())
+  );
+
+  ipcMain.handle(IPC_CHANNELS.CRATE_CREATE, (_event, rawName: unknown, rawColor: unknown) =>
+    wrapResult(() => {
+      const name = NonEmptyStringSchema.parse(rawName);
+      const color = typeof rawColor === 'string' ? rawColor : '#00D4FF';
+      return services.history.createCrate(name, color);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.CRATE_ADD_TRACK, (_event, rawCrateId: unknown, rawTrack: unknown) =>
+    wrapResult(() => {
+      const crateId = NonEmptyStringSchema.parse(rawCrateId);
+      const track = z
+        .object({
+          videoId: VideoIdSchema,
+          title: NonEmptyStringSchema,
+          channel: z.string(),
+          durationSec: z.number().nonnegative(),
+          thumbnailUrl: z.string(),
+          isLive: z.boolean()
+        })
+        .parse(rawTrack) as YouTubeTrack;
+      services.history.addTrackToCrate(crateId, track);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.CRATE_GET_TRACKS, (_event, rawCrateId: unknown) =>
+    wrapResult(() => {
+      const crateId = NonEmptyStringSchema.parse(rawCrateId);
+      return services.history.getCrateTracks(crateId);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MIDI_LIST_MAPPINGS, (_event, rawDevice: unknown) =>
+    wrapResult(() => {
+      const dev = typeof rawDevice === 'string' && rawDevice.length > 0 ? rawDevice : undefined;
+      return services.history.listMidiMappings(dev);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MIDI_SAVE_MAPPING, (_event, rawMapping: unknown) =>
+    wrapResult(() => {
+      const parsed = z
+        .object({
+          deviceName: NonEmptyStringSchema,
+          controlKey: NonEmptyStringSchema,
+          channel: z.number().int().min(0).max(15),
+          statusType: z.enum(['cc', 'note']),
+          ccOrNote: z.number().int().min(0).max(127),
+          mode: z.enum(['absolute', 'toggle', 'trigger']),
+          minVal: z.number(),
+          maxVal: z.number()
+        })
+        .parse(rawMapping);
+      return services.history.saveMidiMapping(parsed);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MIDI_DELETE_MAPPING, (_event, rawId: unknown) =>
+    wrapResult(() => {
+      const id = NonEmptyStringSchema.parse(rawId);
+      services.history.deleteMidiMapping(id);
     })
   );
 }

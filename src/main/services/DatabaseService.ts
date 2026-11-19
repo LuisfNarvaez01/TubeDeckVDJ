@@ -217,7 +217,7 @@ export class DatabaseService {
     const rows: T[] = [];
     try {
       if (params.length > 0) {
-        stmt.bind(params as SqlValue[]);
+        stmt.bind(params.map((p) => (p === undefined ? null : p)) as SqlValue[]);
       }
       while (stmt.step()) {
         rows.push(stmt.getAsObject() as T);
@@ -235,7 +235,10 @@ export class DatabaseService {
 
   run(sql: string, params: unknown[] = [], autoSave = true): void {
     const db = this.getDbOrThrow();
-    db.run(sql, params as SqlValue[]);
+    db.run(
+      sql,
+      params.map((p) => (p === undefined ? null : p)) as SqlValue[]
+    );
     if (autoSave && !this.inTransaction) {
       this.save();
     }
