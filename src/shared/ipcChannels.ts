@@ -1,0 +1,33 @@
+export const IPC_CHANNELS = {
+  YOUTUBE_SEARCH: 'youtube:search',
+  YOUTUBE_SEARCH_NEXT: 'youtube:search-next',
+  YOUTUBE_SUGGESTIONS: 'youtube:suggestions',
+  YOUTUBE_PLAYLIST: 'youtube:playlist',
+  STREAM_RESOLVE: 'stream:resolve',
+  STREAM_INVALIDATE: 'stream:invalidate',
+  YTDLP_STATUS: 'ytdlp:status',
+  YTDLP_ENSURE: 'ytdlp:ensure',
+  DB_GET_SETTING: 'db:get-setting',
+  DB_SET_SETTING: 'db:set-setting',
+  DB_GET_TRACK_META: 'db:get-track-meta',
+  DB_UPSERT_TRACK_META: 'db:upsert-track-meta',
+  DISPLAY_LIST: 'display:list',
+  DISPLAY_MOVE_OUTPUT: 'display:move-output',
+  DISPLAY_CLOSE_OUTPUT: 'display:close-output',
+  DISPLAY_CHANGED_EVENT: 'display:changed-event',
+  HISTORY_START_SESSION: 'history:start-session',
+  HISTORY_END_SESSION: 'history:end-session',
+  HISTORY_LIST_SESSIONS: 'history:list-sessions',
+  HISTORY_LOG_PLAY: 'history:log-play',
+  HISTORY_GET_ENTRIES: 'history:get-entries',
+  HISTORY_EXPORT_SESSION: 'history:export-session',
+  CRATE_LIST: 'crate:list',
+  CRATE_CREATE: 'crate:create',
+  CRATE_ADD_TRACK: 'crate:add-track',
+  CRATE_GET_TRACKS: 'crate:get-tracks',
+  MIDI_LIST_MAPPINGS: 'midi:list-mappings',
+  MIDI_SAVE_MAPPING: 'midi:save-mapping',
+  MIDI_DELETE_MAPPING: 'midi:delete-mapping'
+} as const;
+
+export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

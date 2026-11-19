@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+*.db
+*.db-wal
+*.db-shm
+*.tmp
+.superpowers/
+test-results/
+playwright-report/
+.DS_Store
+Thumbs.db
