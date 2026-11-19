@@ -3,8 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { DisplayInfo, RtcSignalPayload } from '../../shared/types';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 export interface ScreenDisplayLike {
   id: number;
@@ -67,7 +66,7 @@ function defaultOutputWindowFactory(options: {
     backgroundColor: '#000000',
     title: 'TubeDeck VDJ — Salida Master',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.cjs'),
+      preload: path.join(moduleDir, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -195,7 +194,7 @@ export class DisplayWindowManager {
       const separator = devUrl.includes('?') ? '&' : '?';
       void win.loadURL(`${devUrl}${separator}role=output`);
     } else {
-      void win.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      void win.loadFile(path.join(moduleDir, '../renderer/index.html'), {
         query: { role: 'output' }
       });
     }
@@ -273,3 +272,4 @@ export class DisplayWindowManager {
     this.mainWindow = null;
   }
 }
+
