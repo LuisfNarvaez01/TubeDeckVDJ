@@ -64,6 +64,16 @@ export interface DisplayInfo {
   isPrimary: boolean;
 }
 
+export interface RtcSignalPayload {
+  type: 'ready' | 'offer' | 'answer' | 'ice';
+  sdp?: string;
+  candidate?: {
+    candidate: string;
+    sdpMid: string | null;
+    sdpMLineIndex: number | null;
+  };
+}
+
 export interface MixSession {
   id: string;
   title: string;

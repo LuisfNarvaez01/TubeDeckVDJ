@@ -1,8 +1,10 @@
 import { app, BrowserWindow, session } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc/registerHandlers';
 import { DatabaseService } from './services/DatabaseService';
+import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { RamStreamProxy } from './services/RamStreamProxy';
 import {
   createDefaultYtDlpRunner,
@@ -17,6 +19,7 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 let dbService: DatabaseService | null = null;
 let ramProxy: RamStreamProxy | null = null;
+let displayManager: DisplayWindowManager | null = null;
 
 function buildContentSecurityPolicy(isDev: boolean): string {
   const scriptSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
@@ -103,10 +106,29 @@ app.whenReady().then(async () => {
   await proxy.start();
   ramProxy = proxy;
 
+  const displays = new DisplayWindowManager();
+  displayManager = displays;
+
   const search = new YouTubeSearchService();
-  registerIpcHandlers({ db, search, ytDlp, resolver, proxy });
+  registerIpcHandlers({ db, search, ytDlp, resolver, proxy, displays });
 
   mainWindow = createMainWindow();
+  displays.attachMainWindow(
+    mainWindow,
+    (list) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.DISPLAY_CHANGED_EVENT, list);
+      }
+    },
+    () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.DISPLAY_OUTPUT_CLOSED_EVENT);
+      }
+    }
+  );
+  mainWindow.on('closed', () => {
+    displays.dispose();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -116,6 +138,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('will-quit', () => {
+  displayManager?.dispose();
   void ramProxy?.stop();
   dbService?.close();
 });

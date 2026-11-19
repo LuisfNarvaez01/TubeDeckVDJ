@@ -1,8 +1,9 @@
-import { ipcMain, screen } from 'electron';
+import { ipcMain } from 'electron';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
-import type { DeckStreamEndpoints, DisplayInfo, Result } from '../../shared/types';
+import type { DeckStreamEndpoints, Result, RtcSignalPayload } from '../../shared/types';
 import type { DatabaseService } from '../services/DatabaseService';
+import type { DisplayWindowManager } from '../services/DisplayWindowManager';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
 import type { StreamResolverService } from '../services/StreamResolverService';
 import type { YouTubeSearchService } from '../services/YouTubeSearchService';
@@ -10,6 +11,17 @@ import type { YtDlpBinaryManager } from '../services/YtDlpBinaryManager';
 
 const VideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'ID de video inválido');
 const NonEmptyStringSchema = z.string().trim().min(1).max(500);
+const RtcSignalSchema = z.object({
+  type: z.enum(['ready', 'offer', 'answer', 'ice']),
+  sdp: z.string().optional(),
+  candidate: z
+    .object({
+      candidate: z.string(),
+      sdpMid: z.string().nullable(),
+      sdpMLineIndex: z.number().nullable()
+    })
+    .optional()
+});
 
 async function wrapResult<T>(fn: () => Promise<T> | T): Promise<Result<T>> {
   try {
@@ -29,6 +41,7 @@ export interface MainServices {
   ytDlp: YtDlpBinaryManager;
   resolver: StreamResolverService;
   proxy: RamStreamProxy;
+  displays: DisplayWindowManager;
 }
 
 function buildEndpoints(
@@ -135,14 +148,49 @@ export function registerIpcHandlers(services: MainServices): void {
   );
 
   ipcMain.handle(IPC_CHANNELS.DISPLAY_LIST, () =>
-    wrapResult((): DisplayInfo[] => {
-      const primaryId = screen.getPrimaryDisplay().id;
-      return screen.getAllDisplays().map((d, idx) => ({
-        id: d.id,
-        label: d.label || `Pantalla ${idx + 1}`,
-        bounds: d.bounds,
-        isPrimary: d.id === primaryId
-      }));
+    wrapResult(() => services.displays.listDisplays())
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.DISPLAY_OPEN_OUTPUT,
+    (_event, rawDisplayId: unknown, rawFullscreen: unknown) =>
+      wrapResult(() => {
+        const displayId =
+          rawDisplayId === null || rawDisplayId === undefined
+            ? null
+            : z.number().int().parse(rawDisplayId);
+        const fullscreen = typeof rawFullscreen === 'boolean' ? rawFullscreen : true;
+        return services.displays.openOutputWindow(displayId, fullscreen);
+      })
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.DISPLAY_MOVE_OUTPUT,
+    (_event, rawDisplayId: unknown, rawFullscreen: unknown) =>
+      wrapResult(() => {
+        const displayId = z.number().int().parse(rawDisplayId);
+        const fullscreen = typeof rawFullscreen === 'boolean' ? rawFullscreen : true;
+        return services.displays.moveOutputToDisplay(displayId, fullscreen);
+      })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.DISPLAY_CLOSE_OUTPUT, () =>
+    wrapResult(() => {
+      services.displays.closeOutputWindow();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.DISPLAY_SIGNAL_TO_OUTPUT, (_event, rawSignal: unknown) =>
+    wrapResult(() => {
+      const signal = RtcSignalSchema.parse(rawSignal) as RtcSignalPayload;
+      return services.displays.relaySignalToOutput(signal);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.DISPLAY_SIGNAL_TO_MAIN, (_event, rawSignal: unknown) =>
+    wrapResult(() => {
+      const signal = RtcSignalSchema.parse(rawSignal) as RtcSignalPayload;
+      return services.displays.relaySignalToMain(signal);
     })
   );
 }

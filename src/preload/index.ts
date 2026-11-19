@@ -1,9 +1,10 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import type {
   DeckStreamEndpoints,
   DisplayInfo,
   Result,
+  RtcSignalPayload,
   TrackMetadataRecord,
   YouTubeTrack,
   YtDlpStatus
@@ -25,6 +26,21 @@ export interface TubeDeckAPI {
     track: Partial<TrackMetadataRecord> & { videoId: string }
   ) => Promise<Result<TrackMetadataRecord>>;
   listDisplays: () => Promise<Result<DisplayInfo[]>>;
+  openOutputWindow: (displayId?: number | null, fullscreen?: boolean) => Promise<Result<boolean>>;
+  moveOutputToDisplay: (displayId: number, fullscreen?: boolean) => Promise<Result<boolean>>;
+  closeOutputWindow: () => Promise<Result<void>>;
+  sendSignalToOutput: (signal: RtcSignalPayload) => Promise<Result<boolean>>;
+  sendSignalToMain: (signal: RtcSignalPayload) => Promise<Result<boolean>>;
+  onDisplaysChanged: (cb: (displays: DisplayInfo[]) => void) => () => void;
+  onOutputClosed: (cb: () => void) => () => void;
+  onSignalFromMain: (cb: (signal: RtcSignalPayload) => void) => () => void;
+  onSignalFromOutput: (cb: (signal: RtcSignalPayload) => void) => () => void;
+}
+
+function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
+  const listener = (_event: IpcRendererEvent, payload: T) => cb(payload);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
 }
 
 const api: TubeDeckAPI = {
@@ -40,7 +56,22 @@ const api: TubeDeckAPI = {
   setSetting: (key, value) => ipcRenderer.invoke(IPC_CHANNELS.DB_SET_SETTING, key, value),
   getTrackMeta: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.DB_GET_TRACK_META, videoId),
   upsertTrackMeta: (track) => ipcRenderer.invoke(IPC_CHANNELS.DB_UPSERT_TRACK_META, track),
-  listDisplays: () => ipcRenderer.invoke(IPC_CHANNELS.DISPLAY_LIST)
+  listDisplays: () => ipcRenderer.invoke(IPC_CHANNELS.DISPLAY_LIST),
+  openOutputWindow: (displayId, fullscreen = true) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DISPLAY_OPEN_OUTPUT, displayId, fullscreen),
+  moveOutputToDisplay: (displayId, fullscreen = true) =>
+    ipcRenderer.invoke(IPC_CHANNELS.DISPLAY_MOVE_OUTPUT, displayId, fullscreen),
+  closeOutputWindow: () => ipcRenderer.invoke(IPC_CHANNELS.DISPLAY_CLOSE_OUTPUT),
+  sendSignalToOutput: (signal) => ipcRenderer.invoke(IPC_CHANNELS.DISPLAY_SIGNAL_TO_OUTPUT, signal),
+  sendSignalToMain: (signal) => ipcRenderer.invoke(IPC_CHANNELS.DISPLAY_SIGNAL_TO_MAIN, signal),
+  onDisplaysChanged: (cb) => subscribeChannel(IPC_CHANNELS.DISPLAY_CHANGED_EVENT, cb),
+  onOutputClosed: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on(IPC_CHANNELS.DISPLAY_OUTPUT_CLOSED_EVENT, listener);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.DISPLAY_OUTPUT_CLOSED_EVENT, listener);
+  },
+  onSignalFromMain: (cb) => subscribeChannel(IPC_CHANNELS.DISPLAY_SIGNAL_TO_OUTPUT, cb),
+  onSignalFromOutput: (cb) => subscribeChannel(IPC_CHANNELS.DISPLAY_SIGNAL_TO_MAIN, cb)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);
