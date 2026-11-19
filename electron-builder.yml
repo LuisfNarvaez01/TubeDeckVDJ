@@ -1,0 +1,42 @@
+appId: com.tubedeck.vdj
+productName: TubeDeck VDJ
+directories:
+  output: dist
+  buildResources: build
+asar: true
+asarUnpack:
+  - "**/*.node"
+files:
+  - out/**/*
+  - package.json
+  - "!src/**"
+  - "!tests/**"
+  - "!docs/**"
+  - "!test-results/**"
+  - "!playwright-report/**"
+  - "!build/**"
+  - "!*.config.*"
+  - "!tsconfig*.json"
+extraResources:
+  - from: node_modules/sql.js/dist/sql-wasm.wasm
+    to: sql-wasm.wasm
+  - from: resources/bin
+    to: bin
+    filter:
+      - "**/*"
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: TubeDeck VDJ
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+
