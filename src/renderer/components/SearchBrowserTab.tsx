@@ -1,9 +1,11 @@
 import { useState, type FormEvent, type ReactElement } from 'react';
-import { Search, Loader2 } from 'lucide-react';
+import { Search, Loader2, ListPlus } from 'lucide-react';
 import type { DeckId, YouTubeTrack } from '../../shared/types';
+import { useLibraryStore } from '../store/useLibraryStore';
 
 interface SearchBrowserTabProps {
   onLoadToDeck: (deck: DeckId, track: YouTubeTrack) => void;
+  onAddToQueue: (tracks: YouTubeTrack[]) => void;
 }
 
 function formatDuration(sec: number): string {
@@ -12,9 +14,15 @@ function formatDuration(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-export function SearchBrowserTab({ onLoadToDeck }: SearchBrowserTabProps): ReactElement {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<YouTubeTrack[]>([]);
+export function SearchBrowserTab({
+  onLoadToDeck,
+  onAddToQueue
+}: SearchBrowserTabProps): ReactElement {
+  const query = useLibraryStore((s) => s.searchInput);
+  const setQuery = useLibraryStore((s) => s.setSearchInput);
+  const results = useLibraryStore((s) => s.searchResults);
+  const setResults = useLibraryStore((s) => s.setSearchResults);
+
   const [hasMore, setHasMore] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +56,7 @@ export function SearchBrowserTab({ onLoadToDeck }: SearchBrowserTabProps): React
     try {
       const res = await window.tubedeckAPI.searchYouTubeNext();
       if (res.success) {
-        setResults((prev) => [...prev, ...res.data.items]);
+        setResults([...results, ...res.data.items]);
         setHasMore(res.data.hasMore);
       }
     } finally {
@@ -77,6 +85,16 @@ export function SearchBrowserTab({ onLoadToDeck }: SearchBrowserTabProps): React
           {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           Buscar
         </button>
+        {results.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => onAddToQueue(results)}
+            className="inline-flex items-center gap-1 rounded-lg border border-[#10B981]/50 bg-[#10B981]/15 px-3 py-2 text-xs font-semibold text-[#6EE7B7] cursor-pointer"
+          >
+            <ListPlus className="h-4 w-4" />
+            Todo a Cola
+          </button>
+        ) : null}
       </form>
 
       {error ? (
@@ -88,7 +106,7 @@ export function SearchBrowserTab({ onLoadToDeck }: SearchBrowserTabProps): React
       <div className="flex-1 overflow-y-auto rounded-lg border border-[#1F2735] bg-[#0B0E14] divide-y divide-[#1F2735]">
         {results.length === 0 ? (
           <div className="flex h-full items-center justify-center p-6 text-xs text-[#64748B]">
-            Escribe una canción, artista o DJ set para cargar directo en memoria RAM.
+            Escribe una canción, artista o pega una playlist de YouTube para cargar directo en RAM.
           </div>
         ) : (
           results.map((track) => (
@@ -110,6 +128,13 @@ export function SearchBrowserTab({ onLoadToDeck }: SearchBrowserTabProps): React
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onAddToQueue([track])}
+                  className="rounded border border-[#10B981]/40 bg-[#10B981]/10 px-2 py-1 text-xs font-semibold text-[#6EE7B7] hover:bg-[#10B981]/20 cursor-pointer"
+                >
+                  + Cola
+                </button>
                 <button
                   type="button"
                   onClick={() => onLoadToDeck('A', track)}

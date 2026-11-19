@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { DeckId, YouTubeTrack } from '../../shared/types';
+import type { DeckId, HotCue, LoopState, YouTubeTrack } from '../../shared/types';
 
 export interface DeckRuntimeState {
   track: YouTubeTrack | null;
@@ -9,8 +9,13 @@ export interface DeckRuntimeState {
   currentTimeSec: number;
   durationSec: number;
   pitchPercent: number;
+  pitchRange: 8 | 16 | 50;
   keyLock: boolean;
   cueEnabled: boolean;
+  bpm: number | null;
+  hotCues: HotCue[];
+  loop: LoopState | null;
+  waveformPeaks: number[] | null;
 }
 
 function createInitialDeckState(): DeckRuntimeState {
@@ -22,8 +27,13 @@ function createInitialDeckState(): DeckRuntimeState {
     currentTimeSec: 0,
     durationSec: 0,
     pitchPercent: 0,
+    pitchRange: 16,
     keyLock: true,
-    cueEnabled: false
+    cueEnabled: false,
+    bpm: null,
+    hotCues: [],
+    loop: null,
+    waveformPeaks: null
   };
 }
 
