@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import type { DeckId, YouTubeTrack } from '../shared/types';
+import type { Crate, DeckId, MidiMapping, YouTubeTrack } from '../shared/types';
 import { AudioDspEngine, type CrossfaderCurve, type EqBand } from './audio/AudioDspEngine';
 import { AudioOutputRouter } from './audio/AudioOutputRouter';
 import { DualDeckMediaSync } from './audio/DualDeckMediaSync';
 import { DeckPanel } from './components/DeckPanel';
+import { HistoryAndCratesTab } from './components/HistoryAndCratesTab';
 import { MixerCenter } from './components/MixerCenter';
 import { OverlayControls } from './components/OverlayControls';
 import { QueueTab } from './components/QueueTab';
 import { SearchBrowserTab } from './components/SearchBrowserTab';
 import { SettingsTab } from './components/SettingsTab';
 import { VideoPreviewBar } from './components/VideoPreviewBar';
+import { HotkeyManager, type HotkeyAction } from './controllers/HotkeyManager';
+import { MidiLearnEngine, type MidiLearnMode } from './controllers/MidiLearnEngine';
 import { BpmAndWaveformEngine } from './dj/BpmAndWaveformEngine';
 import { CueLoopTempoController } from './dj/CueLoopTempoController';
 import { QueueAndAutomixEngine } from './dj/QueueAndAutomixEngine';
@@ -30,6 +33,17 @@ type BrowserTab = 'search' | 'queue' | 'history' | 'settings';
 
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<BrowserTab>('search');
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [crates, setCrates] = useState<Crate[]>([]);
+  const [midiDevices, setMidiDevices] = useState<string[]>([]);
+  const [midiMappings, setMidiMappings] = useState<MidiMapping[]>([]);
+  const [learningControlKey, setLearningControlKey] = useState<string | null>(null);
+
+  const hotkeyManagerRef = useRef(new HotkeyManager());
+  const midiEngineRef = useRef(new MidiLearnEngine());
+  const activeSessionIdRef = useRef<string | null>(null);
+  const onAirMsRef = useRef<Record<DeckId, number>>({ A: 0, B: 0 });
+  const lastLoggedTrackRef = useRef<Record<DeckId, string>>({ A: '', B: '' });
 
   const dspRef = useRef<AudioDspEngine | null>(null);
   const routerRef = useRef<AudioOutputRouter | null>(null);
@@ -145,7 +159,7 @@ export function App(): ReactElement {
     }
   }, []);
 
-  // Initialize displays, yt-dlp status, WebGL compositor & WebRTC bridge
+  // Initialize displays, yt-dlp status, active mix session, crates, MIDI, WebGL compositor & WebRTC bridge
   useEffect(() => {
     const api = window.tubedeckAPI;
     let unsubDisplays = () => {};
@@ -153,6 +167,21 @@ export function App(): ReactElement {
     let rtcHandle: ReturnType<typeof startOutputRtcSender> | null = null;
 
     if (api) {
+      void api.startSession().then((res) => {
+        if (res.success) {
+          activeSessionIdRef.current = res.data.id;
+          setActiveSessionId(res.data.id);
+        }
+      });
+      void api.listCrates().then((res) => {
+        if (res.success) setCrates(res.data);
+      });
+      void api.listMidiMappings().then((res) => {
+        if (res.success) {
+          setMidiMappings(res.data);
+          midiEngineRef.current.loadMappings(res.data);
+        }
+      });
       void api.listDisplays().then((res) => {
         if (res.success) {
           useSettingsStore.getState().setDisplays(res.data);
@@ -312,6 +341,7 @@ export function App(): ReactElement {
 
         // UI clock & playhead updates at 10Hz
         if (now - lastUiUpdate >= 100) {
+          const dtMs = lastUiUpdate === 0 ? 100 : now - lastUiUpdate;
           lastUiUpdate = now;
           (['A', 'B'] as DeckId[]).forEach((id) => {
             const s = syncs[id];
@@ -325,6 +355,35 @@ export function App(): ReactElement {
               prev.playing !== playing
             ) {
               setDeckPatch(id, { currentTimeSec, durationSec, playing });
+            }
+
+            // Track auto-logging if audible on Master >= 10s
+            const chFader = stMixer.channels[id].fader;
+            const crossGain = id === 'A' ? 1 - stMixer.crossfader : stMixer.crossfader;
+            if (playing && chFader > 0.05 && crossGain > 0.1 && prev.track) {
+              onAirMsRef.current[id] += dtMs;
+              const playKey = `${activeSessionIdRef.current}:${prev.track.videoId}`;
+              if (
+                onAirMsRef.current[id] >= 10_000 &&
+                lastLoggedTrackRef.current[id] !== playKey &&
+                activeSessionIdRef.current
+              ) {
+                lastLoggedTrackRef.current[id] = playKey;
+                void window.tubedeckAPI?.logTrackPlay({
+                  sessionId: activeSessionIdRef.current,
+                  deck: id,
+                  videoId: prev.track.videoId,
+                  title: prev.track.title,
+                  channel: prev.track.channel,
+                  durationSec: prev.track.durationSec,
+                  playedAt: Date.now(),
+                  endedAt: null,
+                  bpm: prev.bpm,
+                  transitionUsed: stSettings.transition
+                });
+              }
+            } else if (!playing) {
+              onAirMsRef.current[id] = 0;
             }
           });
         }
@@ -438,7 +497,7 @@ export function App(): ReactElement {
     }
   };
 
-  const handleTogglePlay = async (deck: DeckId) => {
+  const handleTogglePlay = useCallback(async (deck: DeckId) => {
     const { decks } = await ensureAudioInitialized();
     const sync = decks[deck];
     if (sync.isPaused()) {
@@ -448,26 +507,121 @@ export function App(): ReactElement {
       sync.pause();
       setDeckPatch(deck, { playing: false });
     }
-  };
+  }, [ensureAudioInitialized, setDeckPatch]);
 
-  const handleSeek = async (deck: DeckId, timeSec: number) => {
+  const handleSeek = useCallback(async (deck: DeckId, timeSec: number) => {
     const sync = decksSyncRef.current?.[deck];
     if (!sync) return;
     await sync.seek(timeSec);
     setDeckPatch(deck, { currentTimeSec: timeSec });
-  };
+  }, [setDeckPatch]);
+
+  const handlePitchChange = useCallback(async (deck: DeckId, pitchPercent: number, keyLock: boolean) => {
+    const { cueCtrls } = await ensureAudioInitialized();
+    cueCtrls[deck].setPitchPercent(pitchPercent, keyLock);
+    setDeckPatch(deck, { pitchPercent, keyLock });
+  }, [ensureAudioInitialized, setDeckPatch]);
+
+  const handleTriggerAutoVideo = useCallback(() => {
+    const st = useSettingsStore.getState();
+    const curMix = st.videoMode === 'linked' ? useMixerStore.getState().crossfader : st.videoMix;
+    autoAnimRef.current = {
+      active: true,
+      startMs: performance.now(),
+      durationMs: st.autoDurationSec * 1000,
+      fromSide: curMix < 0.5 ? 'A' : 'B'
+    };
+    if (st.videoMode === 'linked') {
+      st.setVideoMode('auto-timed');
+    }
+  }, []);
+
+  const handleMidiControl = useCallback(
+    (controlKey: string, val01: number) => {
+      if (controlKey === 'mixer.crossfader') {
+        const curve = useMixerStore.getState().crossfaderCurve;
+        dspRef.current?.setCrossfader(val01, curve);
+        useMixerStore.getState().setCrossfader(val01);
+        return;
+      }
+      if (controlKey === 'deckA.fader') {
+        dspRef.current?.setChannelFader('A', val01);
+        useMixerStore.getState().setChannelPatch('A', { fader: val01 });
+        return;
+      }
+      if (controlKey === 'deckB.fader') {
+        dspRef.current?.setChannelFader('B', val01);
+        useMixerStore.getState().setChannelPatch('B', { fader: val01 });
+        return;
+      }
+      if (controlKey === 'deckA.playPause') {
+        void handleTogglePlay('A');
+        return;
+      }
+      if (controlKey === 'deckB.playPause') {
+        void handleTogglePlay('B');
+        return;
+      }
+      if (controlKey === 'video.autoTransition') {
+        handleTriggerAutoVideo();
+      }
+    },
+    [handleTogglePlay, handleTriggerAutoVideo]
+  );
+
+  // Global keyboard shortcuts & Web MIDI init
+  useEffect(() => {
+    const dispatchHotkey = (action: HotkeyAction) => {
+      if (action === 'deckA.playPause') void handleTogglePlay('A');
+      else if (action === 'deckB.playPause') void handleTogglePlay('B');
+      else if (action === 'deckA.cue') void handleSeek('A', 0);
+      else if (action === 'deckB.cue') void handleSeek('B', 0);
+      else if (action === 'video.autoTransition') handleTriggerAutoVideo();
+      else if (action === 'crossfader.left' || action === 'crossfader.right' || action === 'crossfader.center') {
+        const cur = useMixerStore.getState().crossfader;
+        const next =
+          action === 'crossfader.center'
+            ? 0.5
+            : Math.min(1, Math.max(0, cur + (action === 'crossfader.right' ? 0.05 : -0.05)));
+        dspRef.current?.setCrossfader(next, useMixerStore.getState().crossfaderCurve);
+        useMixerStore.getState().setCrossfader(next);
+      } else if (action.startsWith('deckA.hotCue.') || action.startsWith('deckB.hotCue.')) {
+        const deck: DeckId = action.startsWith('deckA') ? 'A' : 'B';
+        const slot = Number(action.split('.').pop());
+        if (slot >= 1 && slot <= 8 && cueCtrlsRef.current && decksSyncRef.current) {
+          void cueCtrlsRef.current[deck]
+            .triggerHotCue(slot, decksSyncRef.current[deck].getCurrentTime())
+            .then(() => {
+              setDeckPatch(deck, { hotCues: cueCtrlsRef.current![deck].getHotCues() });
+            });
+        }
+      }
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const action = hotkeyManagerRef.current.handleKeyEvent(e);
+      if (action) {
+        e.preventDefault();
+        dispatchHotkey(action);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    void midiEngineRef.current.init(handleMidiControl).then((devs) => {
+      setMidiDevices(devs);
+    });
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      midiEngineRef.current.dispose();
+    };
+  }, [handleMidiControl, handleSeek, handleTogglePlay, handleTriggerAutoVideo, setDeckPatch]);
 
   const handleToggleCueMonitor = async (deck: DeckId) => {
     const { dsp } = await ensureAudioInitialized();
     const next = !useDeckStore.getState().decks[deck].cueEnabled;
     dsp.setCueEnabled(deck, next);
     setDeckPatch(deck, { cueEnabled: next });
-  };
-
-  const handlePitchChange = async (deck: DeckId, pitchPercent: number, keyLock: boolean) => {
-    const { cueCtrls } = await ensureAudioInitialized();
-    cueCtrls[deck].setPitchPercent(pitchPercent, keyLock);
-    setDeckPatch(deck, { pitchPercent, keyLock });
   };
 
   const handleOverlayConfigChange = async (next: OverlayConfig) => {
@@ -733,6 +887,7 @@ export function App(): ReactElement {
             dsp.setCueGain(level);
             mixerStore.setCueGain(level);
           }}
+          getVuLevel={(target) => dspRef.current?.readVuLevel(target) ?? 0}
         />
         <OverlayControls config={settings.overlayConfig} onChange={handleOverlayConfigChange} />
       </div>
@@ -771,6 +926,12 @@ export function App(): ReactElement {
                 queueEngineRef.current.enqueueMany(tracks);
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
+              crates={crates}
+              onAddToCrate={async (crateId, track) => {
+                await window.tubedeckAPI?.addTrackToCrate(crateId, track);
+                const res = await window.tubedeckAPI?.listCrates();
+                if (res?.success) setCrates(res.data);
+              }}
             />
           ) : null}
 
@@ -799,9 +960,33 @@ export function App(): ReactElement {
           ) : null}
 
           {activeTab === 'history' ? (
-            <div className="flex h-full items-center justify-center rounded-lg border border-[#1F2735] bg-[#0B0E14] text-xs text-[#94A3B8]">
-              Historial de sesiones, Crates y Exportación (JSON/CSV/M3U) se integran en Fase 4.
-            </div>
+            <HistoryAndCratesTab
+              activeSessionId={activeSessionId}
+              onNewSession={async (title) => {
+                const res = await window.tubedeckAPI?.startSession(title);
+                if (res?.success) {
+                  activeSessionIdRef.current = res.data.id;
+                  setActiveSessionId(res.data.id);
+                }
+              }}
+              onEndActiveSession={async () => {
+                if (!activeSessionIdRef.current) return;
+                await window.tubedeckAPI?.endSession(activeSessionIdRef.current);
+                activeSessionIdRef.current = null;
+                setActiveSessionId(null);
+              }}
+              onAddTracksToQueue={(tracks) => {
+                queueEngineRef.current.enqueueMany(tracks);
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+                setActiveTab('queue');
+              }}
+              onLoadToDeck={handleLoadToDeck}
+              crates={crates}
+              onRefreshCrates={async () => {
+                const res = await window.tubedeckAPI?.listCrates();
+                if (res?.success) setCrates(res.data);
+              }}
+            />
           ) : null}
 
           {activeTab === 'settings' ? (
@@ -846,6 +1031,37 @@ export function App(): ReactElement {
                 settings.setOutputResolution(res);
                 if (res === '1080p') compositorRef.current?.setResolution(1920, 1080);
                 else compositorRef.current?.setResolution(1280, 720);
+              }}
+              midiDevices={midiDevices}
+              midiMappings={midiMappings}
+              learningControlKey={learningControlKey}
+              onInitMidi={async () => {
+                const devs = await midiEngineRef.current.init(handleMidiControl);
+                setMidiDevices(devs);
+              }}
+              onStartMidiLearn={(controlKey, mode: MidiLearnMode) => {
+                setLearningControlKey(controlKey);
+                midiEngineRef.current.startLearn(controlKey, mode, (learned) => {
+                  setLearningControlKey(null);
+                  void window.tubedeckAPI?.saveMidiMapping(learned).then((res) => {
+                    if (res.success) {
+                      void window.tubedeckAPI?.listMidiMappings().then((listRes) => {
+                        if (listRes.success) {
+                          setMidiMappings(listRes.data);
+                          midiEngineRef.current.loadMappings(listRes.data);
+                        }
+                      });
+                    }
+                  });
+                });
+              }}
+              onDeleteMidiMapping={async (id) => {
+                await window.tubedeckAPI?.deleteMidiMapping(id);
+                const listRes = await window.tubedeckAPI?.listMidiMappings();
+                if (listRes?.success) {
+                  setMidiMappings(listRes.data);
+                  midiEngineRef.current.loadMappings(listRes.data);
+                }
               }}
             />
           ) : null}

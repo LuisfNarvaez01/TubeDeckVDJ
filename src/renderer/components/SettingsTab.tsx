@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react';
-import { RefreshCw, Download, Monitor, Volume2 } from 'lucide-react';
+import { RefreshCw, Download, Monitor, Volume2, Sliders, Trash2 } from 'lucide-react';
+import type { MidiMapping } from '../../shared/types';
+import type { MidiLearnMode } from '../controllers/MidiLearnEngine';
 import { useSettingsStore } from '../store/useSettingsStore';
 
 interface SettingsTabProps {
@@ -9,7 +11,22 @@ interface SettingsTabProps {
   onToggleMonoSplit: (enabled: boolean) => void;
   onEnsureYtDlp: () => void;
   onResolutionChange: (res: '720p' | '1080p') => void;
+  midiDevices?: string[];
+  midiMappings?: MidiMapping[];
+  learningControlKey?: string | null;
+  onInitMidi?: () => void;
+  onStartMidiLearn?: (controlKey: string, mode: MidiLearnMode) => void;
+  onDeleteMidiMapping?: (id: string) => void;
 }
+
+const MIDI_CONTROLS: Array<{ key: string; label: string; mode: MidiLearnMode }> = [
+  { key: 'mixer.crossfader', label: 'Crossfader Audio', mode: 'absolute' },
+  { key: 'deckA.fader', label: 'Fader Canal A', mode: 'absolute' },
+  { key: 'deckB.fader', label: 'Fader Canal B', mode: 'absolute' },
+  { key: 'deckA.playPause', label: 'Play/Pausa Deck A', mode: 'trigger' },
+  { key: 'deckB.playPause', label: 'Play/Pausa Deck B', mode: 'trigger' },
+  { key: 'video.autoTransition', label: 'Transición Auto Video', mode: 'trigger' }
+];
 
 export function SettingsTab({
   onRefreshAudioDevices,
@@ -17,14 +34,20 @@ export function SettingsTab({
   onSelectCueDevice,
   onToggleMonoSplit,
   onEnsureYtDlp,
-  onResolutionChange
+  onResolutionChange,
+  midiDevices = [],
+  midiMappings = [],
+  learningControlKey = null,
+  onInitMidi,
+  onStartMidiLearn,
+  onDeleteMidiMapping
 }: SettingsTabProps): ReactElement {
   const settings = useSettingsStore();
 
   return (
-    <div className="grid h-full grid-cols-3 gap-3 overflow-y-auto text-xs">
+    <div className="grid h-full grid-cols-2 gap-3 overflow-y-auto text-xs">
       {/* Audio Routing */}
-      <div className="flex flex-col gap-2.5 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
+      <div className="flex flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
         <div className="flex items-center justify-between">
           <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
             <Volume2 className="h-4 w-4 text-[#10B981]" />
@@ -40,38 +63,40 @@ export function SettingsTab({
           </button>
         </div>
 
-        <label className="flex flex-col gap-1 text-[#94A3B8]">
-          Salida Master (Parlantes)
-          <select
-            value={settings.masterDeviceId}
-            onChange={(e) => onSelectMasterDevice(e.target.value)}
-            className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1.5 text-[#F1F5F9]"
-          >
-            {settings.audioOutputs.map((d) => (
-              <option key={`m-${d.deviceId}`} value={d.deviceId}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex flex-col gap-1 text-[#94A3B8]">
+            Master (Parlantes)
+            <select
+              value={settings.masterDeviceId}
+              onChange={(e) => onSelectMasterDevice(e.target.value)}
+              className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-[#F1F5F9]"
+            >
+              {settings.audioOutputs.map((d) => (
+                <option key={`m-${d.deviceId}`} value={d.deviceId}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <label className="flex flex-col gap-1 text-[#94A3B8]">
-          Salida Audífonos (Cue / PFL)
-          <select
-            value={settings.cueDeviceId}
-            disabled={settings.monoSplit}
-            onChange={(e) => onSelectCueDevice(e.target.value)}
-            className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1.5 text-[#F1F5F9] disabled:opacity-50"
-          >
-            {settings.audioOutputs.map((d) => (
-              <option key={`c-${d.deviceId}`} value={d.deviceId}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          <label className="flex flex-col gap-1 text-[#94A3B8]">
+            Audífonos (Cue / PFL)
+            <select
+              value={settings.cueDeviceId}
+              disabled={settings.monoSplit}
+              onChange={(e) => onSelectCueDevice(e.target.value)}
+              className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-[#F1F5F9] disabled:opacity-50"
+            >
+              {settings.audioOutputs.map((d) => (
+                <option key={`c-${d.deviceId}`} value={d.deviceId}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
 
-        <label className="flex items-center gap-2 text-[#F1F5F9] cursor-pointer pt-1">
+        <label className="flex items-center gap-2 text-[#F1F5F9] cursor-pointer">
           <input
             type="checkbox"
             checked={settings.monoSplit}
@@ -88,19 +113,30 @@ export function SettingsTab({
         ) : null}
       </div>
 
-      {/* Video & Display */}
-      <div className="flex flex-col gap-2.5 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
-        <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
-          <Monitor className="h-4 w-4 text-[#00D4FF]" />
-          Video Master y Monitores
-        </h3>
+      {/* Video, Display & yt-dlp */}
+      <div className="flex flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
+        <div className="flex items-center justify-between">
+          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
+            <Monitor className="h-4 w-4 text-[#00D4FF]" />
+            Video Master, Monitores y yt-dlp
+          </h3>
+          <button
+            type="button"
+            disabled={settings.ytDlpStatus.downloading}
+            onClick={onEnsureYtDlp}
+            className="inline-flex items-center gap-1 rounded border border-[#00D4FF]/50 bg-[#00D4FF]/15 px-2 py-0.5 text-[11px] font-semibold text-[#00D4FF] disabled:opacity-50 cursor-pointer"
+          >
+            <Download className="h-3 w-3" />
+            {settings.ytDlpStatus.available ? 'yt-dlp OK' : 'Instalar yt-dlp'}
+          </button>
+        </div>
 
         <label className="flex flex-col gap-1 text-[#94A3B8]">
-          Resolución del Compositor Master
+          Resolución Master (60 fps)
           <select
             value={settings.outputResolution}
             onChange={(e) => onResolutionChange(e.target.value as '720p' | '1080p')}
-            className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1.5 text-[#F1F5F9]"
+            className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-[#F1F5F9]"
           >
             <option value="1080p">1920 × 1080 (Full HD 60 fps)</option>
             <option value="720p">1280 × 720 (HD 60 fps)</option>
@@ -108,50 +144,80 @@ export function SettingsTab({
         </label>
 
         <div className="text-[11px] text-[#94A3B8]">
-          Monitores detectados: <strong className="text-[#F1F5F9]">{settings.displays.length}</strong>
-          <ul className="mt-1 space-y-1">
-            {settings.displays.map((d) => (
-              <li key={d.id} className="truncate">
-                • {d.label} ({d.bounds.width}×{d.bounds.height}){d.isPrimary ? ' [Principal]' : ' [Externo]'}
-              </li>
-            ))}
-          </ul>
+          Monitores: {settings.displays.map((d) => `${d.label} (${d.bounds.width}×${d.bounds.height})`).join(' | ') || 'Detectando...'}
         </div>
       </div>
 
-      {/* yt-dlp Engine */}
-      <div className="flex flex-col gap-2.5 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
-        <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
-          <Download className="h-4 w-4 text-[#8B5CF6]" />
-          Motor de Streaming YouTube (RAM)
-        </h3>
-
-        <div className="rounded border border-[#1F2735] bg-[#131822] p-2 text-[11px]">
-          Estado de <code>yt-dlp</code>:{' '}
-          <span
-            className={
-              settings.ytDlpStatus.available ? 'font-semibold text-[#10B981]' : 'font-semibold text-[#FF8A00]'
-            }
-          >
-            {settings.ytDlpStatus.available ? 'Disponible' : 'Se descargará al usar'}
-          </span>
-          {settings.ytDlpStatus.binaryPath ? (
-            <p className="mt-1 truncate text-[#64748B]">{settings.ytDlpStatus.binaryPath}</p>
-          ) : null}
-          {settings.ytDlpStatus.error ? (
-            <p className="mt-1 text-[#EF4444]">{settings.ytDlpStatus.error}</p>
+      {/* MIDI USB & MIDI Learn */}
+      <div className="flex flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
+        <div className="flex items-center justify-between">
+          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
+            <Sliders className="h-4 w-4 text-[#8B5CF6]" />
+            Controladores MIDI USB (MIDI Learn)
+          </h3>
+          {onInitMidi ? (
+            <button
+              type="button"
+              onClick={onInitMidi}
+              className="rounded border border-[#1F2735] px-2 py-0.5 text-[11px] text-[#94A3B8] hover:text-white cursor-pointer"
+            >
+              Escanear MIDI
+            </button>
           ) : null}
         </div>
 
-        <button
-          type="button"
-          disabled={settings.ytDlpStatus.downloading}
-          onClick={onEnsureYtDlp}
-          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#00D4FF]/50 bg-[#00D4FF]/15 px-3 py-1.5 font-semibold text-[#00D4FF] disabled:opacity-50 cursor-pointer"
-        >
-          <Download className="h-3.5 w-3.5" />
-          {settings.ytDlpStatus.downloading ? 'Descargando...' : 'Verificar / Instalar yt-dlp'}
-        </button>
+        <div className="text-[11px] text-[#94A3B8]">
+          Detectados: {midiDevices.length > 0 ? midiDevices.join(', ') : 'Ningún controlador USB conectado'}
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {MIDI_CONTROLS.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              onClick={() => onStartMidiLearn?.(c.key, c.mode)}
+              className={`rounded border px-2 py-1 text-[11px] cursor-pointer ${
+                learningControlKey === c.key
+                  ? 'border-[#FF8A00] bg-[#FF8A00]/20 text-[#FDBA74]'
+                  : 'border-[#1F2735] bg-[#131822] text-[#94A3B8] hover:text-white'
+              }`}
+            >
+              {learningControlKey === c.key ? `Mueve control para ${c.label}...` : `Learn: ${c.label}`}
+            </button>
+          ))}
+        </div>
+
+        {midiMappings.length > 0 ? (
+          <div className="max-h-20 overflow-y-auto divide-y divide-[#1F2735] rounded border border-[#1F2735]">
+            {midiMappings.map((m) => (
+              <div key={m.id} className="flex items-center justify-between px-2 py-1 text-[11px]">
+                <span className="truncate">
+                  {m.deviceName} • {m.controlKey} ({m.statusType.toUpperCase()} {m.ccOrNote})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onDeleteMidiMapping?.(m.id)}
+                  className="text-[#EF4444] cursor-pointer"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Keyboard shortcuts summary */}
+      <div className="flex flex-col gap-1.5 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3 text-[11px] text-[#94A3B8]">
+        <h3 className="font-semibold text-[#F1F5F9]">Atajos de Teclado DJ Activos</h3>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono-tabular">
+          <span>Space / Shift+Space: Play A / B</span>
+          <span>Q / W: Cue 0 Deck A / B</span>
+          <span>S / Shift+S: Sync A / B</span>
+          <span>1..8 / Shift+1..8: Hot Cues</span>
+          <span>← / → / C: Crossfader</span>
+          <span>V: Auto Transición Video</span>
+        </div>
       </div>
     </div>
   );
