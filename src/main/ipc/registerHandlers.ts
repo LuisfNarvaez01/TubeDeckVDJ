@@ -15,6 +15,8 @@ import type { DatabaseService } from '../services/DatabaseService';
 import type { DisplayWindowManager } from '../services/DisplayWindowManager';
 import type { HistoryAndCratesService } from '../services/HistoryAndCratesService';
 import type { LocalLibraryService } from '../services/LocalLibraryService';
+import type { RecommendationEngine } from '../services/RecommendationEngine';
+import type { TasteFeedbackService } from '../services/TasteFeedbackService';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
 import type { ExportFormat, SessionExporter } from '../services/SessionExporter';
 import type { StreamResolverService } from '../services/StreamResolverService';
@@ -23,6 +25,26 @@ import type { YtDlpBinaryManager } from '../services/YtDlpBinaryManager';
 
 const VideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'ID de video inválido');
 const NonEmptyStringSchema = z.string().trim().min(1).max(500);
+const FeedbackSchema = z.object({
+  track: z.object({
+    videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/),
+    title: z.string().max(500),
+    channel: z.string().max(300),
+    artists: z.array(z.string().max(200)).max(20).optional()
+  }),
+  signal: z.enum(['like', 'dislike', 'skip', 'complete', 'block-channel'])
+});
+const TasteSeedsSchema = z
+  .array(
+    z.object({
+      videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/),
+      title: z.string().max(500),
+      channel: z.string().max(300),
+      durationSec: z.number().min(0).max(36000),
+      thumbnailUrl: z.string().max(2000)
+    })
+  )
+  .max(10);
 const RtcSignalSchema = z.object({
   type: z.enum(['ready', 'offer', 'answer', 'ice']),
   sdp: z.string().optional(),
@@ -59,6 +81,8 @@ export interface MainServices {
   updater?: AutoUpdaterService;
   localLibrary?: LocalLibraryService;
   batchDownloader?: BatchDownloadService;
+  taste?: TasteFeedbackService;
+  recommender?: RecommendationEngine;
 }
 
 function buildEndpoints(
@@ -134,15 +158,54 @@ export function registerIpcHandlers(services: MainServices): void {
 
   ipcMain.handle(
     IPC_CHANNELS.YOUTUBE_RECOMMENDED,
-    (_event, rawVideoId: unknown, rawExcludeIds: unknown) =>
+    (_event, rawVideoId: unknown, rawExcludeIds: unknown, rawSeedTitle: unknown) =>
       wrapResult(async () => {
         const videoId = VideoIdSchema.parse(rawVideoId);
         const excludeIds = Array.isArray(rawExcludeIds)
           ? z.array(VideoIdSchema).max(200).parse(rawExcludeIds)
           : [];
+        const seedTitle =
+          typeof rawSeedTitle === 'string' ? rawSeedTitle.trim().slice(0, 200) : undefined;
+        if (services.recommender) {
+          return services.recommender.recommend({ seedVideoId: videoId, seedTitle, excludeVideoIds: excludeIds, limit: 12 });
+        }
         const profile = services.history.buildTasteProfile(100);
         return services.search.getHistoryWeightedRecommendations(videoId, profile, excludeIds, 12);
       })
+  );
+
+  const requireTaste = (): TasteFeedbackService => {
+    if (!services.taste) throw new Error('Taste feedback service unavailable');
+    return services.taste;
+  };
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_FEEDBACK, (_event, rawInput: unknown) =>
+    wrapResult(() => {
+      requireTaste().recordFeedback(FeedbackSchema.parse(rawInput));
+      return true;
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_GET_SEEDS, () => wrapResult(() => requireTaste().getTasteSeeds()));
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_SET_SEEDS, (_event, rawSeeds: unknown) =>
+    wrapResult(() => requireTaste().setTasteSeeds(TasteSeedsSchema.parse(rawSeeds)))
+  );
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_SUMMARY, () => wrapResult(() => requireTaste().getSummary()));
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_UNBLOCK_CHANNEL, (_event, rawName: unknown) =>
+    wrapResult(() => {
+      requireTaste().unblockChannel(NonEmptyStringSchema.parse(rawName));
+      return true;
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_RESET, () =>
+    wrapResult(() => {
+      requireTaste().resetFeedback();
+      return true;
+    })
   );
 
   ipcMain.handle(IPC_CHANNELS.STREAM_RESOLVE, (_event, rawVideoId: unknown) =>

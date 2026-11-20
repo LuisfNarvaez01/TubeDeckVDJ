@@ -9,6 +9,8 @@ import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { HistoryAndCratesService } from './services/HistoryAndCratesService';
 import { LocalLibraryService } from './services/LocalLibraryService';
+import { RecommendationEngine } from './services/RecommendationEngine';
+import { TasteFeedbackService } from './services/TasteFeedbackService';
 import { RamStreamProxy } from './services/RamStreamProxy';
 import { SessionExporter } from './services/SessionExporter';
 import {
@@ -120,6 +122,11 @@ app.whenReady().then(async () => {
 
   const search = new YouTubeSearchService();
   const history = new HistoryAndCratesService(db);
+  const taste = new TasteFeedbackService(db);
+  const recommender = new RecommendationEngine(search, {
+    getSnapshot: () => taste.getSnapshot(),
+    buildTasteProfile: (limit) => history.buildTasteProfile(limit)
+  });
   const exporter = new SessionExporter();
   const localLibrary = new LocalLibraryService(db);
   const batchDownloader = new BatchDownloadService({
@@ -153,7 +160,9 @@ app.whenReady().then(async () => {
     exporter,
     updater,
     localLibrary,
-    batchDownloader
+    batchDownloader,
+    taste,
+    recommender
   });
 
   mainWindow = createMainWindow();

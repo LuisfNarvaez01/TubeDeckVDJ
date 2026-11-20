@@ -11,6 +11,9 @@ import type {
   MixSession,
   Result,
   RtcSignalPayload,
+  TasteSeedTrack,
+  TasteSummary,
+  TrackFeedbackInput,
   TrackMetadataRecord,
   UpdateStatus,
   YouTubeTrack,
@@ -23,7 +26,17 @@ export interface TubeDeckAPI {
   getSuggestions: (query: string) => Promise<Result<string[]>>;
   getPlaylistTracks: (urlOrId: string) => Promise<Result<YouTubeTrack[]>>;
   getRelatedTracks: (videoId: string, excludeIds?: string[]) => Promise<Result<YouTubeTrack[]>>;
-  getRecommendedTracks: (videoId: string, excludeIds?: string[]) => Promise<Result<YouTubeTrack[]>>;
+  getRecommendedTracks: (
+    videoId: string,
+    excludeIds?: string[],
+    seedTitle?: string
+  ) => Promise<Result<YouTubeTrack[]>>;
+  sendTrackFeedback: (input: TrackFeedbackInput) => Promise<Result<boolean>>;
+  getTasteSeeds: () => Promise<Result<TasteSeedTrack[]>>;
+  setTasteSeeds: (seeds: TasteSeedTrack[]) => Promise<Result<TasteSeedTrack[]>>;
+  getTasteSummary: () => Promise<Result<TasteSummary>>;
+  unblockChannel: (name: string) => Promise<Result<boolean>>;
+  resetTasteFeedback: () => Promise<Result<boolean>>;
   resolveStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   invalidateStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   getYtDlpStatus: () => Promise<Result<YtDlpStatus>>;
@@ -89,8 +102,14 @@ const api: TubeDeckAPI = {
   getPlaylistTracks: (urlOrId) => ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_PLAYLIST, urlOrId),
   getRelatedTracks: (videoId, excludeIds = []) =>
     ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RELATED, videoId, excludeIds),
-  getRecommendedTracks: (videoId, excludeIds = []) =>
-    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RECOMMENDED, videoId, excludeIds),
+  getRecommendedTracks: (videoId, excludeIds = [], seedTitle) =>
+    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RECOMMENDED, videoId, excludeIds, seedTitle),
+  sendTrackFeedback: (input) => ipcRenderer.invoke(IPC_CHANNELS.TASTE_FEEDBACK, input),
+  getTasteSeeds: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_GET_SEEDS),
+  setTasteSeeds: (seeds) => ipcRenderer.invoke(IPC_CHANNELS.TASTE_SET_SEEDS, seeds),
+  getTasteSummary: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_SUMMARY),
+  unblockChannel: (name) => ipcRenderer.invoke(IPC_CHANNELS.TASTE_UNBLOCK_CHANNEL, name),
+  resetTasteFeedback: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_RESET),
   resolveStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_RESOLVE, videoId),
   invalidateStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_INVALIDATE, videoId),
   getYtDlpStatus: () => ipcRenderer.invoke(IPC_CHANNELS.YTDLP_STATUS),

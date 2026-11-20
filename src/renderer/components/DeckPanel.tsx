@@ -7,7 +7,9 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
-  Pencil
+  Pencil,
+  ThumbsUp,
+  ThumbsDown
 } from 'lucide-react';
 import type { DeckId, VideoQualityTier } from '../../shared/types';
 import type { AudioFxId, FxBeatDivision, SamplerPadId } from '../audio/AudioDspEngine';
@@ -76,6 +78,8 @@ interface DeckPanelProps {
     beatDiv?: FxBeatDivision
   ) => void;
   liveRgbRef?: MutableRefObject<Record<DeckId, RgbWaveSample[]>>;
+  /** Like / dislike the track on this deck to teach the radio. */
+  onTrackFeedback?: (deck: DeckId, signal: 'like' | 'dislike') => void;
 }
 
 function formatTime(sec: number): string {
@@ -115,7 +119,8 @@ export function DeckPanel({
   onLoopRollEnd = () => {},
   onTriggerSample = () => {},
   onDeckFxChange = () => {},
-  liveRgbRef
+  liveRgbRef,
+  onTrackFeedback
 }: DeckPanelProps): ReactElement {
   const deck = useDeckStore((s) => s.decks[deckId]);
   const setDeckPatch = useDeckStore((s) => s.setDeckPatch);
@@ -124,8 +129,11 @@ export function DeckPanel({
   const [editingTitle, setEditingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState('');
 
+  const [feedbackGiven, setFeedbackGiven] = useState<'like' | 'dislike' | null>(null);
+
   useEffect(() => {
     setEditingTitle(false);
+    setFeedbackGiven(null);
   }, [deck.track?.videoId]);
 
   const accent = deckId === 'A' ? '#0EA5E9' : '#F59E0B';
@@ -216,9 +224,44 @@ export function DeckPanel({
             )}
 
             <div className="flex items-center gap-2 text-[10px] text-[#94A3B8]">
-              <span className="truncate">
+              <span className="truncate" title={deck.track?.recommendReason}>
                 {deck.track ? deck.track.channel : 'Carga un video del buscador o cola'}
               </span>
+
+              {deck.track && deck.track.source !== 'local' && onTrackFeedback ? (
+                <div className="inline-flex shrink-0 items-center gap-0.5">
+                  {(['like', 'dislike'] as const).map((signal) => {
+                    const active = feedbackGiven === signal;
+                    const Icon = signal === 'like' ? ThumbsUp : ThumbsDown;
+                    return (
+                      <button
+                        key={signal}
+                        type="button"
+                        aria-pressed={active}
+                        aria-label={signal === 'like' ? 'Me gusta esta canción' : 'No me gusta esta canción'}
+                        title={
+                          signal === 'like'
+                            ? 'Me gusta: la radio pondrá más como esta'
+                            : 'No me gusta: la radio la evitará'
+                        }
+                        onClick={() => {
+                          setFeedbackGiven(signal);
+                          onTrackFeedback(deckId, signal);
+                        }}
+                        className={`rounded p-0.5 transition-colors duration-150 cursor-pointer ${
+                          active
+                            ? signal === 'like'
+                              ? 'text-[#10B981]'
+                              : 'text-[#FCA5A5]'
+                            : 'text-[#64748B] hover:text-[#F8FAFC]'
+                        }`}
+                      >
+                        <Icon className="h-3 w-3" />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
 
               {healthLabel ? (
                 <div

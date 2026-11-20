@@ -19,6 +19,7 @@ import type {
   DeckId,
   MidiMapping,
   VideoQualityPreference,
+  FeedbackSignal,
   YouTubeTrack
 } from '../shared/types';
 import {
@@ -35,6 +36,7 @@ import { DeckFxSamplerModule } from './components/DeckFxSamplerModule';
 import { DeckPanel } from './components/DeckPanel';
 import { HistoryAndCratesTab } from './components/HistoryAndCratesTab';
 import { InteractiveGuideModal } from './components/InteractiveGuideModal';
+import { TasteSetupModal } from './components/TasteSetupModal';
 import { LocalLibraryTab } from './components/LocalLibraryTab';
 import { MixerCenter } from './components/MixerCenter';
 import { OverlayControls } from './components/OverlayControls';
@@ -86,9 +88,38 @@ interface CrossfadeAnimationState {
   pauseOutgoingOnComplete: boolean;
 }
 
+type FeedbackTrack = Pick<YouTubeTrack, 'videoId' | 'title' | 'channel' | 'artists'>;
+
+function sendFeedback(track: FeedbackTrack, signal: FeedbackSignal): void {
+  void window.tubedeckAPI?.sendTrackFeedback?.({
+    track: {
+      videoId: track.videoId,
+      title: track.title,
+      channel: track.channel,
+      ...(track.artists ? { artists: track.artists } : {})
+    },
+    signal
+  });
+}
+
+/**
+ * Implicit signals, like YouTube does: a radio suggestion dropped within 30 s of being
+ * audible counts as a skip; any track heard for most of its length counts as completed.
+ */
+function reportImplicitFeedback(track: YouTubeTrack, audibleSec: number): void {
+  const duration = track.durationSec > 0 ? track.durationSec : 210;
+  if (audibleSec >= Math.max(60, duration * 0.6)) {
+    sendFeedback(track, 'complete');
+  } else if (track.recommendReason && audibleSec >= 3 && audibleSec < 30) {
+    sendFeedback(track, 'skip');
+  }
+}
+
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<BrowserTab>('search');
   const [guideOpen, setGuideOpen] = useState(false);
+  const [tasteSetupOpen, setTasteSetupOpen] = useState(false);
+  const [tasteSetupFirstRun, setTasteSetupFirstRun] = useState(false);
   const [framesDrawerOpen, setFramesDrawerOpen] = useState(false);
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
 
@@ -102,6 +133,8 @@ export function App(): ReactElement {
   const midiEngineRef = useRef(new MidiLearnEngine());
   const activeSessionIdRef = useRef<string | null>(null);
   const onAirMsRef = useRef<Record<DeckId, number>>({ A: 0, B: 0 });
+  /** Total audible time of the current track per deck (not reset on pause) — used for skip/complete signals. */
+  const audibleMsRef = useRef<Record<DeckId, number>>({ A: 0, B: 0 });
   const lastLoggedTrackRef = useRef<Record<DeckId, string>>({ A: '', B: '' });
 
   const dspRef = useRef<AudioDspEngine | null>(null);
@@ -351,6 +384,17 @@ export function App(): ReactElement {
           setActiveSessionId(res.data.id);
         }
       });
+      void Promise.all([
+        api.getTasteSeeds?.(),
+        api.getSetting?.<boolean>('tasteSetupDismissed', false)
+      ]).then(([seedsRes, dismissedRes]) => {
+        const hasSeeds = seedsRes?.success && seedsRes.data.length > 0;
+        const dismissed = dismissedRes?.success && dismissedRes.data === true;
+        if (!hasSeeds && !dismissed) {
+          setTasteSetupFirstRun(true);
+          setTasteSetupOpen(true);
+        }
+      });
       void api.listCrates().then((res) => {
         if (res.success) setCrates(res.data);
       });
@@ -432,8 +476,28 @@ export function App(): ReactElement {
     };
   }, []);
 
+  const handleDeckTrackFeedback = useCallback((deck: DeckId, signal: 'like' | 'dislike') => {
+    const track = useDeckStore.getState().decks[deck].track;
+    if (!track) return;
+    sendFeedback(track, signal);
+    if (signal === 'dislike') queueEngineRef.current.invalidateRadioPool();
+    useLibraryStore
+      .getState()
+      .setAutomixStatusNote(
+        signal === 'like'
+          ? `Anotado: te gusta "${track.title}".`
+          : `Anotado: no te gusta "${track.title}". La radio evitará canciones así.`
+      );
+  }, []);
+
   const loadTrackOntoDeck = useCallback(
     async (deck: DeckId, track: YouTubeTrack) => {
+      const outgoing = useDeckStore.getState().decks[deck].track;
+      const audibleSec = audibleMsRef.current[deck] / 1000;
+      audibleMsRef.current[deck] = 0;
+      if (outgoing && outgoing.source !== 'local' && outgoing.videoId !== track.videoId) {
+        reportImplicitFeedback(outgoing, audibleSec);
+      }
       liveRgbRef.current[deck] = [];
       autoGainEmaRef.current[deck] = 0.42;
       queueEngineRef.current.markDeckChanged(deck);
@@ -675,6 +739,7 @@ export function App(): ReactElement {
             const crossGain = id === 'A' ? 1 - stMixer.crossfader : stMixer.crossfader;
             if (playing && chFader > 0.05 && crossGain > 0.1 && prev.track) {
               onAirMsRef.current[id] += dtMs;
+              audibleMsRef.current[id] += dtMs;
               const playKey = `${activeSessionIdRef.current}:${prev.track.videoId}`;
               if (
                 onAirMsRef.current[id] >= 10_000 &&
@@ -765,8 +830,12 @@ export function App(): ReactElement {
                     useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue());
                   },
                   fetchSuggestedTracks: async (seedVideoId, excludeIds) => {
+                    const decksNow = useDeckStore.getState().decks;
+                    const seedTitle = [decksNow.A.track, decksNow.B.track].find(
+                      (t) => t?.videoId === seedVideoId
+                    )?.title;
                     const res = await (window.tubedeckAPI?.getRecommendedTracks
-                      ? window.tubedeckAPI.getRecommendedTracks(seedVideoId, excludeIds)
+                      ? window.tubedeckAPI.getRecommendedTracks(seedVideoId, excludeIds, seedTitle)
                       : window.tubedeckAPI?.getRelatedTracks(seedVideoId, excludeIds));
                     return res?.success ? res.data : [];
                   },
@@ -1201,6 +1270,7 @@ export function App(): ReactElement {
 
   const renderDeck = (deckId: DeckId) => (
     <DeckPanel
+      onTrackFeedback={handleDeckTrackFeedback}
       key={deckId}
       deckId={deckId}
       activeQuality={settings.activeDeckQuality[deckId]}
@@ -1777,6 +1847,33 @@ export function App(): ReactElement {
                 queueEngineRef.current.remove(queueId);
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
+              onOpenTasteSetup={() => {
+                setTasteSetupFirstRun(false);
+                setTasteSetupOpen(true);
+              }}
+              onTrackFeedback={(queueId, signal) => {
+                const item = queueEngineRef.current.getQueue().find((q) => q.queueId === queueId);
+                if (!item) return;
+                sendFeedback(item.track, signal);
+                if (signal !== 'like') queueEngineRef.current.invalidateRadioPool();
+                if (signal === 'dislike') {
+                  queueEngineRef.current.remove(queueId);
+                  libraryStore.setAutomixStatusNote(
+                    `Quitada "${item.track.title}". La radio pondrá menos canciones así.`
+                  );
+                } else if (signal === 'block-channel') {
+                  const channel = item.track.channel;
+                  for (const q of queueEngineRef.current.getQueue()) {
+                    if (q.source === 'youtube-radio' && q.track.channel === channel) {
+                      queueEngineRef.current.remove(q.queueId);
+                    }
+                  }
+                  libraryStore.setAutomixStatusNote(`No se recomendará más ${channel}.`);
+                } else {
+                  libraryStore.setAutomixStatusNote(`Anotado: te gusta "${item.track.title}".`);
+                }
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+              }}
               onClearQueue={() => {
                 queueEngineRef.current.clear();
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
@@ -1813,13 +1910,13 @@ export function App(): ReactElement {
                   ...queueEngineRef.current.getQueue().map((q) => q.track.videoId)
                 ];
                 const res = await (window.tubedeckAPI.getRecommendedTracks
-                  ? window.tubedeckAPI.getRecommendedTracks(seedTrack.videoId, existingIds)
+                  ? window.tubedeckAPI.getRecommendedTracks(seedTrack.videoId, existingIds, seedTrack.title)
                   : window.tubedeckAPI.getRelatedTracks(seedTrack.videoId, existingIds));
                 if (res.success && res.data.length > 0) {
                   queueEngineRef.current.enqueueMany(res.data.slice(0, 3), 'youtube-radio');
                   libraryStore.setQueue(queueEngineRef.current.getQueue());
                   libraryStore.setAutomixStatusNote(
-                    `Radio YT agregó ${Math.min(3, res.data.length)} canciones según tu historial.`
+                    `Radio YT agregó ${Math.min(3, res.data.length)} canciones según tus gustos.`
                   );
                 }
               }}
@@ -2031,6 +2128,23 @@ export function App(): ReactElement {
 
       {/* Modal: Guía Interactiva de Cabina */}
       <InteractiveGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
+
+      <TasteSetupModal
+        open={tasteSetupOpen}
+        firstRun={tasteSetupFirstRun}
+        onClose={() => {
+          setTasteSetupOpen(false);
+          if (tasteSetupFirstRun) {
+            void window.tubedeckAPI?.setSetting?.('tasteSetupDismissed', true);
+          }
+        }}
+        onSaved={(seeds) => {
+          queueEngineRef.current.invalidateRadioPool();
+          useLibraryStore
+            .getState()
+            .setAutomixStatusNote(`Radio ajustada con ${seeds.length} canciones de referencia.`);
+        }}
+      />
     </div>
   );
 }

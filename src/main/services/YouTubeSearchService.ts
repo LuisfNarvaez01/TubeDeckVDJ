@@ -56,11 +56,87 @@ export interface RawRelatedNode extends RawSearchResult {
   };
 }
 
+/** Shape of a YouTube Music `PlaylistPanelVideo` node (radio / up-next queue item). */
+export interface RawMusicPanelVideo {
+  type?: string;
+  video_id?: string;
+  title?: { toString(): string } | string;
+  author?: string;
+  artists?: Array<{ name?: string }>;
+  duration?: { seconds?: number; text?: string };
+  thumbnail?: Array<{ url?: string; width?: number; height?: number }>;
+}
+
+export interface RawMusicPanelItem extends RawMusicPanelVideo {
+  primary?: RawMusicPanelVideo | null;
+  counterpart?: RawMusicPanelVideo[];
+}
+
+export interface MusicClientLike {
+  getUpNext(videoId: string, automix?: boolean): Promise<{ contents?: RawMusicPanelItem[] }>;
+}
+
 export interface InnertubeClientLike {
   search(query: string, filters?: { type?: string }): Promise<SearchResultPageLike>;
   getSearchSuggestions(query: string): Promise<string[]>;
   getPlaylist(id: string): Promise<PlaylistResultPageLike>;
   getInfo?(videoId: string): Promise<{ watch_next_feed?: RawRelatedNode[] }>;
+  music?: MusicClientLike;
+}
+
+function isWideThumbnail(v: RawMusicPanelVideo): boolean {
+  const thumb = v.thumbnail?.[0];
+  if (!thumb) return false;
+  if (thumb.width && thumb.height) return thumb.width / thumb.height > 1.2;
+  return typeof thumb.url === 'string' && thumb.url.includes('i.ytimg.com/vi/');
+}
+
+/**
+ * Normalizes a YouTube Music radio item. Wrapped items carry both the song (square
+ * album art) and its music-video counterpart; the video version is preferred because
+ * this is a video DJ app.
+ */
+export function normalizeMusicPanelItem(item: RawMusicPanelItem): YouTubeTrack | null {
+  if (!item || typeof item !== 'object') return null;
+  const options: RawMusicPanelVideo[] = [];
+  if (item.primary || item.counterpart) {
+    if (item.primary) options.push(item.primary);
+    options.push(...(item.counterpart ?? []));
+  } else {
+    options.push(item);
+  }
+  const chosen = options.find(isWideThumbnail) ?? options[0];
+  if (!chosen) return null;
+
+  const videoId = chosen.video_id;
+  if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
+  const title = nodeText(chosen.title);
+  if (!title) return null;
+
+  let durationSec = Number(chosen.duration?.seconds ?? 0);
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    durationSec = parseDurationText(chosen.duration?.text);
+  }
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
+
+  const artists = (chosen.artists ?? [])
+    .map((a) => (typeof a?.name === 'string' ? a.name.trim() : ''))
+    .filter(Boolean);
+  const channel = (typeof chosen.author === 'string' && chosen.author.trim()) || artists.join(', ') || 'YouTube';
+  const wide = isWideThumbnail(chosen);
+
+  return {
+    videoId,
+    title,
+    channel,
+    durationSec,
+    thumbnailUrl: wide
+      ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+      : chosen.thumbnail?.[chosen.thumbnail.length - 1]?.url ??
+        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    isLive: false,
+    ...(artists.length > 0 ? { artists } : {})
+  };
 }
 
 export function parseDurationText(text?: string): number {
@@ -364,6 +440,29 @@ export class YouTubeSearchService {
       if (tracks.length >= limit) break;
     }
 
+    return tracks;
+  }
+
+  /**
+   * YouTube Music radio ("automix") for a seed video: a curated, songs-only list.
+   * Returns an empty list when the music client is unavailable or the seed is not a song.
+   */
+  async getMusicRadio(videoId: string, limit = 50): Promise<YouTubeTrack[]> {
+    const trimmed = videoId.trim();
+    if (!trimmed) return [];
+    const client = await this.getClient();
+    if (!client.music || typeof client.music.getUpNext !== 'function') return [];
+    const panel = await client.music.getUpNext(trimmed, true);
+    const contents = Array.isArray(panel?.contents) ? panel.contents : [];
+    const seen = new Set<string>([trimmed]);
+    const tracks: YouTubeTrack[] = [];
+    for (const raw of contents) {
+      const track = normalizeMusicPanelItem(raw);
+      if (!track || seen.has(track.videoId)) continue;
+      seen.add(track.videoId);
+      tracks.push(track);
+      if (tracks.length >= limit) break;
+    }
     return tracks;
   }
 

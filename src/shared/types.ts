@@ -18,6 +18,34 @@ export interface YouTubeTrack {
   mediaKind?: 'video' | 'audio';
   viewsText?: string;
   publishedText?: string;
+  /** Artist names when known (YouTube Music radio). */
+  artists?: string[];
+  /** Human-readable reason shown on radio suggestions, e.g. "Porque escuchaste X". */
+  recommendReason?: string;
+}
+
+/** Explicit and implicit feedback signals that feed the local taste model. */
+export type FeedbackSignal = 'like' | 'dislike' | 'skip' | 'complete' | 'block-channel';
+
+export interface TrackFeedbackInput {
+  track: Pick<YouTubeTrack, 'videoId' | 'title' | 'channel'> & { artists?: string[] };
+  signal: FeedbackSignal;
+}
+
+export interface TasteSeedTrack {
+  videoId: string;
+  title: string;
+  channel: string;
+  durationSec: number;
+  thumbnailUrl: string;
+}
+
+export interface TasteSummary {
+  seedCount: number;
+  likes: number;
+  dislikes: number;
+  blockedChannels: string[];
+  topArtists: Array<{ name: string; score: number }>;
 }
 
 export type StreamMode = 'muxed' | 'dash-split';

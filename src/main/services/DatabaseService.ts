@@ -209,6 +209,65 @@ export class DatabaseService {
       }
       this.save();
     }
+
+    this.applyMigration(
+      2,
+      `
+      CREATE TABLE IF NOT EXISTS track_feedback (
+        id TEXT PRIMARY KEY,
+        video_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        channel TEXT NOT NULL DEFAULT '',
+        artists_json TEXT NOT NULL DEFAULT '[]',
+        signal TEXT NOT NULL CHECK(signal IN ('like', 'dislike', 'skip', 'complete', 'block-channel')),
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_track_feedback_video ON track_feedback(video_id);
+
+      CREATE TABLE IF NOT EXISTS blocked_channels (
+        name_key TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS taste_seeds (
+        video_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        channel TEXT NOT NULL DEFAULT '',
+        duration_sec REAL NOT NULL DEFAULT 0,
+        thumbnail_url TEXT NOT NULL DEFAULT '',
+        position INTEGER NOT NULL DEFAULT 0,
+        added_at INTEGER NOT NULL
+      );
+      `
+    );
+  }
+
+  private applyMigration(version: number, sql: string): void {
+    const db = this.getDbOrThrow();
+    const applied = this.queryOne<{ version: number }>(
+      'SELECT version FROM schema_version WHERE version = ?',
+      [version]
+    );
+    if (applied) return;
+    db.run('BEGIN TRANSACTION;');
+    this.inTransaction = true;
+    try {
+      db.run(sql);
+      db.run('INSERT INTO schema_version (version, applied_at) VALUES (?, ?);', [
+        version,
+        Date.now()
+      ]);
+      db.run('COMMIT;');
+      this.inTransaction = false;
+    } catch (err) {
+      if (this.inTransaction) {
+        db.run('ROLLBACK;');
+        this.inTransaction = false;
+      }
+      throw err;
+    }
+    this.save();
   }
 
   queryAll<T extends Record<string, unknown>>(sql: string, params: unknown[] = []): T[] {

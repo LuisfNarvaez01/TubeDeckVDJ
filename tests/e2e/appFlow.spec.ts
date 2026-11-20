@@ -50,6 +50,13 @@ test('Dual-window VDJ v2.1 cabin launches cleanly, opens Guide/Marcos/Ajustes dr
 
     await mainPage.waitForLoadState('domcontentloaded');
 
+    // 0. First run: the radio taste setup ("10 reference songs") opens and can be skipped
+    const tasteDialog = mainPage.getByRole('dialog', { name: 'Ajustar mi radio' });
+    await expect(tasteDialog).toBeVisible();
+    await expect(tasteDialog.getByText('Enséñale a la radio lo que pones')).toBeVisible();
+    await tasteDialog.getByRole('button', { name: 'Omitir por ahora' }).click();
+    await expect(tasteDialog).toBeHidden();
+
     // 1. Verify all primary cabin panels, Top Bar actions, and 4 bottom tabs
     await expect(mainPage.getByRole('region', { name: 'Deck A', exact: true })).toBeVisible();
     await expect(mainPage.getByRole('region', { name: 'Deck B', exact: true })).toBeVisible();

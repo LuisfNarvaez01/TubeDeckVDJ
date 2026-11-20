@@ -10,7 +10,11 @@ import {
   Radio,
   Wand2,
   Film,
-  Music
+  Music,
+  ThumbsUp,
+  ThumbsDown,
+  Ban,
+  SlidersHorizontal
 } from 'lucide-react';
 import type { DeckId } from '../../shared/types';
 import type { AutomixFadeType, PreloadMode } from '../dj/QueueAndAutomixEngine';
@@ -30,6 +34,8 @@ interface QueueTabProps {
   onFadeDurationChange: (sec: number) => void;
   onPreloadModeChange: (mode: PreloadMode) => void;
   onFetchSuggestionsNow: () => void;
+  onTrackFeedback: (queueId: string, signal: 'like' | 'dislike' | 'block-channel') => void;
+  onOpenTasteSetup: () => void;
 }
 
 export function QueueTab({
@@ -44,7 +50,9 @@ export function QueueTab({
   onFadeTypeChange,
   onFadeDurationChange,
   onPreloadModeChange,
-  onFetchSuggestionsNow
+  onFetchSuggestionsNow,
+  onTrackFeedback,
+  onOpenTasteSetup
 }: QueueTabProps): ReactElement {
   const queue = useLibraryStore((s) => s.queue);
   const automixEnabled = useLibraryStore((s) => s.automixEnabled);
@@ -57,6 +65,7 @@ export function QueueTab({
 
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
+  const [likedQueueIds, setLikedQueueIds] = useState<Set<string>>(() => new Set());
 
   return (
     <div className="flex h-full flex-col gap-2">
@@ -134,6 +143,16 @@ export function QueueTab({
           >
             <Wand2 className="h-3.5 w-3.5" />
             + Sugerir YT
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenTasteSetup}
+            className="inline-flex items-center gap-1 rounded-lg border border-white/[0.1] bg-[#151821] px-2.5 py-1 text-[11px] font-semibold text-[#F8FAFC] hover:bg-[#1C202B] cursor-pointer"
+            title="Elige tus canciones de referencia y revisa lo que la radio aprendió de ti"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Ajustar mi radio
           </button>
 
           <button
@@ -270,10 +289,52 @@ export function QueueTab({
                             : item.status}
                       </span>
                     </p>
+                    {item.source === 'youtube-radio' && item.track.recommendReason ? (
+                      <p className="truncate text-[11px] text-[#64748B]">{item.track.recommendReason}</p>
+                    ) : null}
                   </div>
                 </div>
 
                 <div className="flex shrink-0 items-center gap-1">
+                  {item.source === 'youtube-radio' ? (
+                    <div className="mr-1 flex items-center gap-0.5 rounded-lg border border-white/[0.06] bg-[#0F1117] p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLikedQueueIds((prev) => new Set(prev).add(item.queueId));
+                          onTrackFeedback(item.queueId, 'like');
+                        }}
+                        aria-pressed={likedQueueIds.has(item.queueId)}
+                        className={`rounded p-1 transition-colors duration-150 cursor-pointer ${
+                          likedQueueIds.has(item.queueId)
+                            ? 'bg-[#10B981]/15 text-[#10B981]'
+                            : 'text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC]'
+                        }`}
+                        aria-label="Me gusta esta sugerencia"
+                        title="Me gusta: la radio pondrá más como esta"
+                      >
+                        <ThumbsUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onTrackFeedback(item.queueId, 'dislike')}
+                        className="rounded p-1 text-[#94A3B8] transition-colors duration-150 hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
+                        aria-label="No me gusta esta sugerencia"
+                        title="No me gusta: la quita y la radio aprende"
+                      >
+                        <ThumbsDown className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onTrackFeedback(item.queueId, 'block-channel')}
+                        className="rounded p-1 text-[#94A3B8] transition-colors duration-150 hover:bg-[#EF4444]/15 hover:text-[#FCA5A5] cursor-pointer"
+                        aria-label={`No recomendar ${item.track.channel}`}
+                        title={`No recomendar más ${item.track.channel}`}
+                      >
+                        <Ban className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : null}
                   {idx > 0 && item.status === 'pending' ? (
                     <button
                       type="button"

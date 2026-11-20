@@ -157,6 +157,13 @@ export class QueueAndAutomixEngine {
     }
   }
 
+  /** Drops cached radio suggestions so the next fetch reflects fresh feedback. */
+  invalidateRadioPool(): void {
+    this.radioPool = [];
+    this.radioSeedVideoId = null;
+    this.lastRadioFetchMs = -Infinity;
+  }
+
   markDeckChanged(deck: DeckId): void {
     delete this.preloadedForDeck[deck];
     this.transitionedForDeck[deck] = false;
