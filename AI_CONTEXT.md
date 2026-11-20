@@ -12,7 +12,7 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 - **Frontend:** React `19.3.1`, TypeScript, Tailwind CSS v4 (`@tailwindcss/vite`), Zustand `5.1.0`, `lucide-react` (`1.76.0`).
 - **Audio y Video:** Web Audio API (`AudioDspEngine`, `AudioOutputRouter`), reproducción dual HTMLMediaElement (`DualDeckMediaSync`), WebGL2 / GLSL (`WebGLVideoCompositor` + `transitions.glsl.ts` + `effects.glsl.ts`), Canvas 2D (`OverlayCompositor`), WebRTC loopback (`outputRtcBridge`).
 - **Proceso Main / Persistencia:** `youtubei.js` `18.3.0`, binario `yt-dlp.exe` en `resources/bin/` (empaquetado en `extraResources` → `bin/`), `sql.js` `1.17.0` (SQLite WASM sin compilación nativa C++, `sql-wasm.wasm` en `extraResources`), `zod` `4.6.7`.
-- **Testing:** Vitest `5.1.1` (27 archivos, 55 tests unitarios/componentes) y Playwright `1.65.1` (`tests/e2e/appFlow.spec.ts` para binario compilado y ejecutable empaquetado).
+- **Testing:** Vitest `5.1.1` (28 archivos, 60 tests unitarios/componentes) y Playwright `1.65.1` (`tests/e2e/appFlow.spec.ts` para binario compilado y ejecutable empaquetado).
 
 ## 3. Arquitectura y Mapa de Archivos (`src/`)
 
@@ -21,7 +21,7 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 - `src/main/ipc/registerHandlers.ts`: Registro de handlers IPC validados con `zod` retornando `Result<T>` (`{ success: true, data } | { success: false, error }`).
 - `src/main/services/StreamResolverService.ts`: Resolución de URLs de YouTube vía `yt-dlp` eligiendo **H.264 720p** por defecto y exponiendo `videoVariants` (`1080p`, `720p`, `480p`, `360p`) en modo `dash-split` o `muxed`.
 - `src/main/services/RamStreamProxy.ts`: Proxy HTTP local en `127.0.0.1` en RAM con lectura por rangos (`Range`) en bloques de **2 MB** para evitar cortes/throttling de YouTube, parámetro `?quality=`, timeout/reintentos y streaming `HTTP 206` para archivos locales (`/local/:fileId`).
-- `src/main/services/YouTubeSearchService.ts`: Búsqueda en YouTube con metadatos ricos (`durationSec`, `viewsText`, `publishedText`), playlists, pistas relacionadas y `getMusicRadio` (radio *automix* de YouTube Music vía `music.getUpNext`, prefiere la versión con video oficial 16:9). `getHistoryWeightedRecommendations` queda solo como respaldo (el feed `watch_next` anónimo ya casi no devuelve resultados).
+- `src/main/services/YouTubeSearchService.ts`: Búsqueda en YouTube con metadatos ricos (`durationSec`, `viewsText`, `publishedText`), playlists, pistas relacionadas y `getMusicRadio` (radio *automix* de YouTube Music vía `music.getUpNext`, prefiere la versión con video oficial 16:9). Toda llamada a YouTube pasa por `withClient`/`withRetry`: timeout de 12 s (`DEFAULT_YOUTUBE_TIMEOUT_MS`), y ante cuelgue o fallo descarta la sesión Innertube y reintenta una vez con una nueva; el error final llega en español ("YouTube tardó demasiado en responder…") y el buscador ofrece **Reintentar**. `getHistoryWeightedRecommendations` queda solo como respaldo (el feed `watch_next` anónimo ya casi no devuelve resultados).
 - `src/main/services/RecommendationEngine.ts`: Pipeline de Radio YT (Fuente → Filtro → Puntuación → Selección). Fuentes en paralelo: radio YT Music de la canción actual + una de la sesión reciente + un Me gusta o canción de referencia (caché 20 min). Filtra basura (reacciones, tutoriales, vlogs, shorts, mezclas largas; duración 90–600 s), no me gusta y canales bloqueados; puntúa consenso entre radios, afinidad por artista, video oficial, perfil histórico; diversidad (máx. 2 por artista, sin versiones duplicadas). Devuelve `recommendReason` por pista.
 - `src/main/services/TasteFeedbackService.ts`: Perfil local que reemplaza a la cuenta de Google: tablas `track_feedback` (`like`/`dislike`/`skip`/`complete`/`block-channel`, decaimiento de 60 días), `blocked_channels` y `taste_seeds` (hasta 10 canciones de referencia del asistente de primer uso).
 - `src/main/services/DatabaseService.ts`, `HistoryAndCratesService.ts`, `SessionExporter.ts`: Base SQLite (`tubedeck.db` con tablas `sessions`, `history_entries`, `track_metadata`, `crates`, `crate_tracks`, `midi_mappings`, `app_settings`, `schema_version`; migración v2: `track_feedback`, `blocked_channels`, `taste_seeds`), generación del perfil de afinidad (`buildTasteProfile(100)`) y exportación de sesiones.
@@ -82,7 +82,7 @@ npm run typecheck
 # Compilación de producción (out/main, out/preload, out/renderer)
 npm run build
 
-# Pruebas unitarias (27 archivos / 55 tests)
+# Pruebas unitarias (28 archivos / 60 tests)
 npx vitest run
 
 # Pruebas E2E contra app compilada (out/main/index.js)

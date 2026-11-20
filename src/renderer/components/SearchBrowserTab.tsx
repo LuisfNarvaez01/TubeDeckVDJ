@@ -114,8 +114,7 @@ export function SearchBrowserTab({
     });
   }, [results, quickFilter, durationFilter]);
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const runSearch = async () => {
     const trimmed = query.trim();
     if (!trimmed) return;
     setSearching(true);
@@ -138,13 +137,21 @@ export function SearchBrowserTab({
     }
   };
 
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    void runSearch();
+  };
+
   const handleLoadMore = async () => {
     setSearching(true);
+    setError(null);
     try {
       const res = await window.tubedeckAPI.searchYouTubeNext();
       if (res.success) {
         setResults([...results, ...res.data.items]);
         setHasMore(res.data.hasMore);
+      } else {
+        setError(res.error);
       }
     } finally {
       setSearching(false);
@@ -293,8 +300,20 @@ export function SearchBrowserTab({
       </form>
 
       {error ? (
-        <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger-soft">
-          {error}
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger-soft"
+        >
+          <span className="min-w-0">{error}</span>
+          <button
+            type="button"
+            onClick={() => void runSearch()}
+            disabled={searching || !query.trim()}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-white/[0.1] bg-raised px-2.5 py-1 font-semibold text-ink hover:bg-raised-2 disabled:opacity-50 cursor-pointer"
+          >
+            {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            Reintentar
+          </button>
         </div>
       ) : null}
 
