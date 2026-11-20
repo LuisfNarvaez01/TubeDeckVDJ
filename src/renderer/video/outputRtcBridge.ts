@@ -31,7 +31,19 @@ export function startOutputRtcSender(
 
     pc = new RTCPeerConnection(RTC_CONFIG);
     for (const track of stream.getTracks()) {
-      pc.addTrack(track, stream);
+      const sender = pc.addTrack(track, stream);
+      if (track.kind === 'video' && typeof sender.getParameters === 'function') {
+        try {
+          const params = sender.getParameters();
+          params.degradationPreference = 'maintain-framerate';
+          params.encodings = params.encodings?.length
+            ? params.encodings.map((enc) => ({ ...enc, maxBitrate: 12_000_000 }))
+            : [{ maxBitrate: 12_000_000 }];
+          void Promise.resolve(sender.setParameters(params)).catch(() => {});
+        } catch {
+          // ignore unsupported RTC encoding parameters
+        }
+      }
     }
 
     pc.onicecandidate = (evt) => {

@@ -25,16 +25,37 @@ const QUAD_VERTICES = new Float32Array([
    1,  1, 1, 1
 ]);
 
+interface VideoSlotCache {
+  hasValidTex: boolean;
+  lastAspect: number;
+  lastVideoTime: number;
+  lastVideoSrc: string;
+}
+
+function createEmptySlotCache(): VideoSlotCache {
+  return {
+    hasValidTex: false,
+    lastAspect: 16 / 9,
+    lastVideoTime: -1,
+    lastVideoSrc: ''
+  };
+}
+
 export class WebGLVideoCompositor {
   private readonly canvas: HTMLCanvasElement;
   private gl: WebGL2RenderingContext | null = null;
   private ctx2d: CanvasRenderingContext2D | null = null;
   private programs = new Map<VideoTransitionId, WebGLProgram>();
+  private uniformCache = new Map<WebGLProgram, Map<string, WebGLUniformLocation | null>>();
   private vao: WebGLVertexArrayObject | null = null;
   private vbo: WebGLBuffer | null = null;
   private texA: WebGLTexture | null = null;
   private texB: WebGLTexture | null = null;
   private texOverlay: WebGLTexture | null = null;
+  private slotCaches: Record<'A' | 'B', VideoSlotCache> = {
+    A: createEmptySlotCache(),
+    B: createEmptySlotCache()
+  };
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -43,8 +64,9 @@ export class WebGLVideoCompositor {
   init(): boolean {
     const gl = this.canvas.getContext('webgl2', {
       alpha: false,
-      antialias: true,
-      powerPreference: 'high-performance'
+      antialias: false,
+      powerPreference: 'high-performance',
+      preserveDrawingBuffer: true
     });
 
     if (!gl) {
@@ -135,20 +157,66 @@ export class WebGLVideoCompositor {
     return fromSide === 'A' ? eased : 1 - eased;
   }
 
+  private getUniformLocationCached(
+    gl: WebGL2RenderingContext,
+    program: WebGLProgram,
+    name: string
+  ): WebGLUniformLocation | null {
+    let map = this.uniformCache.get(program);
+    if (!map) {
+      map = new Map();
+      this.uniformCache.set(program, map);
+    }
+    if (map.has(name)) {
+      return map.get(name) ?? null;
+    }
+    const loc = gl.getUniformLocation(program, name);
+    map.set(name, loc);
+    return loc;
+  }
+
   private uploadVideoTexture(
     gl: WebGL2RenderingContext,
+    slot: 'A' | 'B',
     unit: number,
     tex: WebGLTexture | null,
     video: HTMLVideoElement | null
   ): { active: number; aspect: number } {
+    const cache = this.slotCaches[slot];
     gl.activeTexture(unit);
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+
+    if (!video || !video.src) {
+      cache.hasValidTex = false;
+      cache.lastVideoTime = -1;
+      cache.lastVideoSrc = '';
       return { active: 0, aspect: 16 / 9 };
     }
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
-    return { active: 1, aspect: video.videoWidth / video.videoHeight };
+
+    if (video.src !== cache.lastVideoSrc) {
+      cache.hasValidTex = false;
+      cache.lastVideoTime = -1;
+      cache.lastVideoSrc = video.src;
+    }
+
+    if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+      const aspect = video.videoWidth / video.videoHeight;
+      if (!cache.hasValidTex || video.currentTime !== cache.lastVideoTime) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+        cache.hasValidTex = true;
+        cache.lastVideoTime = video.currentTime;
+      }
+      cache.lastAspect = aspect;
+      return { active: 1, aspect };
+    }
+
+    // Hold last valid GPU frame during seeks/re-buffering so screen never flashes black
+    if (cache.hasValidTex) {
+      return { active: 1, aspect: cache.lastAspect };
+    }
+
+    return { active: 0, aspect: 16 / 9 };
   }
 
   renderFrame(state: CompositorFrameState): void {
@@ -160,6 +228,7 @@ export class WebGLVideoCompositor {
 
     const gl = this.gl;
     const program = this.getOrCreateProgram(gl, state.transition);
+    const loc = (name: string) => this.getUniformLocationCached(gl, program, name);
 
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clearColor(0, 0, 0, 1);
@@ -167,8 +236,8 @@ export class WebGLVideoCompositor {
     gl.useProgram(program);
     gl.bindVertexArray(this.vao);
 
-    const aInfo = this.uploadVideoTexture(gl, gl.TEXTURE0, this.texA, state.videoA);
-    const bInfo = this.uploadVideoTexture(gl, gl.TEXTURE1, this.texB, state.videoB);
+    const aInfo = this.uploadVideoTexture(gl, 'A', gl.TEXTURE0, this.texA, state.videoA);
+    const bInfo = this.uploadVideoTexture(gl, 'B', gl.TEXTURE1, this.texB, state.videoB);
 
     gl.activeTexture(gl.TEXTURE2);
     gl.bindTexture(gl.TEXTURE_2D, this.texOverlay);
@@ -179,32 +248,29 @@ export class WebGLVideoCompositor {
       hasOverlay = 1;
     }
 
-    gl.uniform1i(gl.getUniformLocation(program, 'u_texA'), 0);
-    gl.uniform1i(gl.getUniformLocation(program, 'u_texB'), 1);
-    gl.uniform1i(gl.getUniformLocation(program, 'u_texOverlay'), 2);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_hasA'), aInfo.active);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_hasB'), bInfo.active);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_hasOverlay'), hasOverlay);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_mix'), mix);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_aspectA'), aInfo.aspect);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_aspectB'), bInfo.aspect);
-    gl.uniform1f(
-      gl.getUniformLocation(program, 'u_canvasAspect'),
-      this.canvas.width / Math.max(1, this.canvas.height)
-    );
+    gl.uniform1i(loc('u_texA'), 0);
+    gl.uniform1i(loc('u_texB'), 1);
+    gl.uniform1i(loc('u_texOverlay'), 2);
+    gl.uniform1f(loc('u_hasA'), aInfo.active);
+    gl.uniform1f(loc('u_hasB'), bInfo.active);
+    gl.uniform1f(loc('u_hasOverlay'), hasOverlay);
+    gl.uniform1f(loc('u_mix'), mix);
+    gl.uniform1f(loc('u_aspectA'), aInfo.aspect);
+    gl.uniform1f(loc('u_aspectB'), bInfo.aspect);
+    gl.uniform1f(loc('u_canvasAspect'), this.canvas.width / Math.max(1, this.canvas.height));
 
     const bands = state.audioBands ?? { low: 0, mid: 0, high: 0 };
-    gl.uniform1f(gl.getUniformLocation(program, 'u_time'), state.timeSec ?? 0);
-    gl.uniform3f(gl.getUniformLocation(program, 'u_audioBands'), bands.low, bands.mid, bands.high);
+    gl.uniform1f(loc('u_time'), state.timeSec ?? 0);
+    gl.uniform3f(loc('u_audioBands'), bands.low, bands.mid, bands.high);
 
     const fx = state.fxUniforms ?? {};
-    gl.uniform1f(gl.getUniformLocation(program, 'u_fxBlur'), fx.u_fxBlur ?? 0);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_fxStrobe'), fx.u_fxStrobe ?? 0);
-    gl.uniform1i(gl.getUniformLocation(program, 'u_fxMirrorMode'), fx.u_fxMirrorMode ?? 0);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_fxHue'), fx.u_fxHue ?? 0);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_fxBw'), fx.u_fxBw ?? 0);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_fxPixelate'), fx.u_fxPixelate ?? 0);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_fxAudioShader'), fx.u_fxAudioShader ?? 0);
+    gl.uniform1f(loc('u_fxBlur'), fx.u_fxBlur ?? 0);
+    gl.uniform1f(loc('u_fxStrobe'), fx.u_fxStrobe ?? 0);
+    gl.uniform1i(loc('u_fxMirrorMode'), fx.u_fxMirrorMode ?? 0);
+    gl.uniform1f(loc('u_fxHue'), fx.u_fxHue ?? 0);
+    gl.uniform1f(loc('u_fxBw'), fx.u_fxBw ?? 0);
+    gl.uniform1f(loc('u_fxPixelate'), fx.u_fxPixelate ?? 0);
+    gl.uniform1f(loc('u_fxAudioShader'), fx.u_fxAudioShader ?? 0);
 
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -231,7 +297,15 @@ export class WebGLVideoCompositor {
   }
 
   captureOutputStream(fps = 60): MediaStream {
-    return this.canvas.captureStream(fps);
+    const stream = this.canvas.captureStream(fps);
+    if (typeof stream?.getVideoTracks === 'function') {
+      for (const track of stream.getVideoTracks()) {
+        if ('contentHint' in track) {
+          track.contentHint = 'motion';
+        }
+      }
+    }
+    return stream;
   }
 
   dispose(): void {
@@ -240,6 +314,7 @@ export class WebGLVideoCompositor {
         this.gl.deleteProgram(prog);
       }
       this.programs.clear();
+      this.uniformCache.clear();
       this.gl = null;
     }
     this.ctx2d = null;

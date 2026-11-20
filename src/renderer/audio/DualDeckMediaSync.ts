@@ -12,8 +12,13 @@ export interface LoadDeckStreamParams {
   audioUrl?: string;
 }
 
-const DRIFT_THRESHOLD_SEC = 0.04;
-const DRIFT_COOLDOWN_MS = 250;
+const SOFT_DRIFT_DEADBAND_SEC = 0.06;
+const HARD_DRIFT_THRESHOLD_SEC = 0.65;
+const HARD_DRIFT_COOLDOWN_MS = 2500;
+
+function clampRate(rate: number): number {
+  return Math.min(2.0, Math.max(0.25, rate));
+}
 
 function waitForCanPlay(el: HTMLMediaElement, timeoutMs = 4000): Promise<void> {
   if (!el.src || el.readyState >= 3) {
@@ -52,6 +57,8 @@ export class DualDeckMediaSync {
   private readonly audioEl: HTMLAudioElement;
   private readonly videoEl: HTMLVideoElement;
   private mode: StreamMode = 'muxed';
+  private basePlaybackRate = 1;
+  private tempBendMultiplier = 1;
   private lastDriftCorrectionMs = -Infinity;
   private disposed = false;
 
@@ -131,7 +138,9 @@ export class DualDeckMediaSync {
 
   async play(): Promise<void> {
     if (this.mode === 'dash-split') {
-      this.videoEl.currentTime = this.audioEl.currentTime;
+      if (Math.abs(this.videoEl.currentTime - this.audioEl.currentTime) > 0.15) {
+        this.videoEl.currentTime = this.audioEl.currentTime;
+      }
       await Promise.all([this.audioEl.play(), this.videoEl.play()]);
       return;
     }
@@ -163,28 +172,61 @@ export class DualDeckMediaSync {
     await waitForCanPlay(this.videoEl, 1500);
   }
 
+  private applyEffectivePlaybackRate(): void {
+    const effective = clampRate(this.basePlaybackRate * this.tempBendMultiplier);
+    this.audioEl.playbackRate = effective;
+    this.videoEl.playbackRate = effective;
+  }
+
   setPlaybackRate(rate: number, keyLock: boolean): void {
-    const clampedRate = Math.min(2.0, Math.max(0.25, rate));
-    this.audioEl.playbackRate = clampedRate;
-    this.videoEl.playbackRate = clampedRate;
+    this.basePlaybackRate = clampRate(rate);
+    this.applyEffectivePlaybackRate();
     setElementPreservesPitch(this.audioEl, keyLock);
     setElementPreservesPitch(this.videoEl, keyLock);
+  }
+
+  setTemporaryBend(multiplier: number): void {
+    this.tempBendMultiplier = Math.min(1.35, Math.max(0.5, multiplier));
+    this.applyEffectivePlaybackRate();
   }
 
   syncDrift(nowMs = Date.now()): boolean {
     if (this.mode !== 'dash-split') {
       return false;
     }
-    const drift = Math.abs(this.videoEl.currentTime - this.audioEl.currentTime);
-    if (drift <= DRIFT_THRESHOLD_SEC) {
+    if (this.audioEl.paused || this.videoEl.paused || this.videoEl.readyState < 2) {
       return false;
     }
-    if (nowMs - this.lastDriftCorrectionMs < DRIFT_COOLDOWN_MS) {
+
+    const baseRate = clampRate(this.basePlaybackRate * this.tempBendMultiplier);
+    const signedDrift = this.audioEl.currentTime - this.videoEl.currentTime;
+    const absDrift = Math.abs(signedDrift);
+
+    if (absDrift <= SOFT_DRIFT_DEADBAND_SEC) {
+      if (this.videoEl.playbackRate !== baseRate) {
+        this.videoEl.playbackRate = baseRate;
+      }
       return false;
     }
+
+    if (absDrift <= HARD_DRIFT_THRESHOLD_SEC) {
+      const nudgeFactor = 1 + Math.min(0.05, Math.max(-0.05, signedDrift * 0.18));
+      this.videoEl.playbackRate = clampRate(baseRate * nudgeFactor);
+      return false;
+    }
+
+    if (nowMs - this.lastDriftCorrectionMs < HARD_DRIFT_COOLDOWN_MS || this.videoEl.seeking) {
+      return false;
+    }
+
+    this.videoEl.playbackRate = baseRate;
     this.videoEl.currentTime = this.audioEl.currentTime;
     this.lastDriftCorrectionMs = nowMs;
     return true;
+  }
+
+  isEnded(): boolean {
+    return Boolean(this.getAudioElement().ended);
   }
 
   getCurrentTime(): number {

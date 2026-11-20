@@ -13,6 +13,8 @@ function createFakeMediaElement(tag: 'audio' | 'video'): HTMLMediaElement {
     preservesPitch: true,
     readyState: 4,
     paused: true,
+    seeking: false,
+    ended: false,
     load: vi.fn(() => {
       const set = listeners.get('canplay');
       if (set) {
@@ -68,7 +70,7 @@ describe('DualDeckMediaSync', () => {
     expect((videoEl as unknown as { preservesPitch: boolean }).preservesPitch).toBe(true);
   });
 
-  it('corrects DASH drift > 0.04s with 250ms cooldown and aligns both elements on seek', async () => {
+  it('soft-nudges small DASH drift without seeking and hard-seeks only on >0.65s drift with 2500ms cooldown', async () => {
     const audioEl = createFakeMediaElement('audio') as HTMLAudioElement;
     const videoEl = createFakeMediaElement('video') as HTMLVideoElement;
     const sync = new DualDeckMediaSync('B', { audioEl, videoEl });
@@ -78,20 +80,44 @@ describe('DualDeckMediaSync', () => {
       videoUrl: 'http://127.0.0.1:9999/stream/abc12345678/video?token=t',
       audioUrl: 'http://127.0.0.1:9999/stream/abc12345678/audio?token=t'
     });
+    await sync.play();
 
+    // Small 150ms drift (<= 0.65s): softly nudges video playbackRate without touching currentTime
     audioEl.currentTime = 12.5;
-    videoEl.currentTime = 12.41; // 90ms drift > 40ms
-    expect(sync.syncDrift(1000)).toBe(true);
-    expect(videoEl.currentTime).toBe(12.5);
+    videoEl.currentTime = 12.35;
+    expect(sync.syncDrift(1000)).toBe(false);
+    expect(videoEl.currentTime).toBe(12.35);
+    expect(videoEl.playbackRate).toBeGreaterThan(1);
 
-    // Within 250ms cooldown -> does not re-correct
-    videoEl.currentTime = 12.42;
-    expect(sync.syncDrift(1100)).toBe(false);
-    expect(videoEl.currentTime).toBe(12.42);
+    // Drift back within <= 60ms: restores nominal video playbackRate
+    videoEl.currentTime = 12.48;
+    expect(sync.syncDrift(1200)).toBe(false);
+    expect(videoEl.playbackRate).toBe(1);
 
-    // Past cooldown -> corrects again
-    expect(sync.syncDrift(1300)).toBe(true);
-    expect(videoEl.currentTime).toBe(12.5);
+    // Large drift (> 0.65s): performs hard seek once, then enforces 2500ms cooldown
+    audioEl.currentTime = 20.0;
+    videoEl.currentTime = 19.1;
+    expect(sync.syncDrift(1500)).toBe(true);
+    expect(videoEl.currentTime).toBe(20.0);
+
+    videoEl.currentTime = 19.1;
+    expect(sync.syncDrift(2500)).toBe(false);
+    expect(videoEl.currentTime).toBe(19.1);
+
+    expect(sync.syncDrift(4100)).toBe(true);
+    expect(videoEl.currentTime).toBe(20.0);
+
+    // Temporary jog bend scales base playbackRate and restores cleanly
+    sync.setPlaybackRate(1.04, true);
+    sync.setTemporaryBend(1.03);
+    expect(audioEl.playbackRate).toBeCloseTo(1.04 * 1.03, 5);
+    expect(videoEl.playbackRate).toBeCloseTo(1.04 * 1.03, 5);
+    sync.setTemporaryBend(1);
+    expect(audioEl.playbackRate).toBeCloseTo(1.04, 5);
+
+    expect(sync.isEnded()).toBe(false);
+    (audioEl as unknown as { ended: boolean }).ended = true;
+    expect(sync.isEnded()).toBe(true);
 
     await sync.seek(45.5);
     expect(audioEl.currentTime).toBe(45.5);

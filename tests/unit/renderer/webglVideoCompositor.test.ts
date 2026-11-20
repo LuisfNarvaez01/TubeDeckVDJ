@@ -116,5 +116,64 @@ describe('WebGLVideoCompositor & GLSL transitions', () => {
     expect(fakeCanvas.captureStream).toHaveBeenCalledWith(60);
     compositor.dispose();
   });
+
+  it('holds last valid GPU video frame when readyState drops and skips redundant texImage2D uploads', () => {
+    const glMock = createMockWebGL2();
+    const track = { contentHint: '' };
+    const fakeCanvas = {
+      width: 1280,
+      height: 720,
+      getContext: vi.fn((kind: string) => (kind === 'webgl2' ? glMock : null)),
+      captureStream: vi.fn(() => ({ getVideoTracks: () => [track] }) as unknown as MediaStream)
+    } as unknown as HTMLCanvasElement;
+
+    const videoA = {
+      src: 'http://127.0.0.1:9999/stream/abc12345678/video?token=t',
+      readyState: 4,
+      videoWidth: 1920,
+      videoHeight: 1080,
+      currentTime: 10.5
+    } as unknown as HTMLVideoElement;
+
+    const compositor = new WebGLVideoCompositor(fakeCanvas);
+    compositor.init();
+
+    // Frame 1: uploads texture A and sets u_hasA = 1
+    compositor.renderFrame({
+      mix: 0,
+      transition: 'dissolve',
+      videoA,
+      videoB: null,
+      overlayCanvas: null
+    });
+    expect(glMock.texImage2D).toHaveBeenCalledTimes(1);
+    expect(glMock.uniform1f).toHaveBeenCalledWith(expect.objectContaining({ name: 'u_hasA' }), 1);
+
+    // Frame 2: same currentTime -> no duplicate texImage2D upload, still u_hasA = 1
+    compositor.renderFrame({
+      mix: 0,
+      transition: 'dissolve',
+      videoA,
+      videoB: null,
+      overlayCanvas: null
+    });
+    expect(glMock.texImage2D).toHaveBeenCalledTimes(1);
+
+    // Frame 3: readyState drops to 1 (e.g. buffering) -> holds GPU frame (u_hasA remains 1!)
+    (videoA as unknown as { readyState: number }).readyState = 1;
+    vi.mocked(glMock.uniform1f).mockClear();
+    compositor.renderFrame({
+      mix: 0,
+      transition: 'dissolve',
+      videoA,
+      videoB: null,
+      overlayCanvas: null
+    });
+    expect(glMock.uniform1f).toHaveBeenCalledWith(expect.objectContaining({ name: 'u_hasA' }), 1);
+
+    compositor.captureOutputStream(60);
+    expect(track.contentHint).toBe('motion');
+    compositor.dispose();
+  });
 });
 
