@@ -2,6 +2,7 @@ import { dialog, ipcMain } from 'electron';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type { DeckStreamEndpoints, Result, RtcSignalPayload, YouTubeTrack } from '../../shared/types';
+import type { AutoUpdaterService } from '../services/AutoUpdaterService';
 import type { DatabaseService } from '../services/DatabaseService';
 import type { DisplayWindowManager } from '../services/DisplayWindowManager';
 import type { HistoryAndCratesService } from '../services/HistoryAndCratesService';
@@ -46,6 +47,7 @@ export interface MainServices {
   displays: DisplayWindowManager;
   history: HistoryAndCratesService;
   exporter: SessionExporter;
+  updater?: AutoUpdaterService;
 }
 
 function buildEndpoints(
@@ -342,5 +344,27 @@ export function registerIpcHandlers(services: MainServices): void {
       const id = NonEmptyStringSchema.parse(rawId);
       services.history.deleteMidiMapping(id);
     })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_STATUS, () =>
+    wrapResult(() => services.updater?.getStatus() ?? null)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_CHECK, () =>
+    wrapResult(async () => {
+      if (!services.updater) return null;
+      return services.updater.checkForUpdates();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_DOWNLOAD, () =>
+    wrapResult(async () => {
+      if (!services.updater) return null;
+      return services.updater.downloadUpdate();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.UPDATER_INSTALL, () =>
+    wrapResult(() => services.updater?.quitAndInstall() ?? false)
   );
 }

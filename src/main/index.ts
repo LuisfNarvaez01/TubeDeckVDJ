@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc/registerHandlers';
+import { AutoUpdaterService } from './services/AutoUpdaterService';
 import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { HistoryAndCratesService } from './services/HistoryAndCratesService';
@@ -15,12 +16,14 @@ import {
 import { YouTubeSearchService } from './services/YouTubeSearchService';
 import { YtDlpBinaryManager } from './services/YtDlpBinaryManager';
 
-const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let dbService: DatabaseService | null = null;
 let ramProxy: RamStreamProxy | null = null;
 let displayManager: DisplayWindowManager | null = null;
+let updaterService: AutoUpdaterService | null = null;
 
 function buildContentSecurityPolicy(isDev: boolean): string {
   const scriptSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
@@ -69,7 +72,7 @@ function createMainWindow(): BrowserWindow {
     title: 'TubeDeck VDJ',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(moduleDir, '../preload/index.cjs'),
+      preload: path.join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -84,7 +87,7 @@ function createMainWindow(): BrowserWindow {
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void win.loadFile(path.join(moduleDir, '../renderer/index.html'));
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
   return win;
@@ -116,9 +119,20 @@ app.whenReady().then(async () => {
   const search = new YouTubeSearchService();
   const history = new HistoryAndCratesService(db);
   const exporter = new SessionExporter();
-  registerIpcHandlers({ db, search, ytDlp, resolver, proxy, displays, history, exporter });
+  const updater = new AutoUpdaterService({
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    onStatusChange: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.UPDATER_STATUS_EVENT, status);
+      }
+    }
+  });
+  updaterService = updater;
+  registerIpcHandlers({ db, search, ytDlp, resolver, proxy, displays, history, exporter, updater });
 
   mainWindow = createMainWindow();
+  updater.scheduleStartupCheck(8000);
   displays.attachMainWindow(
     mainWindow,
     (list) => {
@@ -144,6 +158,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('will-quit', () => {
+  updaterService?.cancelStartupCheck();
   displayManager?.dispose();
   void ramProxy?.stop();
   dbService?.close();

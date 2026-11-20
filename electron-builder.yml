@@ -39,4 +39,9 @@ nsis:
   shortcutName: TubeDeck VDJ
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
+publish:
+  - provider: github
+    owner: LuisfNarvaez01
+    repo: TubeDeckVDJ
+    releaseType: release
 

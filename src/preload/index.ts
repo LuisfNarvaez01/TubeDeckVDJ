@@ -10,6 +10,7 @@ import type {
   Result,
   RtcSignalPayload,
   TrackMetadataRecord,
+  UpdateStatus,
   YouTubeTrack,
   YtDlpStatus
 } from '../shared/types';
@@ -53,6 +54,11 @@ export interface TubeDeckAPI {
   listMidiMappings: (deviceName?: string) => Promise<Result<MidiMapping[]>>;
   saveMidiMapping: (mapping: Omit<MidiMapping, 'id'>) => Promise<Result<MidiMapping>>;
   deleteMidiMapping: (id: string) => Promise<Result<void>>;
+  getUpdateStatus: () => Promise<Result<UpdateStatus | null>>;
+  checkForUpdates: () => Promise<Result<UpdateStatus | null>>;
+  downloadUpdate: () => Promise<Result<UpdateStatus | null>>;
+  installUpdate: () => Promise<Result<boolean>>;
+  onUpdateStatus: (cb: (status: UpdateStatus) => void) => () => void;
 }
 
 function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -105,7 +111,12 @@ const api: TubeDeckAPI = {
   getCrateTracks: (crateId) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_GET_TRACKS, crateId),
   listMidiMappings: (deviceName) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_LIST_MAPPINGS, deviceName),
   saveMidiMapping: (mapping) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_SAVE_MAPPING, mapping),
-  deleteMidiMapping: (id) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_DELETE_MAPPING, id)
+  deleteMidiMapping: (id) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_DELETE_MAPPING, id),
+  getUpdateStatus: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_STATUS),
+  checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_CHECK),
+  downloadUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_DOWNLOAD),
+  installUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_INSTALL),
+  onUpdateStatus: (cb) => subscribeChannel(IPC_CHANNELS.UPDATER_STATUS_EVENT, cb)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);
