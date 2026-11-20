@@ -84,5 +84,44 @@ describe('HistoryAndCratesService', () => {
     service.deleteMidiMapping(saved.id);
     expect(service.listMidiMappings('Pioneer DDJ-FLX4')).toHaveLength(0);
   });
+
+  it('builds a weighted HistoryTasteProfile extracting preferred channels, keywords and recent IDs', () => {
+    const s = service.startSession('Karaoke Salsa Night');
+    service.logTrackPlay({
+      sessionId: s.id,
+      deck: 'A',
+      videoId: 'salsa000001',
+      title: 'Grupo Niche - Cali Pachanguero Karaoke Oficial',
+      channel: 'Salsa Karaoke TV',
+      durationSec: 250,
+      playedAt: 1000
+    });
+    service.logTrackPlay({
+      sessionId: s.id,
+      deck: 'B',
+      videoId: 'salsa000002',
+      title: 'Marc Anthony - Vivir Mi Vida Karaoke',
+      channel: 'Salsa Karaoke TV',
+      durationSec: 260,
+      playedAt: 2000
+    });
+    service.logTrackPlay({
+      sessionId: s.id,
+      deck: 'A',
+      videoId: 'rock0000003',
+      title: 'Soda Stereo - De Musica Ligera',
+      channel: 'Rock Nacional',
+      durationSec: 210,
+      playedAt: 3000
+    });
+
+    const profile = service.buildTasteProfile(50);
+    expect(profile.totalPlays).toBe(3);
+    expect(profile.topChannels[0]).toEqual({ name: 'Salsa Karaoke TV', count: 2 });
+    expect(profile.topKeywords.some((k) => k.word === 'karaoke')).toBe(true);
+    expect(profile.topKeywords.some((k) => k.word === 'salsa')).toBe(true);
+    expect(profile.recentVideoIds).toEqual(['rock0000003', 'salsa000002', 'salsa000001']);
+    expect(profile.avgDurationSec).toBe(240);
+  });
 });
 

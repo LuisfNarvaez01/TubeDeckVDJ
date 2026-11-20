@@ -2,11 +2,55 @@ import crypto from 'crypto';
 import type {
   Crate,
   HistoryEntry,
+  HistoryTasteProfile,
   MidiMapping,
   MixSession,
   YouTubeTrack
 } from '../../shared/types';
 import type { DatabaseService } from './DatabaseService';
+
+const TASTE_STOPWORDS = new Set([
+  'official',
+  'oficial',
+  'video',
+  'audio',
+  'lyrics',
+  'letra',
+  'music',
+  'musica',
+  'feat',
+  'with',
+  'from',
+  'that',
+  'this',
+  'the',
+  'and',
+  'for',
+  'con',
+  'del',
+  'las',
+  'los',
+  'una',
+  'uno',
+  'para',
+  'por',
+  'que',
+  'topic',
+  'vevo',
+  '1080p',
+  '720p',
+  'full',
+  'hq'
+]);
+
+export function tokenizeTasteText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !TASTE_STOPWORDS.has(w) && !/^\d+$/.test(w));
+}
 
 export interface SaveMidiMappingInput {
   deviceName: string;
@@ -250,5 +294,75 @@ export class HistoryAndCratesService {
 
   deleteMidiMapping(id: string): void {
     this.db.run('DELETE FROM midi_mappings WHERE id = ?', [id]);
+  }
+
+  buildTasteProfile(limitRecent = 100): HistoryTasteProfile {
+    const countRow = this.db.queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM history_entries');
+    const totalPlays = Number(countRow?.cnt ?? 0);
+
+    const rows = this.db.queryAll<Record<string, unknown>>(
+      `SELECT video_id, title, channel, duration_sec, played_at
+       FROM history_entries
+       ORDER BY played_at DESC
+       LIMIT ?`,
+      [Math.max(1, limitRecent)]
+    );
+
+    if (rows.length === 0) {
+      return {
+        totalPlays,
+        topChannels: [],
+        topKeywords: [],
+        avgDurationSec: 210,
+        recentVideoIds: []
+      };
+    }
+
+    const channelCounts = new Map<string, number>();
+    const keywordWeights = new Map<string, number>();
+    const recentVideoIds: string[] = [];
+    const seenRecent = new Set<string>();
+    let durationSum = 0;
+
+    rows.forEach((row, idx) => {
+      const vid = String(row.video_id ?? '');
+      const title = String(row.title ?? '');
+      const channel = String(row.channel ?? '').trim();
+      const dur = Number(row.duration_sec ?? 0);
+      if (Number.isFinite(dur) && dur > 0) durationSum += dur;
+
+      if (vid && !seenRecent.has(vid)) {
+        seenRecent.add(vid);
+        if (recentVideoIds.length < 40) recentVideoIds.push(vid);
+      }
+
+      if (channel && channel !== 'YouTube' && channel !== 'Local') {
+        channelCounts.set(channel, (channelCounts.get(channel) ?? 0) + 1);
+      }
+
+      const recencyWeight = 1 + (rows.length - idx) / rows.length;
+      const tokens = new Set([...tokenizeTasteText(title), ...tokenizeTasteText(channel)]);
+      for (const word of tokens) {
+        keywordWeights.set(word, (keywordWeights.get(word) ?? 0) + recencyWeight);
+      }
+    });
+
+    const topChannels = Array.from(channelCounts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+
+    const topKeywords = Array.from(keywordWeights.entries())
+      .map(([word, weight]) => ({ word, weight: Number(weight.toFixed(2)) }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 15);
+
+    return {
+      totalPlays,
+      topChannels,
+      topKeywords,
+      avgDurationSec: Math.round(durationSum / rows.length) || 210,
+      recentVideoIds
+    };
   }
 }

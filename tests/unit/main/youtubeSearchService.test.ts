@@ -40,6 +40,8 @@ describe('YouTubeSearchService', () => {
           title: { toString: () => 'Club Edit Track' },
           author: { name: 'Club Official' },
           duration: { seconds: 195 },
+          short_view_count: { toString: () => '5.2M' },
+          published: { toString: () => '2y ago' },
           thumbnails: [
             { url: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg' },
             { url: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg' }
@@ -140,7 +142,9 @@ describe('YouTubeSearchService', () => {
         channel: 'Club Official',
         durationSec: 195,
         thumbnailUrl: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg',
-        isLive: false
+        isLive: false,
+        viewsText: '5.2M',
+        publishedText: '2y ago'
       }
     ]);
 
@@ -178,6 +182,19 @@ describe('YouTubeSearchService', () => {
         isLive: false
       }
     ]);
+
+    const weighted = await service.getHistoryWeightedRecommendations(
+      'dQw4w9WgXcQ',
+      {
+        totalPlays: 8,
+        topChannels: [{ name: 'Synth DJ', count: 4 }],
+        topKeywords: [{ word: 'synthwave', weight: 6 }],
+        avgDurationSec: 215,
+        recentVideoIds: ['djV11Xbc914']
+      },
+      []
+    );
+    expect(weighted[0].videoId).toBe('relTrack002');
   });
 });
 

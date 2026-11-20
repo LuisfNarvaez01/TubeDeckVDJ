@@ -1,4 +1,5 @@
-import type { YouTubeTrack } from '../../shared/types';
+import type { HistoryTasteProfile, YouTubeTrack } from '../../shared/types';
+import { tokenizeTasteText } from './HistoryAndCratesService';
 
 export interface SearchPage {
   items: YouTubeTrack[];
@@ -12,7 +13,12 @@ interface RawSearchResult {
   title?: { toString(): string } | string;
   author?: { name?: string };
   duration?: { seconds?: number };
+  length_text?: { toString(): string } | string;
+  short_view_count?: { toString(): string } | string;
+  view_count?: { toString(): string } | string;
+  published?: { toString(): string } | string;
   thumbnails?: Array<{ url?: string; width?: number }>;
+  thumbnail_overlays?: Array<{ text?: { toString(): string } | string }>;
   best_thumbnail?: { url?: string };
   is_live?: boolean;
   is_upcoming?: boolean;
@@ -152,12 +158,27 @@ function normalizeTrack(node: RawSearchResult): YouTubeTrack | null {
   if (node.is_live === true || node.is_upcoming === true) return null;
   if (node.is_playable === false) return null;
 
-  const durationSec = Number(node.duration?.seconds ?? 0);
+  let durationSec = Number(node.duration?.seconds ?? 0);
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    durationSec = parseDurationText(nodeText(node.length_text));
+  }
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    for (const ov of node.thumbnail_overlays ?? []) {
+      const parsed = parseDurationText(nodeText(ov.text));
+      if (parsed > 0) {
+        durationSec = parsed;
+        break;
+      }
+    }
+  }
   if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
 
   const titleRaw = typeof node.title === 'string' ? node.title : node.title?.toString() ?? '';
   const title = titleRaw.trim();
   if (!title) return null;
+
+  const viewsText = nodeText(node.short_view_count ?? node.view_count);
+  const publishedText = nodeText(node.published);
 
   return {
     videoId,
@@ -165,8 +186,45 @@ function normalizeTrack(node: RawSearchResult): YouTubeTrack | null {
     channel: node.author?.name?.trim() || 'YouTube',
     durationSec,
     thumbnailUrl: pickBestThumbnail(node, videoId),
-    isLive: false
+    isLive: false,
+    ...(viewsText ? { viewsText } : {}),
+    ...(publishedText ? { publishedText } : {})
   };
+}
+
+export function scoreRecommendationCandidate(
+  track: YouTubeTrack,
+  seedRankIndex: number,
+  totalCandidates: number,
+  profile: HistoryTasteProfile
+): number {
+  const safeTotal = Math.max(1, totalCandidates);
+  const seedScore = ((safeTotal - seedRankIndex) / safeTotal) * 70; // ~70% anchored on last played track
+
+  let channelBoost = 0;
+  const chanLower = track.channel.toLowerCase();
+  const chanMatch = profile.topChannels.find((c) => c.name.toLowerCase() === chanLower);
+  if (chanMatch) {
+    channelBoost = Math.min(16, 6 + chanMatch.count * 3);
+  }
+
+  let keywordBoost = 0;
+  if (profile.topKeywords.length > 0) {
+    const tokens = new Set(tokenizeTasteText(`${track.title} ${track.channel}`));
+    for (const kw of profile.topKeywords) {
+      if (tokens.has(kw.word)) {
+        keywordBoost += Math.min(4, kw.weight);
+      }
+    }
+    keywordBoost = Math.min(10, keywordBoost);
+  }
+
+  let durationBoost = 0;
+  if (profile.avgDurationSec > 0 && track.durationSec > 0) {
+    durationBoost = Math.max(0, 4 - Math.abs(track.durationSec - profile.avgDurationSec) / 45);
+  }
+
+  return Number((seedScore + channelBoost + keywordBoost + durationBoost).toFixed(3));
 }
 
 export function extractPlaylistId(urlOrId: string): string {
@@ -307,6 +365,34 @@ export class YouTubeSearchService {
     }
 
     return tracks;
+  }
+
+  async getHistoryWeightedRecommendations(
+    seedVideoId: string,
+    profile: HistoryTasteProfile,
+    excludeVideoIds: string[] = [],
+    limit = 12
+  ): Promise<YouTubeTrack[]> {
+    const hardExcluded = new Set<string>([seedVideoId, ...excludeVideoIds]);
+    const softExcluded = new Set<string>([...hardExcluded, ...profile.recentVideoIds]);
+
+    const rawCandidates = await this.getRelatedTracks(seedVideoId, [], Math.max(limit * 2, 24));
+    let filtered = rawCandidates.filter((t) => !softExcluded.has(t.videoId));
+    if (filtered.length === 0) {
+      filtered = rawCandidates.filter((t) => !hardExcluded.has(t.videoId));
+    }
+
+    const total = filtered.length;
+    const ranked = filtered
+      .map((track, idx) => ({
+        track,
+        score: scoreRecommendationCandidate(track, idx, total, profile)
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((item) => item.track);
+
+    return ranked;
   }
 }
 
