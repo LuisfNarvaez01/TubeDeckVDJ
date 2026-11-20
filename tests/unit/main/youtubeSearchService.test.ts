@@ -78,6 +78,54 @@ describe('YouTubeSearchService', () => {
           }
         ],
         getContinuation: vi.fn()
+      }),
+      getInfo: vi.fn().mockResolvedValue({
+        watch_next_feed: [
+          {
+            type: 'LockupView',
+            content_id: 'dQw4w9WgXcQ', // same as current/excluded seed -> filtered out
+            content_type: 'VIDEO',
+            metadata: { title: { toString: () => 'Already Playing Track' } },
+            duration: { seconds: 200 }
+          },
+          {
+            type: 'LockupView',
+            content_id: 'mixList0001',
+            content_type: 'PLAYLIST', // playlist lockup -> filtered out
+            metadata: { title: { toString: () => 'My Mix' } }
+          },
+          {
+            type: 'LockupView',
+            content_id: 'shortClip01',
+            content_type: 'VIDEO',
+            metadata: { title: { toString: () => '10s Short' } },
+            duration: { seconds: 10 } // < 30s -> filtered out
+          },
+          {
+            type: 'LockupView',
+            content_id: 'djV11Xbc914',
+            content_type: 'VIDEO',
+            metadata: {
+              title: { toString: () => 'a-ha - Take On Me' },
+              metadata: {
+                metadata_rows: [{ metadata_parts: [{ text: { toString: () => 'a-ha Official' } }] }]
+              }
+            },
+            content_image: {
+              image: [{ url: 'https://i.ytimg.com/vi/djV11Xbc914/hqdefault.jpg' }],
+              overlays: [{ badges: [{ text: '4:04' }] }]
+            }
+          },
+          {
+            type: 'CompactVideo',
+            video_id: 'relTrack002',
+            title: { toString: () => '80s Synthwave Classic' },
+            author: { name: 'Synth DJ' },
+            duration: { seconds: 215 },
+            thumbnails: [{ url: 'https://i.ytimg.com/vi/relTrack002/hqdefault.jpg' }],
+            is_live: false
+          }
+        ]
       })
     };
 
@@ -109,6 +157,27 @@ describe('YouTubeSearchService', () => {
     expect(mockClient.getPlaylist).toHaveBeenCalledWith('PL1234567890');
     expect(playlist).toHaveLength(1);
     expect(playlist[0].videoId).toBe('plTrack0001');
+
+    const related = await service.getRelatedTracks('dQw4w9WgXcQ', ['relTrack999']);
+    expect(mockClient.getInfo).toHaveBeenCalledWith('dQw4w9WgXcQ');
+    expect(related).toEqual([
+      {
+        videoId: 'djV11Xbc914',
+        title: 'a-ha - Take On Me',
+        channel: 'a-ha Official',
+        durationSec: 244,
+        thumbnailUrl: 'https://i.ytimg.com/vi/djV11Xbc914/hqdefault.jpg',
+        isLive: false
+      },
+      {
+        videoId: 'relTrack002',
+        title: '80s Synthwave Classic',
+        channel: 'Synth DJ',
+        durationSec: 215,
+        thumbnailUrl: 'https://i.ytimg.com/vi/relTrack002/hqdefault.jpg',
+        isLive: false
+      }
+    ]);
   });
 });
 

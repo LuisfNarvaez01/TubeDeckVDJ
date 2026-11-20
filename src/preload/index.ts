@@ -19,6 +19,7 @@ export interface TubeDeckAPI {
   searchYouTubeNext: () => Promise<Result<{ items: YouTubeTrack[]; hasMore: boolean }>>;
   getSuggestions: (query: string) => Promise<Result<string[]>>;
   getPlaylistTracks: (urlOrId: string) => Promise<Result<YouTubeTrack[]>>;
+  getRelatedTracks: (videoId: string, excludeIds?: string[]) => Promise<Result<YouTubeTrack[]>>;
   resolveStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   invalidateStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   getYtDlpStatus: () => Promise<Result<YtDlpStatus>>;
@@ -65,6 +66,8 @@ const api: TubeDeckAPI = {
   searchYouTubeNext: () => ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_SEARCH_NEXT),
   getSuggestions: (query) => ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_SUGGESTIONS, query),
   getPlaylistTracks: (urlOrId) => ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_PLAYLIST, urlOrId),
+  getRelatedTracks: (videoId, excludeIds = []) =>
+    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RELATED, videoId, excludeIds),
   resolveStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_RESOLVE, videoId),
   invalidateStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_INVALIDATE, videoId),
   getYtDlpStatus: () => ipcRenderer.invoke(IPC_CHANNELS.YTDLP_STATUS),

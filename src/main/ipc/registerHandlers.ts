@@ -96,6 +96,18 @@ export function registerIpcHandlers(services: MainServices): void {
     })
   );
 
+  ipcMain.handle(
+    IPC_CHANNELS.YOUTUBE_RELATED,
+    (_event, rawVideoId: unknown, rawExcludeIds: unknown) =>
+      wrapResult(async () => {
+        const videoId = VideoIdSchema.parse(rawVideoId);
+        const excludeIds = Array.isArray(rawExcludeIds)
+          ? z.array(VideoIdSchema).max(200).parse(rawExcludeIds)
+          : [];
+        return services.search.getRelatedTracks(videoId, excludeIds);
+      })
+  );
+
   ipcMain.handle(IPC_CHANNELS.STREAM_RESOLVE, (_event, rawVideoId: unknown) =>
     wrapResult(async () => {
       const videoId = VideoIdSchema.parse(rawVideoId);

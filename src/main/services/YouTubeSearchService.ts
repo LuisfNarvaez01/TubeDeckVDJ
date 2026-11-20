@@ -31,10 +31,101 @@ export interface PlaylistResultPageLike {
   getContinuation(): Promise<PlaylistResultPageLike>;
 }
 
+export interface RawRelatedNode extends RawSearchResult {
+  content_id?: string;
+  content_type?: string;
+  metadata?: {
+    title?: { toString(): string } | string;
+    metadata?: {
+      metadata_rows?: Array<{
+        metadata_parts?: Array<{ text?: { toString(): string } | string }>;
+      }>;
+    };
+  };
+  content_image?: {
+    image?: Array<{ url?: string; width?: number }>;
+    overlays?: Array<{
+      badges?: Array<{ text?: string; style?: string }>;
+    }>;
+  };
+}
+
 export interface InnertubeClientLike {
   search(query: string, filters?: { type?: string }): Promise<SearchResultPageLike>;
   getSearchSuggestions(query: string): Promise<string[]>;
   getPlaylist(id: string): Promise<PlaylistResultPageLike>;
+  getInfo?(videoId: string): Promise<{ watch_next_feed?: RawRelatedNode[] }>;
+}
+
+export function parseDurationText(text?: string): number {
+  if (!text || typeof text !== 'string') return 0;
+  const trimmed = text.trim();
+  if (!/^\d+(?::\d{1,2}){1,2}$/.test(trimmed)) return 0;
+  const parts = trimmed.split(':').map((n) => Number(n));
+  if (parts.some((n) => !Number.isFinite(n))) return 0;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return 0;
+}
+
+function nodeText(val: unknown): string {
+  if (typeof val === 'string') return val.trim();
+  if (val && typeof val === 'object' && 'toString' in val && typeof val.toString === 'function') {
+    const str = String(val).trim();
+    return str === '[object Object]' ? '' : str;
+  }
+  return '';
+}
+
+function normalizeRelatedTrack(node: RawRelatedNode): YouTubeTrack | null {
+  if (!node || typeof node !== 'object') return null;
+  if (node.content_type && node.content_type !== 'VIDEO') return null;
+
+  const videoId = node.content_id ?? node.video_id ?? node.id;
+  if (!videoId || typeof videoId !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+    return null;
+  }
+
+  if (node.is_live === true || node.is_upcoming === true || node.is_playable === false) {
+    return null;
+  }
+
+  let durationSec = Number(node.duration?.seconds ?? 0);
+  if (!Number.isFinite(durationSec) || durationSec <= 0) {
+    const badges = node.content_image?.overlays?.flatMap((o) => o.badges ?? []) ?? [];
+    for (const badge of badges) {
+      if (badge?.style === 'THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE') return null;
+      const parsed = parseDurationText(badge?.text);
+      if (parsed > 0) {
+        durationSec = parsed;
+        break;
+      }
+    }
+  }
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
+
+  const title = nodeText(node.metadata?.title ?? node.title);
+  if (!title) return null;
+
+  const channel =
+    nodeText(node.author?.name) ||
+    nodeText(node.metadata?.metadata?.metadata_rows?.[0]?.metadata_parts?.[0]?.text) ||
+    'YouTube';
+
+  const thumbUrl =
+    node.content_image?.image?.[0]?.url ??
+    node.best_thumbnail?.url ??
+    node.thumbnails?.[node.thumbnails.length - 1]?.url ??
+    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+  return {
+    videoId,
+    title,
+    channel,
+    durationSec,
+    thumbnailUrl: thumbUrl,
+    isLive: false
+  };
 }
 
 function pickBestThumbnail(node: RawSearchResult, videoId: string): string {
@@ -99,7 +190,8 @@ export function extractPlaylistId(urlOrId: string): string {
 }
 
 async function defaultClientFactory(): Promise<InnertubeClientLike> {
-  const { Innertube } = await import('youtubei.js');
+  const { Innertube, Log } = await import('youtubei.js');
+  Log.setLevel(Log.Level.NONE);
   const yt = await Innertube.create();
   return yt as unknown as InnertubeClientLike;
 }
@@ -182,6 +274,36 @@ export class YouTubeSearchService {
       }
       if (!page.has_continuation) break;
       page = await page.getContinuation();
+    }
+
+    return tracks;
+  }
+
+  async getRelatedTracks(
+    videoId: string,
+    excludeVideoIds: string[] = [],
+    limit = 12
+  ): Promise<YouTubeTrack[]> {
+    const trimmed = videoId.trim();
+    if (!trimmed) return [];
+    const client = await this.getClient();
+    if (typeof client.getInfo !== 'function') {
+      return [];
+    }
+
+    const info = await client.getInfo(trimmed);
+    const feed = Array.isArray(info.watch_next_feed) ? info.watch_next_feed : [];
+    const excluded = new Set<string>([trimmed, ...excludeVideoIds]);
+    const tracks: YouTubeTrack[] = [];
+
+    for (const raw of feed) {
+      const track = normalizeRelatedTrack(raw);
+      if (!track) continue;
+      if (track.isLive || track.durationSec < 30 || track.durationSec > 1200) continue;
+      if (excluded.has(track.videoId)) continue;
+      excluded.add(track.videoId);
+      tracks.push(track);
+      if (tracks.length >= limit) break;
     }
 
     return tracks;

@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
   YOUTUBE_SEARCH_NEXT: 'youtube:search-next',
   YOUTUBE_SUGGESTIONS: 'youtube:suggestions',
   YOUTUBE_PLAYLIST: 'youtube:playlist',
+  YOUTUBE_RELATED: 'youtube:related',
   STREAM_RESOLVE: 'stream:resolve',
   STREAM_INVALIDATE: 'stream:invalidate',
   YTDLP_STATUS: 'ytdlp:status',
@@ -31,7 +32,12 @@ export const IPC_CHANNELS = {
   CRATE_GET_TRACKS: 'crate:get-tracks',
   MIDI_LIST_MAPPINGS: 'midi:list-mappings',
   MIDI_SAVE_MAPPING: 'midi:save-mapping',
-  MIDI_DELETE_MAPPING: 'midi:delete-mapping'
+  MIDI_DELETE_MAPPING: 'midi:delete-mapping',
+  UPDATER_STATUS: 'updater:status',
+  UPDATER_CHECK: 'updater:check',
+  UPDATER_DOWNLOAD: 'updater:download',
+  UPDATER_INSTALL: 'updater:install',
+  UPDATER_STATUS_EVENT: 'updater:status-event'
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

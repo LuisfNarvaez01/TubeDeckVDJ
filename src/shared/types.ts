@@ -136,3 +136,20 @@ export interface TrackMetadataRecord {
   waveformPeaks: number[] | null;
   playCount: number;
 }
+
+export interface UpdateStatus {
+  state:
+    | 'idle'
+    | 'checking'
+    | 'available'
+    | 'not-available'
+    | 'downloading'
+    | 'downloaded'
+    | 'error'
+    | 'dev-mode';
+  currentVersion: string;
+  availableVersion: string | null;
+  progressPercent: number;
+  releaseNotes: string | null;
+  error: string | null;
+}
