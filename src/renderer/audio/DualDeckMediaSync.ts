@@ -445,6 +445,17 @@ export class DualDeckMediaSync {
     return audioRatio;
   }
 
+  /** Empties the deck: stops playback and releases both media sources. */
+  unload(): void {
+    this.pause();
+    this.resetHealthTracker();
+    this.activeQuality = null;
+    for (const el of [this.audioEl, this.videoEl]) {
+      el.removeAttribute('src');
+      el.load();
+    }
+  }
+
   isPaused(): boolean {
     return this.getAudioElement().paused;
   }

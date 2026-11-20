@@ -306,7 +306,7 @@ export function QueueTab({
                     setOverIdx(null);
                   }}
                   className={`group flex gap-2 rounded-md p-1.5 transition-colors duration-150 hover:bg-raised focus-within:bg-raised ${
-                    overIdx === idx ? 'bg-raised-2 shadow-[inset_0_2px_0_#10D9A0]' : ''
+                    overIdx === idx ? 'bg-raised-2 shadow-[inset_0_2px_0_#22E1F0]' : ''
                   } ${dragIdx === idx ? 'opacity-50' : ''}`}
                 >
                   <div className="relative aspect-video w-[88px] shrink-0 cursor-grab overflow-hidden rounded bg-raised">

@@ -54,7 +54,7 @@ export function MixerCenter({
 
   const renderChannel = (deck: DeckId) => {
     const ch = mixer.channels[deck];
-    const accent = deck === 'A' ? '#10D9A0' : '#F5C542';
+    const accent = deck === 'A' ? '#22E1F0' : '#FF4FA8';
     return (
       <div
         key={deck}
@@ -76,7 +76,7 @@ export function MixerCenter({
               min={0}
               max={2}
               defaultValue={1}
-              accentColor="#E4E7E1"
+              accentColor="#E6E6E9"
               size={34}
               formatValue={(v) => `${Math.round(v * 100)}%`}
               onChange={(v) => onTrimChange(deck, v)}
@@ -88,7 +88,7 @@ export function MixerCenter({
               max={1}
               defaultValue={0}
               bipolar
-              accentColor="#E4E7E1"
+              accentColor="#E6E6E9"
               size={34}
               formatValue={(v) => (v === 0 ? 'OFF' : v < 0 ? `LP ${Math.round(Math.abs(v) * 100)}%` : `HP ${Math.round(v * 100)}%`)}
               onChange={(v) => onColorFilterChange(deck, v)}
@@ -167,7 +167,7 @@ export function MixerCenter({
               min={0}
               max={1.5}
               defaultValue={1}
-              accentColor="#E4E7E1"
+              accentColor="#E6E6E9"
               size={36}
               formatValue={(v) => `${Math.round(v * 100)}%`}
               onChange={onMasterGainChange}
@@ -186,7 +186,7 @@ export function MixerCenter({
               min={0}
               max={1.5}
               defaultValue={1}
-              accentColor="#E4E7E1"
+              accentColor="#E6E6E9"
               size={34}
               formatValue={(v) => `${Math.round(v * 100)}%`}
               onChange={onCueGainChange}
@@ -197,7 +197,7 @@ export function MixerCenter({
               min={0}
               max={1}
               defaultValue={0}
-              accentColor="#E4E7E1"
+              accentColor="#E6E6E9"
               size={34}
               formatValue={(v) => `${Math.round(v * 100)}%`}
               onChange={onCueMixChange}

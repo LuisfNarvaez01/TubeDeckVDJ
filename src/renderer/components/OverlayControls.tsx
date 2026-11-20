@@ -21,7 +21,7 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
     preset: 'minimal-studio',
     customDataUrl: null,
     insetPercent: 8,
-    accentColor: '#10D9A0',
+    accentColor: '#22E1F0',
     titleText: ''
   };
 

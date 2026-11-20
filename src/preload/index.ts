@@ -7,6 +7,8 @@ import type {
   DisplayInfo,
   HistoryEntry,
   HistoryTasteProfile,
+  LocalDirListing,
+  LocalPlace,
   MidiMapping,
   MixSession,
   Result,
@@ -87,6 +89,9 @@ export interface TubeDeckAPI {
   pickLocalFolder: () => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
   removeLocalFolder: (folderPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
   resolveLocalFile: (filePath: string) => Promise<Result<DeckStreamEndpoints>>;
+  listLocalPlaces: () => Promise<Result<LocalPlace[]>>;
+  browseLocalDir: (dirPath: string, recursive?: boolean) => Promise<Result<LocalDirListing>>;
+  addLocalFolderPath: (dirPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
 }
 
 function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -162,7 +167,11 @@ const api: TubeDeckAPI = {
   pickLocalFiles: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_PICK_FILES),
   pickLocalFolder: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_PICK_FOLDER),
   removeLocalFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REMOVE_FOLDER, folderPath),
-  resolveLocalFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_RESOLVE_FILE, filePath)
+  resolveLocalFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_RESOLVE_FILE, filePath),
+  listLocalPlaces: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_LIST_PLACES),
+  browseLocalDir: (dirPath, recursive) =>
+    ipcRenderer.invoke(IPC_CHANNELS.LOCAL_BROWSE_DIR, dirPath, recursive === true),
+  addLocalFolderPath: (dirPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_ADD_FOLDER_PATH, dirPath)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);

@@ -43,7 +43,7 @@ export function DeckFxSamplerModule({
 }: DeckFxSamplerModuleProps): ReactElement {
   const audioFx = useDeckStore((s) => s.decks[deckId].audioFx);
   const [flashingPad, setFlashingPad] = useState<string | null>(null);
-  const accent = deckId === 'A' ? '#10D9A0' : '#F5C542';
+  const accent = deckId === 'A' ? '#22E1F0' : '#FF4FA8';
 
   const flashPad = (key: string) => {
     setFlashingPad(key);
@@ -102,7 +102,7 @@ export function DeckFxSamplerModule({
                 min={0}
                 max={1}
                 defaultValue={0.45}
-                accentColor={st.enabled ? accent : '#E4E7E1'}
+                accentColor={st.enabled ? accent : '#E6E6E9'}
                 size={34}
                 formatValue={(v) => `${Math.round(v * 100)}%`}
                 onChange={(v) => onDeckFxChange(deckId, id, st.enabled, v, st.beatDiv)}

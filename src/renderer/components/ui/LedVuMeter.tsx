@@ -60,12 +60,12 @@ export function LedVuMeter({
               const isPeak = idxFromBottom === peakHoldRef.current[chIdx] - 1 && peakHoldRef.current[chIdx] > 0;
               const lit = idxFromBottom < activeCount || isPeak;
 
-              let color = '#FFF4DC';
-              if (idxFromBottom >= segments - 2) color = '#F0524A';
+              let color = '#F0FDFF';
+              if (idxFromBottom >= segments - 2) color = '#FF5247';
               else if (idxFromBottom >= segments - 5) color = '#F5C542';
-              else if (isPeak) color = '#F3F1EA';
+              else if (isPeak) color = '#F5F5F6';
 
-              ctx.fillStyle = lit ? color : '#1B2420';
+              ctx.fillStyle = lit ? color : '#151518';
               ctx.fillRect(x, y, colW, segH);
             }
           });

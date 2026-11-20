@@ -171,12 +171,12 @@ export function JogWheel({
         {/* Tactile vinyl/CDJ rotating platter grooves */}
         <div
           ref={grooveRef}
-          className="absolute inset-2 rounded-full border border-white/[0.08] bg-[repeating-radial-gradient(circle_at_center,#141720_0px,#0a0c10_3px,#11141c_5px)]"
+          className="absolute inset-2 rounded-full border border-white/[0.08] bg-[repeating-radial-gradient(circle_at_center,#16161a_0px,#08080a_3px,#121215_5px)]"
           style={{ transform: `rotate(${rotationDeg.toFixed(1)}deg)` }}
         >
           <span
             className="absolute left-1/2 top-1 h-3 w-1 -translate-x-1/2 rounded-full"
-            style={{ backgroundColor: playing ? accentColor : '#E4E7E1' }}
+            style={{ backgroundColor: playing ? accentColor : '#E6E6E9' }}
           />
         </div>
 

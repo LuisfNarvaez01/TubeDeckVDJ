@@ -1,9 +1,10 @@
-import { dialog, ipcMain } from 'electron';
+import { app, dialog, ipcMain } from 'electron';
 import path from 'path';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type {
   DeckStreamEndpoints,
+  LocalPlace,
   Result,
   RtcSignalPayload,
   VideoQualityTier,
@@ -14,7 +15,7 @@ import type { BatchDownloadFormat, BatchDownloadService } from '../services/Batc
 import type { DatabaseService } from '../services/DatabaseService';
 import type { DisplayWindowManager } from '../services/DisplayWindowManager';
 import type { HistoryAndCratesService } from '../services/HistoryAndCratesService';
-import type { LocalLibraryService } from '../services/LocalLibraryService';
+import { browseDirectory, listDrivePlaces, type LocalLibraryService } from '../services/LocalLibraryService';
 import type { RecommendationEngine } from '../services/RecommendationEngine';
 import type { TasteFeedbackService } from '../services/TasteFeedbackService';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
@@ -553,6 +554,48 @@ export function registerIpcHandlers(services: MainServices): void {
       if (!services.localLibrary) return { folders: [], tracks: [] };
       const folderPath = NonEmptyStringSchema.parse(rawFolder);
       services.localLibrary.removeFolder(folderPath);
+      return services.localLibrary.listLibrary();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_LIST_PLACES, () =>
+    wrapResult(async (): Promise<LocalPlace[]> => {
+      const quick: LocalPlace[] = [];
+      const named: [Parameters<typeof app.getPath>[0], string][] = [
+        ['music', 'Música'],
+        ['videos', 'Videos'],
+        ['downloads', 'Descargas'],
+        ['desktop', 'Escritorio']
+      ];
+      for (const [key, label] of named) {
+        try {
+          quick.push({ kind: 'folder', label, path: app.getPath(key) });
+        } catch {
+          // folder not defined on this OS
+        }
+      }
+      const saved: LocalPlace[] = (services.localLibrary?.listLibrary().folders ?? []).map((f) => ({
+        kind: 'library',
+        label: path.basename(f) || f,
+        path: f,
+        detail: f
+      }));
+      return [...saved, ...quick, ...(await listDrivePlaces())];
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_BROWSE_DIR, (_event, rawPath: unknown, rawRecursive: unknown) =>
+    wrapResult(() => {
+      const dirPath = z.string().trim().min(1).max(1000).parse(rawPath);
+      return browseDirectory(dirPath, rawRecursive === true);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_ADD_FOLDER_PATH, (_event, rawPath: unknown) =>
+    wrapResult(() => {
+      if (!services.localLibrary) return { folders: [], tracks: [] };
+      const dirPath = z.string().trim().min(1).max(1000).parse(rawPath);
+      services.localLibrary.addFolder(dirPath);
       return services.localLibrary.listLibrary();
     })
   );

@@ -39,7 +39,7 @@ export function RotaryKnob({
   min,
   max,
   defaultValue = 0,
-  accentColor = '#E4E7E1',
+  accentColor = '#E6E6E9',
   bipolar = false,
   size = 40,
   onChange,
@@ -134,7 +134,7 @@ export function RotaryKnob({
             cx={center}
             cy={center}
             r={radius - 5}
-            fill="#1B2420"
+            fill="#151518"
             stroke={dragging ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.1)'}
             strokeWidth={1.1}
           />
@@ -143,7 +143,7 @@ export function RotaryKnob({
             y1={center}
             x2={pointerEnd.x}
             y2={pointerEnd.y}
-            stroke="#F3F1EA"
+            stroke="#F5F5F6"
             strokeWidth={2}
             strokeLinecap="round"
           />

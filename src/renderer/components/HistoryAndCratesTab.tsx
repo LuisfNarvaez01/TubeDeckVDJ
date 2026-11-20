@@ -87,7 +87,7 @@ export function HistoryAndCratesTab({
     e.preventDefault();
     const name = newCrateName.trim();
     if (!name || !window.tubedeckAPI) return;
-    const res = await window.tubedeckAPI.createCrate(name, '#10D9A0');
+    const res = await window.tubedeckAPI.createCrate(name, '#22E1F0');
     if (res.success) {
       setNewCrateName('');
       await onRefreshCrates();

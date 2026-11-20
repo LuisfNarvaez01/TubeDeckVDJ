@@ -211,3 +211,24 @@ export interface BatchDownloadProgress {
   outputDir: string | null;
   errors: string[];
 }
+
+export type LocalPlaceKind = 'drive' | 'removable' | 'optical' | 'network' | 'folder' | 'library';
+
+export interface LocalPlace {
+  kind: LocalPlaceKind;
+  label: string;
+  path: string;
+  /** Secondary text, e.g. the full path. */
+  detail?: string;
+}
+
+export interface LocalDirListing {
+  path: string;
+  parent: string | null;
+  folders: { name: string; path: string }[];
+  tracks: YouTubeTrack[];
+  /** True when the listing includes files from sub-folders. */
+  recursive: boolean;
+  /** True when a recursive scan hit the file limit. */
+  truncated: boolean;
+}

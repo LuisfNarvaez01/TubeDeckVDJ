@@ -9,7 +9,8 @@ import {
   ChevronRight,
   Pencil,
   ThumbsUp,
-  ThumbsDown
+  ThumbsDown,
+  Eject
 } from 'lucide-react';
 import type { DeckId, VideoQualityTier } from '../../shared/types';
 import type { AudioFxId, FxBeatDivision, SamplerPadId } from '../audio/AudioDspEngine';
@@ -86,6 +87,8 @@ interface DeckPanelProps {
   offAirDimmed?: boolean;
   /** Retry loading the current track after a stream error. */
   onRetryLoad?: (deck: DeckId) => void;
+  /** Empty the deck (only while it is not on air). */
+  onEject?: (deck: DeckId) => void;
 }
 
 function formatTime(sec: number): string {
@@ -129,7 +132,8 @@ export function DeckPanel({
   onTrackFeedback,
   onAir = false,
   offAirDimmed = false,
-  onRetryLoad
+  onRetryLoad,
+  onEject
 }: DeckPanelProps): ReactElement {
   const deck = useDeckStore((s) => s.decks[deckId]);
   const setDeckPatch = useDeckStore((s) => s.setDeckPatch);
@@ -145,7 +149,7 @@ export function DeckPanel({
     setFeedbackGiven(null);
   }, [deck.track?.videoId]);
 
-  const accent = deckId === 'A' ? '#10D9A0' : '#F5C542';
+  const accent = deckId === 'A' ? '#22E1F0' : '#FF4FA8';
   const remaining = Math.max(0, deck.durationSec - deck.currentTimeSec);
   const isNearEnd = deck.playing && deck.durationSec > 20 && remaining <= 15;
   const effectiveBpm = deck.bpm ? Number((deck.bpm * (1 + deck.pitchPercent / 100)).toFixed(1)) : null;
@@ -184,15 +188,29 @@ export function DeckPanel({
 
   return (
     <section
-      className={`@container flex min-w-0 flex-col gap-2 rounded-xl border bg-surface p-2.5 transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+      className={`@container relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-xl border bg-surface p-2.5 transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
         onAir
           ? deckId === 'A'
-            ? '-translate-y-px border-deck-a/45 shadow-[0_14px_32px_-16px_rgba(16,217,160,0.45)]'
-            : '-translate-y-px border-deck-b/45 shadow-[0_14px_32px_-16px_rgba(245,197,66,0.45)]'
+            ? '-translate-y-px border-deck-a/45 shadow-[0_14px_32px_-16px_rgba(34,225,240,0.45)]'
+            : '-translate-y-px border-deck-b/45 shadow-[0_14px_32px_-16px_rgba(255,79,168,0.45)]'
           : 'border-white/[0.06]'
       }`}
       aria-label={`Deck ${deckId}`}
     >
+      {/* Tally light: the broadcast-camera signal of which deck the room is hearing */}
+      {deck.track ? (
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] transition-[opacity,box-shadow] duration-200 ${
+            onAir ? 'opacity-100' : 'opacity-30'
+          }`}
+          style={{
+            backgroundColor: accent,
+            boxShadow: onAir ? `0 0 14px 1px ${accent}` : 'none'
+          }}
+        />
+      ) : null}
+
       {/* Header: Identity + OSD Editable Title + Stream Health + BPM + Clocks */}
       <header className="flex items-center justify-between gap-2">
         <div
@@ -292,6 +310,24 @@ export function DeckPanel({
                     );
                   })}
                 </div>
+              ) : null}
+
+              {(deck.track || deck.loading) && onEject ? (
+                <button
+                  type="button"
+                  aria-label={`Quitar canción del deck ${deckId}`}
+                  title={
+                    onAir
+                      ? 'Está sonando al aire: pausa o baja el fader para quitarla'
+                      : 'Quitar la canción de este deck'
+                  }
+                  disabled={onAir}
+                  onClick={() => onEject(deckId)}
+                  className="inline-flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-faint transition-colors duration-150 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-faint cursor-pointer"
+                >
+                  <Eject className="h-3 w-3" />
+                  <span className="hidden @2xl:inline">Quitar</span>
+                </button>
               ) : null}
 
               {healthLabel ? (
@@ -458,7 +494,7 @@ export function DeckPanel({
                 disabled={!deck.track || deck.loading}
                 onClick={() => onTogglePlay(deckId)}
                 className="relative inline-flex h-8 items-center gap-1 rounded-lg px-3 text-xs font-bold text-ground disabled:opacity-40 cursor-pointer"
-                style={{ backgroundColor: deck.playing ? '#FFF4DC' : accent }}
+                style={{ backgroundColor: deck.playing ? '#F0FDFF' : accent }}
               >
                 {deck.playing ? (
                   <Pause className="h-3.5 w-3.5" />

@@ -2,22 +2,22 @@
 name: TubeDeck VDJ
 description: Two-deck YouTube video DJ booth for dark rooms; a streaming home screen at night.
 colors:
-  ground: "#0a0f0d"
-  surface: "#131a17"
-  raised: "#1b2420"
-  raised-2: "#24302a"
-  raised-3: "#2d3a33"
-  ink: "#f3f1ea"
-  ink-2: "#e4e7e1"
-  ink-soft: "#c8cfc9"
-  muted: "#8f9c95"
-  faint: "#7c8983"
-  faint-2: "#3a4740"
-  deck-a: "#10d9a0"
-  deck-b: "#f5c542"
-  live: "#fff4dc"
-  danger: "#f0524a"
-  danger-soft: "#f7a49e"
+  ground: "#000000"
+  surface: "#0b0b0d"
+  raised: "#151518"
+  raised-2: "#1e1e22"
+  raised-3: "#29292e"
+  ink: "#f5f5f6"
+  ink-2: "#e6e6e9"
+  ink-soft: "#c9c9cf"
+  muted: "#9c9ca6"
+  faint: "#85858f"
+  faint-2: "#3a3a41"
+  deck-a: "#22e1f0"
+  deck-b: "#ff4fa8"
+  live: "#f0fdff"
+  danger: "#ff5247"
+  danger-soft: "#ffa39d"
 typography:
   readout:
     fontFamily: "Figtree Variable, Segoe UI, system-ui, sans-serif"
@@ -113,13 +113,13 @@ components:
 
 **Creative North Star: "The Streaming Wall at Night"**
 
-The booth reads like a streaming home screen in a dark room. Artwork and video thumbnails supply the colour; the chrome is green-tinted black that steps back. Whatever is in focus (the on-air deck, the hovered library card) lifts, and its siblings recede. Dense at 1920×1080, one humanist face, small type ranked by weight rather than size.
+The booth reads like a streaming home screen in a dark room. Artwork and video thumbnails supply the colour; the chrome is pure neutral black that steps back. Whatever is in focus (the on-air deck, the hovered library card) lifts, and its siblings recede. Dense at 1920×1080, one humanist face, small type ranked by weight rather than size.
 
 It refuses the grey-hardware-with-neon-accents default of DJ software.
 
 **Key Characteristics:**
-- Tonal dark layers (ground → surface → raised → raised-2/3), warm-white hairlines at 6–8%.
-- Deck A emerald and Deck B gold as functional identity.
+- Tonal dark layers (ground → surface → raised → raised-2/3), neutral white hairlines at 6–8%.
+- Deck A cyan and Deck B magenta as functional identity.
 - Focus lift + sibling dim as the signature motion.
 - lucide-react line icons; no emoji.
 
@@ -128,11 +128,11 @@ It refuses the grey-hardware-with-neon-accents default of DJ software.
 Near-black chrome with three signal colours and one alarm.
 
 ### Primary
-- **Booth Emerald** (deck-a): Deck A identity: deck badge, A-load buttons, on-air border and glow, caret, selection.
-- **Marquee Gold** (deck-b): Deck B identity in the same roles.
+- **Booth Cyan** (deck-a): Deck A identity: deck badge, A-load buttons, on-air border and glow, caret, selection.
+- **Marquee Magenta** (deck-b): Deck B identity in the same roles.
 
 ### Tertiary
-- **Live Warm White** (live): on-air tag, active toggles (tinted fill at 15–25% with a 50–60% border), primary action fill, preloaded queue line, focus ring.
+- **Live Cool White** (live): on-air tag, active toggles (tinted fill at 15–25% with a 50–60% border), primary action fill, preloaded queue line, focus ring.
 - **Signal Red** (danger) / **Soft Red** (danger-soft): destructive actions, failed states and error text only.
 
 ### Neutral
@@ -142,7 +142,7 @@ Near-black chrome with three signal colours and one alarm.
 
 **The Earned Colour Rule.** Saturated colour appears only on actionable or live elements. Everything else is neutral or comes from the artwork.
 
-**The Deck Identity Rule.** Emerald means Deck A and gold means Deck B, everywhere. Never use them decoratively or swap them.
+**The Deck Identity Rule.** Cyan means Deck A and magenta means Deck B, everywhere. Never use them decoratively or swap them.
 
 **The Output Exemption Rule.** Screen 2 output art (src/renderer/video/*, frames) keeps its own colours and sits outside this system.
 
@@ -193,7 +193,7 @@ Soft rectangles: pads and controls 6px, cards and bars 8px, deck and module pane
 Pill filters, raised-2 fill when active and ink-soft when idle.
 
 ### Inputs
-Pill search on ground with an 8% hairline that brightens to 25% on focus. Emerald caret.
+Pill search on ground with an 8% hairline that brightens to 25% on focus. Cyan caret.
 
 ### Video Card
 16:9 thumbnail, 8px radius, with a duration badge on black at 85%. Hover reveals round A/B load buttons and a slight artwork zoom (1.03).
@@ -202,7 +202,7 @@ Pill search on ground with an 8% hairline that brightens to 25% on focus. Emeral
 Thumbnail, title, a right-aligned tabular start time ("~13:59") and a radio reason line with like/dislike/block. State is shown by line form along the thumbnail base: dashed ink = pending, dashed live = preloading, solid live = preloaded. Failed rows are struck through in red.
 
 ### Brand Mark
-A gold 16:9 screen behind an emerald one, with a knocked-out play glyph. The app icon sets it on a rounded green-black square.
+A vinyl record with a magenta label (Deck B) behind a cyan video screen carrying waveform bars (Deck A). The app icon sets it on a rounded pure-black square.
 
 ## Do's and Don'ts
 
@@ -213,6 +213,6 @@ A gold 16:9 screen behind an emerald one, with a knocked-out play glyph. The app
 
 ### Don't:
 - **Don't** use emoji. Icons come from lucide-react.
-- **Don't** put deck emerald or gold on anything not tied to that deck.
+- **Don't** put deck cyan or magenta on anything not tied to that deck.
 - **Don't** use danger red for anything that is not destructive or failed.
 - **Don't** add new label sizes to create hierarchy.

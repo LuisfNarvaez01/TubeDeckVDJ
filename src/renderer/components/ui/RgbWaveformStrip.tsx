@@ -53,7 +53,7 @@ export function RgbWaveformStrip({
       const h = canvas.height;
       const midY = h / 2;
 
-      ctx!.fillStyle = '#0A0F0D';
+      ctx!.fillStyle = '#000000';
       ctx!.fillRect(0, 0, w, h);
 
       // Subtle horizontal center axis
@@ -95,7 +95,7 @@ export function RgbWaveformStrip({
       }
 
       // Center needle
-      ctx!.fillStyle = '#F3F1EA';
+      ctx!.fillStyle = '#F5F5F6';
       ctx!.fillRect(w - 3, 0, 2, h);
 
       rafId = requestAnimationFrame(renderLive);
@@ -120,7 +120,7 @@ export function RgbWaveformStrip({
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#0A0F0D';
+    ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, w, h);
 
     const remaining = Math.max(0, durationSec - currentTimeSec);
@@ -138,11 +138,11 @@ export function RgbWaveformStrip({
         const barH = Math.max(2, waveformPeaks[i] * (h - 6));
         const x = i * barW;
         const y = (h - barH) / 2;
-        ctx.fillStyle = i / waveformPeaks.length <= progress ? accentColor : '#2A3530';
+        ctx.fillStyle = i / waveformPeaks.length <= progress ? accentColor : '#2A2A30';
         ctx.fillRect(x, y, Math.max(1, barW - 0.8), barH);
       }
     } else {
-      ctx.fillStyle = '#1E2722';
+      ctx.fillStyle = '#1C1C21';
       ctx.fillRect(0, h / 2 - 1, w, 2);
       ctx.fillStyle = accentColor;
       ctx.fillRect(0, h / 2 - 2, w * progress, 4);
@@ -164,7 +164,7 @@ export function RgbWaveformStrip({
     }
 
     const px = progress * w;
-    ctx.fillStyle = '#F3F1EA';
+    ctx.fillStyle = '#F5F5F6';
     ctx.fillRect(px - 1, 0, 2, h);
   }, [waveformPeaks, currentTimeSec, durationSec, hotCues, loop, playing, accentColor]);
 

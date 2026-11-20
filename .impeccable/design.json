@@ -7,49 +7,49 @@
       "ground": {
         "role": "neutral",
         "displayName": "Night Ground",
-        "canonical": "#0a0f0d",
+        "canonical": "#000000",
         "tonalRamp": [
           "#070b09",
-          "#0a0f0d",
-          "#131a17",
-          "#1b2420",
-          "#24302a",
-          "#2d3a33",
-          "#3a4740",
-          "#7c8983"
+          "#000000",
+          "#0b0b0d",
+          "#151518",
+          "#1e1e22",
+          "#29292e",
+          "#3a3a41",
+          "#85858f"
         ]
       },
       "surface": {
         "role": "neutral",
         "displayName": "Panel",
-        "canonical": "#131a17"
+        "canonical": "#0b0b0d"
       },
       "raised": {
         "role": "neutral",
         "displayName": "Raised",
-        "canonical": "#1b2420"
+        "canonical": "#151518"
       },
       "raised-2": {
         "role": "neutral",
         "displayName": "Raised 2 (hover)",
-        "canonical": "#24302a"
+        "canonical": "#1e1e22"
       },
       "raised-3": {
         "role": "neutral",
         "displayName": "Raised 3",
-        "canonical": "#2d3a33"
+        "canonical": "#29292e"
       },
       "ink": {
         "role": "neutral",
         "displayName": "Ink",
-        "canonical": "#f3f1ea",
+        "canonical": "#f5f5f6",
         "tonalRamp": [
-          "#3a4740",
-          "#7c8983",
-          "#8f9c95",
-          "#c8cfc9",
-          "#e4e7e1",
-          "#f3f1ea",
+          "#3a3a41",
+          "#85858f",
+          "#9c9ca6",
+          "#c9c9cf",
+          "#e6e6e9",
+          "#f5f5f6",
           "#f8f7f2",
           "#fdfcf9"
         ]
@@ -57,38 +57,38 @@
       "ink-2": {
         "role": "neutral",
         "displayName": "Ink 2",
-        "canonical": "#e4e7e1"
+        "canonical": "#e6e6e9"
       },
       "ink-soft": {
         "role": "neutral",
         "displayName": "Ink Soft",
-        "canonical": "#c8cfc9"
+        "canonical": "#c9c9cf"
       },
       "muted": {
         "role": "neutral",
         "displayName": "Muted",
-        "canonical": "#8f9c95"
+        "canonical": "#9c9ca6"
       },
       "faint": {
         "role": "neutral",
         "displayName": "Faint",
-        "canonical": "#7c8983"
+        "canonical": "#85858f"
       },
       "faint-2": {
         "role": "neutral",
         "displayName": "Faint 2",
-        "canonical": "#3a4740"
+        "canonical": "#3a3a41"
       },
       "deck-a": {
         "role": "primary",
-        "displayName": "Booth Emerald (Deck A)",
-        "canonical": "#10d9a0",
+        "displayName": "Booth Cyan (Deck A)",
+        "canonical": "#22e1f0",
         "tonalRamp": [
           "#032e21",
           "#055038",
           "#077552",
           "#0a9a6d",
-          "#10d9a0",
+          "#22e1f0",
           "#4fe6ba",
           "#94f0d5",
           "#d6faee"
@@ -96,14 +96,14 @@
       },
       "deck-b": {
         "role": "primary",
-        "displayName": "Marquee Gold (Deck B)",
-        "canonical": "#f5c542",
+        "displayName": "Marquee Magenta (Deck B)",
+        "canonical": "#ff4fa8",
         "tonalRamp": [
           "#3a2c05",
           "#5e470a",
           "#866510",
           "#b48918",
-          "#f5c542",
+          "#ff4fa8",
           "#f8d570",
           "#fbe5a5",
           "#fdf4d9"
@@ -112,27 +112,27 @@
       "live": {
         "role": "tertiary",
         "displayName": "Live Warm White",
-        "canonical": "#fff4dc"
+        "canonical": "#f0fdff"
       },
       "danger": {
         "role": "tertiary",
         "displayName": "Signal Red",
-        "canonical": "#f0524a",
+        "canonical": "#ff5247",
         "tonalRamp": [
           "#3d0d0a",
           "#6b1712",
           "#9c241d",
           "#cc3a31",
-          "#f0524a",
+          "#ff5247",
           "#f47a73",
-          "#f7a49e",
+          "#ffa39d",
           "#fbd5d2"
         ]
       },
       "danger-soft": {
         "role": "tertiary",
         "displayName": "Soft Red",
-        "canonical": "#f7a49e"
+        "canonical": "#ffa39d"
       }
     },
     "typographyMeta": {
@@ -231,7 +231,7 @@
       "refersTo": "button-control",
       "description": "Default console control and pad.",
       "html": "<button class=\"ds-btn-control\">CUE</button>",
-      "css": ".ds-btn-control { height: 44px; padding: 0 14px; border-radius: 6px; border: 1px solid rgba(243,241,234,0.06); background: var(--color-raised, #1b2420); color: var(--color-ink-soft, #c8cfc9); font: 600 11px 'Figtree Variable', system-ui, sans-serif; box-shadow: inset 0 -2px 0 rgba(243,241,234,0.3); cursor: pointer; transition: background-color 150ms cubic-bezier(0.16,1,0.3,1), color 150ms, transform 150ms; } .ds-btn-control:hover { background: var(--color-raised-2, #24302a); color: var(--color-ink, #f3f1ea); } .ds-btn-control:focus-visible { outline: 1.5px solid rgba(255,244,220,0.6); outline-offset: 2px; } .ds-btn-control:active { transform: scale(0.97); }"
+      "css": ".ds-btn-control { height: 44px; padding: 0 14px; border-radius: 6px; border: 1px solid rgba(243,241,234,0.06); background: var(--color-raised, #151518); color: var(--color-ink-soft, #c9c9cf); font: 600 11px 'Figtree Variable', system-ui, sans-serif; box-shadow: inset 0 -2px 0 rgba(243,241,234,0.3); cursor: pointer; transition: background-color 150ms cubic-bezier(0.16,1,0.3,1), color 150ms, transform 150ms; } .ds-btn-control:hover { background: var(--color-raised-2, #1e1e22); color: var(--color-ink, #f5f5f6); } .ds-btn-control:focus-visible { outline: 1.5px solid rgba(255,244,220,0.6); outline-offset: 2px; } .ds-btn-control:active { transform: scale(0.97); }"
     },
     {
       "name": "Toggle On",
@@ -239,7 +239,7 @@
       "refersTo": "button-live",
       "description": "Active live toggle (Radio, Automix, FX on).",
       "html": "<button class=\"ds-btn-toggle\">Radio</button>",
-      "css": ".ds-btn-toggle { padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(255,244,220,0.6); background: rgba(255,244,220,0.15); color: #fff4dc; font: 600 12px 'Figtree Variable', system-ui, sans-serif; cursor: pointer; transition: background-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-toggle:hover { background: rgba(255,244,220,0.25); } .ds-btn-toggle:focus-visible { outline: 1.5px solid rgba(255,244,220,0.6); outline-offset: 2px; }"
+      "css": ".ds-btn-toggle { padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(255,244,220,0.6); background: rgba(255,244,220,0.15); color: #f0fdff; font: 600 12px 'Figtree Variable', system-ui, sans-serif; cursor: pointer; transition: background-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-btn-toggle:hover { background: rgba(255,244,220,0.25); } .ds-btn-toggle:focus-visible { outline: 1.5px solid rgba(255,244,220,0.6); outline-offset: 2px; }"
     },
     {
       "name": "Filter Chip",
@@ -247,7 +247,7 @@
       "refersTo": "chip-filter",
       "description": "Pill filter in the browser toolbar.",
       "html": "<button class=\"ds-chip\">Karaoke</button>",
-      "css": ".ds-chip { padding: 4px 10px; border-radius: 9999px; border: none; background: var(--color-raised-2, #24302a); color: var(--color-ink, #f3f1ea); font: 500 12px 'Figtree Variable', system-ui, sans-serif; cursor: pointer; transition: background-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-chip:hover { background: var(--color-raised-3, #2d3a33); } .ds-chip:focus-visible { outline: 1.5px solid rgba(255,244,220,0.6); outline-offset: 2px; }"
+      "css": ".ds-chip { padding: 4px 10px; border-radius: 9999px; border: none; background: var(--color-raised-2, #1e1e22); color: var(--color-ink, #f5f5f6); font: 500 12px 'Figtree Variable', system-ui, sans-serif; cursor: pointer; transition: background-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-chip:hover { background: var(--color-raised-3, #29292e); } .ds-chip:focus-visible { outline: 1.5px solid rgba(255,244,220,0.6); outline-offset: 2px; }"
     },
     {
       "name": "Search Field",
@@ -255,7 +255,7 @@
       "refersTo": "input-search",
       "description": "Pill search on ground.",
       "html": "<input class=\"ds-input\" placeholder=\"Buscar en YouTube\" />",
-      "css": ".ds-input { width: 280px; padding: 6px 12px; border-radius: 9999px; border: 1px solid rgba(243,241,234,0.08); background: var(--color-ground, #0a0f0d); color: var(--color-ink, #f3f1ea); caret-color: #10d9a0; font: 500 12px 'Figtree Variable', system-ui, sans-serif; outline: none; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-input:focus-visible { border-color: rgba(255,255,255,0.25); }"
+      "css": ".ds-input { width: 280px; padding: 6px 12px; border-radius: 9999px; border: 1px solid rgba(243,241,234,0.08); background: var(--color-ground, #000000); color: var(--color-ink, #f5f5f6); caret-color: #22e1f0; font: 500 12px 'Figtree Variable', system-ui, sans-serif; outline: none; transition: border-color 150ms cubic-bezier(0.16,1,0.3,1); } .ds-input:focus-visible { border-color: rgba(255,255,255,0.25); }"
     },
     {
       "name": "On-Air Tag",
@@ -263,7 +263,7 @@
       "refersTo": "tag-on-air",
       "description": "Status tag on the deck that is on air.",
       "html": "<span class=\"ds-tag-onair\">AL AIRE</span>",
-      "css": ".ds-tag-onair { display: inline-block; padding: 1px 6px; border-radius: 4px; background: #fff4dc; color: #0a0f0d; font: 700 9px 'Figtree Variable', system-ui, sans-serif; letter-spacing: 0.05em; }"
+      "css": ".ds-tag-onair { display: inline-block; padding: 1px 6px; border-radius: 4px; background: #f0fdff; color: #000000; font: 700 9px 'Figtree Variable', system-ui, sans-serif; letter-spacing: 0.05em; }"
     },
     {
       "name": "On-Air Deck Panel",
@@ -271,7 +271,7 @@
       "refersTo": "panel",
       "description": "Deck panel lifted with its deck colour when on air.",
       "html": "<section class=\"ds-deck ds-deck-a\"><strong>A</strong> Grupo Niche</section>",
-      "css": ".ds-deck { width: 320px; padding: 10px; border-radius: 12px; background: var(--color-surface, #131a17); color: #f3f1ea; border: 1px solid rgba(243,241,234,0.06); font: 600 14px 'Figtree Variable', system-ui, sans-serif; transition: border-color 200ms cubic-bezier(0.16,1,0.3,1), box-shadow 200ms, transform 200ms; } .ds-deck-a { transform: translateY(-1px); border-color: rgba(16,217,160,0.45); box-shadow: 0 14px 32px -16px rgba(16,217,160,0.45); } .ds-deck strong { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 6px; background: #10d9a0; color: #0a0f0d; }"
+      "css": ".ds-deck { width: 320px; padding: 10px; border-radius: 12px; background: var(--color-surface, #0b0b0d); color: #f5f5f6; border: 1px solid rgba(243,241,234,0.06); font: 600 14px 'Figtree Variable', system-ui, sans-serif; transition: border-color 200ms cubic-bezier(0.16,1,0.3,1), box-shadow 200ms, transform 200ms; } .ds-deck-a { transform: translateY(-1px); border-color: rgba(16,217,160,0.45); box-shadow: 0 14px 32px -16px rgba(16,217,160,0.45); } .ds-deck strong { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; border-radius: 6px; background: #22e1f0; color: #000000; }"
     },
     {
       "name": "Video Card",
@@ -279,14 +279,14 @@
       "refersTo": "card-video",
       "description": "16:9 library card with lift and live ring on hover/focus.",
       "html": "<a class=\"ds-card\" href=\"#\"><div class=\"ds-card-thumb\"></div><p>Algo Que Se Quede</p></a>",
-      "css": ".ds-card { display: block; width: 220px; color: #f3f1ea; text-decoration: none; font: 600 13px/1.375 'Figtree Variable', system-ui, sans-serif; } .ds-card-thumb { aspect-ratio: 16/9; border-radius: 8px; background: linear-gradient(135deg, #24302a, #1b2420); transition: box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1); } .ds-card:hover .ds-card-thumb, .ds-card:focus-visible .ds-card-thumb { transform: translateY(-2px); box-shadow: 0 0 0 2px rgba(255,244,220,0.7), 0 16px 32px -14px rgba(0,0,0,0.85); } .ds-card:focus-visible { outline: none; }"
+      "css": ".ds-card { display: block; width: 220px; color: #f5f5f6; text-decoration: none; font: 600 13px/1.375 'Figtree Variable', system-ui, sans-serif; } .ds-card-thumb { aspect-ratio: 16/9; border-radius: 8px; background: linear-gradient(135deg, #1e1e22, #151518); transition: box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1); } .ds-card:hover .ds-card-thumb, .ds-card:focus-visible .ds-card-thumb { transform: translateY(-2px); box-shadow: 0 0 0 2px rgba(255,244,220,0.7), 0 16px 32px -14px rgba(0,0,0,0.85); } .ds-card:focus-visible { outline: none; }"
     },
     {
       "name": "Queue Row",
       "kind": "custom",
       "description": "Siguiente row: start time right-aligned, state by line form (dashed pending, solid preloaded).",
       "html": "<div class=\"ds-qrow\"><div class=\"ds-qthumb\"></div><div class=\"ds-qtext\"><p>Corazón de Acero <span>~13:59</span></p><small>Yiyo Sarante</small></div></div>",
-      "css": ".ds-qrow { display: flex; gap: 8px; width: 320px; padding: 6px; border-radius: 8px; font-family: 'Figtree Variable', system-ui, sans-serif; } .ds-qrow:hover { background: #1b2420; } .ds-qthumb { width: 88px; aspect-ratio: 16/9; border-radius: 6px; background: #24302a; border-bottom: 2px solid #fff4dc; } .ds-qtext { flex: 1; min-width: 0; } .ds-qtext p { display: flex; justify-content: space-between; margin: 0; font-size: 12px; font-weight: 500; color: #f3f1ea; } .ds-qtext span { font-size: 10px; font-variant-numeric: tabular-nums; color: #7c8983; } .ds-qtext small { font-size: 11px; color: #8f9c95; }"
+      "css": ".ds-qrow { display: flex; gap: 8px; width: 320px; padding: 6px; border-radius: 8px; font-family: 'Figtree Variable', system-ui, sans-serif; } .ds-qrow:hover { background: #151518; } .ds-qthumb { width: 88px; aspect-ratio: 16/9; border-radius: 6px; background: #1e1e22; border-bottom: 2px solid #f0fdff; } .ds-qtext { flex: 1; min-width: 0; } .ds-qtext p { display: flex; justify-content: space-between; margin: 0; font-size: 12px; font-weight: 500; color: #f5f5f6; } .ds-qtext span { font-size: 10px; font-variant-numeric: tabular-nums; color: #85858f; } .ds-qtext small { font-size: 11px; color: #9c9ca6; }"
     }
   ],
   "narrative": {
@@ -294,7 +294,7 @@
     "overview": "The booth reads like a streaming home screen in a dark room. Artwork and video thumbnails supply the colour; the chrome is green-tinted black that steps back. Whatever is in focus (the on-air deck, the hovered library card) lifts, and its siblings recede. Dense at 1920×1080, one humanist face, small type ranked by weight rather than size.\n\nIt refuses the grey-hardware-with-neon-accents default of DJ software.",
     "keyCharacteristics": [
       "Tonal dark layers (ground → surface → raised → raised-2/3), warm-white hairlines at 6–8%.",
-      "Deck A emerald and Deck B gold as functional identity.",
+      "Deck A cyan and Deck B magenta as functional identity.",
       "Focus lift + sibling dim as the signature motion.",
       "lucide-react line icons; no emoji."
     ],
@@ -306,7 +306,7 @@
       },
       {
         "name": "The Deck Identity Rule",
-        "body": "Emerald means Deck A and gold means Deck B, everywhere. Never use them decoratively or swap them.",
+        "body": "Cyan means Deck A and magenta means Deck B, everywhere. Never use them decoratively or swap them.",
         "section": "colors"
       },
       {
@@ -332,7 +332,7 @@
     ],
     "donts": [
       "Don't use emoji. Icons come from lucide-react.",
-      "Don't put deck emerald or gold on anything not tied to that deck.",
+      "Don't put deck cyan or magenta on anything not tied to that deck.",
       "Don't use danger red for anything that is not destructive or failed.",
       "Don't add new label sizes to create hierarchy."
     ]

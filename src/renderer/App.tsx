@@ -58,7 +58,11 @@ import { HotkeyManager, type HotkeyAction } from './controllers/HotkeyManager';
 import { MidiLearnEngine, type MidiLearnMode } from './controllers/MidiLearnEngine';
 import { BpmAndWaveformEngine } from './dj/BpmAndWaveformEngine';
 import { CueLoopTempoController } from './dj/CueLoopTempoController';
-import { type AutomixFadeType, QueueAndAutomixEngine } from './dj/QueueAndAutomixEngine';
+import {
+  type AutomixFadeType,
+  DeckLoadSupersededError,
+  QueueAndAutomixEngine
+} from './dj/QueueAndAutomixEngine';
 import { useDeckStore } from './store/useDeckStore';
 import { useLibraryStore } from './store/useLibraryStore';
 import { useMixerStore } from './store/useMixerStore';
@@ -229,6 +233,8 @@ export function App(): ReactElement {
   const onAirMsRef = useRef<Record<DeckId, number>>({ A: 0, B: 0 });
   /** Total audible time of the current track per deck (not reset on pause) — used for skip/complete signals. */
   const audibleMsRef = useRef<Record<DeckId, number>>({ A: 0, B: 0 });
+  /** Bumped on every load/eject so a slower, older load can never overwrite a newer one. */
+  const loadSeqRef = useRef<Record<DeckId, number>>({ A: 0, B: 0 });
   const lastLoggedTrackRef = useRef<Record<DeckId, string>>({ A: '', B: '' });
 
   const dspRef = useRef<AudioDspEngine | null>(null);
@@ -592,11 +598,10 @@ export function App(): ReactElement {
       if (outgoing && outgoing.source !== 'local' && outgoing.videoId !== track.videoId) {
         reportImplicitFeedback(outgoing, audibleSec);
       }
+      const seq = (loadSeqRef.current[deck] += 1);
+      const isStale = (): boolean => loadSeqRef.current[deck] !== seq;
       liveRgbRef.current[deck] = [];
       autoGainEmaRef.current[deck] = 0.42;
-      queueEngineRef.current.markDeckChanged(deck);
-      queueEngineRef.current.recordPlayed(track.videoId);
-      useLibraryStore.getState().markTrackPlayed(track.videoId);
 
       setDeckPatch(deck, {
         track,
@@ -617,6 +622,7 @@ export function App(): ReactElement {
       });
 
       const { dsp, decks, cueCtrls } = await ensureAudioInitialized();
+      if (isStale()) throw new DeckLoadSupersededError(deck);
       dsp.setDeckAutoGain(deck, 1);
       dsp.setKeyShift(deck, 0);
 
@@ -630,13 +636,15 @@ export function App(): ReactElement {
         window.tubedeckAPI.getTrackMeta(track.videoId)
       ]);
 
+      if (isStale()) throw new DeckLoadSupersededError(deck);
       if (!streamRes.success) {
         setDeckPatch(deck, { loading: false, error: streamRes.error });
         throw new Error(streamRes.error);
       }
 
       const preferredQuality = useSettingsStore.getState().videoQuality;
-      await decks[deck].load({
+      try {
+        await decks[deck].load({
         ...streamRes.data,
         preferredQuality,
         mediaKind: track.mediaKind ?? streamRes.data.mediaKind ?? 'video',
@@ -646,6 +654,13 @@ export function App(): ReactElement {
           st.setQualityNotice(`Deck ${deck}: ${reason}`);
         }
       });
+      } catch (err) {
+        if (isStale()) throw new DeckLoadSupersededError(deck);
+        throw err;
+      }
+      if (isStale()) throw new DeckLoadSupersededError(deck);
+      queueEngineRef.current.recordPlayed(track.videoId, track.title);
+      useLibraryStore.getState().markTrackPlayed(track.videoId);
 
       useSettingsStore.getState().setActiveDeckQuality(deck, decks[deck].getActiveQuality());
 
@@ -967,7 +982,7 @@ export function App(): ReactElement {
                 active: true,
                 bands,
                 spectrum: dsp?.readMasterSpectrum() ?? null,
-                accentColor: domDeck === 'A' ? '#10D9A0' : '#F5C542',
+                accentColor: domDeck === 'A' ? '#22E1F0' : '#FF4FA8',
                 title: domSt.customOsdTitle ?? domSt.track.title,
                 channel: domSt.track.channel
               }
@@ -1023,6 +1038,8 @@ export function App(): ReactElement {
 
   const handleLoadToDeck = async (deck: DeckId, track: YouTubeTrack) => {
     try {
+      queueEngineRef.current.claimDeckForManualLoad(deck, track);
+      libraryStore.setQueue(queueEngineRef.current.getQueue());
       await loadTrackOntoDeck(deck, track);
       if (deck === (useMixerStore.getState().crossfader <= 0.5 ? 'A' : 'B')) {
         overlayCompRef.current.triggerTrackOsd(track.title, track.channel, performance.now());
@@ -1030,6 +1047,39 @@ export function App(): ReactElement {
     } catch {
       // error already stored in deck state
     }
+  };
+
+  const handleEjectDeck = (deck: DeckId) => {
+    const st = useDeckStore.getState().decks[deck];
+    if (!st.track && !st.loading) return;
+    const outgoing = st.track;
+    const audibleSec = audibleMsRef.current[deck] / 1000;
+    audibleMsRef.current[deck] = 0;
+    if (outgoing && outgoing.source !== 'local') reportImplicitFeedback(outgoing, audibleSec);
+    loadSeqRef.current[deck] += 1; // cancels any load still in flight on this deck
+    decksSyncRef.current?.[deck].unload();
+    liveRgbRef.current[deck] = [];
+    queueEngineRef.current.releaseDeck(deck);
+    libraryStore.setQueue(queueEngineRef.current.getQueue());
+    setDeckPatch(deck, {
+      track: null,
+      loading: false,
+      error: null,
+      playing: false,
+      currentTimeSec: 0,
+      durationSec: 0,
+      hotCues: [],
+      loop: null,
+      bpm: null,
+      waveformPeaks: null,
+      mainCueSec: 0,
+      autoGainDb: 0,
+      synced: false,
+      bufferRatio: 0,
+      customOsdTitle: null,
+      keyShiftSemitones: 0
+    });
+    if (outgoing) libraryStore.setAutomixStatusNote(`Deck ${deck} vacío: quitaste "${outgoing.title}".`);
   };
 
   const handlePlayNextInQueue = (track: YouTubeTrack) => {
@@ -1374,8 +1424,11 @@ export function App(): ReactElement {
       }
       onRetryLoad={(d) => {
         const t = useDeckStore.getState().decks[d].track;
-        if (t) void loadTrackOntoDeck(d, t).catch(() => {});
+        if (!t) return;
+        queueEngineRef.current.claimDeckForManualLoad(d, t);
+        void loadTrackOntoDeck(d, t).catch(() => {});
       }}
+      onEject={handleEjectDeck}
       onTrackFeedback={handleDeckTrackFeedback}
       key={deckId}
       deckId={deckId}
@@ -1972,6 +2025,12 @@ export function App(): ReactElement {
               }}
               onRemoveFolder={async (folderPath) => {
                 const res = await window.tubedeckAPI?.removeLocalFolder(folderPath);
+                if (res?.success) {
+                  libraryStore.setLocalLibrary(res.data.folders, res.data.tracks);
+                }
+              }}
+              onSaveFolder={async (folderPath) => {
+                const res = await window.tubedeckAPI?.addLocalFolderPath(folderPath);
                 if (res?.success) {
                   libraryStore.setLocalLibrary(res.data.folders, res.data.tracks);
                 }
