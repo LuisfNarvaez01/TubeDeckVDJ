@@ -136,15 +136,15 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
       onClick={onClose}
     >
       <div
-        className="animate-modal-in flex max-h-[88vh] w-full max-w-5xl flex-col gap-3 rounded-xl border border-white/[0.08] bg-[#0F1117] p-4 shadow-2xl"
+        className="animate-modal-in flex max-h-[88vh] w-full max-w-5xl flex-col gap-3 rounded-xl border border-white/[0.08] bg-surface p-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-white/[0.06] pb-3">
           <div>
-            <h2 className="text-base font-bold text-[#F8FAFC]">
+            <h2 className="text-base font-bold text-ink">
               {firstRun ? 'Enséñale a la radio lo que pones' : 'Ajustar mi radio'}
             </h2>
-            <p className="max-w-2xl text-xs text-[#94A3B8]">
+            <p className="max-w-2xl text-xs text-muted">
               Elige hasta {MAX_SEEDS} canciones que pongas seguido. La radio las usa como punto de partida y
               aprende de tus Me gusta, No me gusta y de las canciones que saltas. Todo se guarda solo en este equipo.
             </p>
@@ -153,7 +153,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
             type="button"
             onClick={onClose}
             aria-label="Cerrar"
-            className="rounded-lg border border-white/[0.06] bg-[#151821] p-1.5 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+            className="rounded-lg border border-white/[0.06] bg-raised p-1.5 text-muted hover:text-ink cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -163,20 +163,20 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
           {/* Search column */}
           <div className="flex min-h-0 flex-col gap-2">
             <form onSubmit={onSubmit} className="flex items-center gap-2">
-              <div className="flex flex-1 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-[#08090C] px-2.5 py-1 focus-within:border-white/25">
-                <Search className="h-4 w-4 shrink-0 text-[#64748B]" />
+              <div className="flex flex-1 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-ground px-2.5 py-1 focus-within:border-white/25">
+                <Search className="h-4 w-4 shrink-0 text-faint" />
                 <input
                   autoFocus
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Busca una canción o artista que pongas…"
-                  className="min-w-0 flex-1 bg-transparent py-1 text-xs text-[#F8FAFC] placeholder-[#64748B] focus:outline-none"
+                  className="min-w-0 flex-1 bg-transparent py-1 text-xs text-ink placeholder-faint focus:outline-none"
                 />
               </div>
               <button
                 type="submit"
                 disabled={searching || !query.trim()}
-                className="inline-flex items-center gap-1 rounded-md border border-white/[0.12] bg-[#151821] px-3 py-1.5 text-xs font-semibold text-[#F8FAFC] hover:bg-[#1C202B] disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-md border border-white/[0.12] bg-raised px-3 py-1.5 text-xs font-semibold text-ink hover:bg-raised-2 disabled:opacity-50 cursor-pointer"
               >
                 {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                 Buscar
@@ -192,7 +192,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
                     setQuery(g);
                     void runSearch(`${g} canciones`);
                   }}
-                  className="rounded-full border border-white/[0.08] bg-[#151821] px-2.5 py-0.5 text-[11px] text-[#CBD5E1] hover:border-white/20 hover:text-[#F8FAFC] cursor-pointer"
+                  className="rounded-full border border-white/[0.08] bg-raised px-2.5 py-0.5 text-[11px] text-ink-soft hover:border-white/20 hover:text-ink cursor-pointer"
                 >
                   {g}
                 </button>
@@ -200,14 +200,14 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
             </div>
 
             {error ? (
-              <div className="rounded-lg border border-[#EF4444]/40 bg-[#EF4444]/10 px-3 py-2 text-xs text-[#FCA5A5]">
+              <div className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger-soft">
                 {error}
               </div>
             ) : null}
 
-            <div className="min-h-[240px] flex-1 overflow-y-auto rounded-lg border border-white/[0.06] bg-[#08090C]">
+            <div className="min-h-[240px] flex-1 overflow-y-auto rounded-lg border border-white/[0.06] bg-ground">
               {results.length === 0 ? (
-                <div className="flex h-full items-center justify-center p-6 text-center text-xs text-[#64748B]">
+                <div className="flex h-full items-center justify-center p-6 text-center text-xs text-faint">
                   {searching ? 'Buscando…' : 'Busca canciones o toca un género para empezar.'}
                 </div>
               ) : (
@@ -222,25 +222,25 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
                         disabled={!selected && full}
                         className={`group flex flex-col gap-1 rounded-lg border p-1.5 text-left transition-colors duration-150 disabled:opacity-40 cursor-pointer ${
                           selected
-                            ? 'border-[#10B981]/60 bg-[#10B981]/10'
-                            : 'border-transparent hover:border-white/[0.1] hover:bg-[#151821]'
+                            ? 'border-live/60 bg-live/10'
+                            : 'border-transparent hover:border-white/[0.1] hover:bg-raised'
                         }`}
                       >
-                        <div className="relative aspect-video w-full overflow-hidden rounded bg-[#151821]">
+                        <div className="relative aspect-video w-full overflow-hidden rounded bg-raised">
                           <img src={t.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                          <span className="absolute bottom-1 right-1 rounded bg-black/85 px-1 font-mono-tabular text-[10px] text-[#F8FAFC]">
+                          <span className="absolute bottom-1 right-1 rounded bg-black/85 px-1 font-mono-tabular text-[10px] text-ink">
                             {formatTrackDuration(t.durationSec)}
                           </span>
                           <span
                             className={`absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full ${
-                              selected ? 'bg-[#10B981] text-[#08090C]' : 'bg-black/70 text-[#F8FAFC]'
+                              selected ? 'bg-live text-ground' : 'bg-black/70 text-ink'
                             }`}
                           >
                             {selected ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
                           </span>
                         </div>
-                        <p className="line-clamp-2 text-xs font-medium leading-snug text-[#F8FAFC]">{t.title}</p>
-                        <p className="truncate text-[11px] text-[#94A3B8]">{t.channel}</p>
+                        <p className="line-clamp-2 text-xs font-medium leading-snug text-ink">{t.title}</p>
+                        <p className="truncate text-[11px] text-muted">{t.channel}</p>
                       </button>
                     );
                   })}
@@ -251,35 +251,35 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
 
           {/* Selection + learned profile column */}
           <div className="flex min-h-0 flex-col gap-2">
-            <div className="rounded-lg border border-white/[0.06] bg-[#08090C] p-2.5">
+            <div className="rounded-lg border border-white/[0.06] bg-ground p-2.5">
               <div className="mb-1.5 flex items-center justify-between text-xs">
-                <span className="font-semibold text-[#F8FAFC]">Tus canciones de referencia</span>
-                <span className="font-mono-tabular text-[#94A3B8]">
+                <span className="font-semibold text-ink">Tus canciones de referencia</span>
+                <span className="font-mono-tabular text-muted">
                   {seeds.length}/{MAX_SEEDS}
                 </span>
               </div>
-              <div className="mb-2 h-1 overflow-hidden rounded-full bg-[#151821]">
+              <div className="mb-2 h-1 overflow-hidden rounded-full bg-raised">
                 <div
-                  className="h-full rounded-full bg-[#10B981] transition-[width] duration-200"
+                  className="h-full rounded-full bg-live transition-[width] duration-200"
                   style={{ width: `${(seeds.length / MAX_SEEDS) * 100}%` }}
                 />
               </div>
               {seeds.length === 0 ? (
-                <p className="py-3 text-center text-[11px] text-[#64748B]">Aún no eliges ninguna.</p>
+                <p className="py-3 text-center text-[11px] text-faint">Aún no eliges ninguna.</p>
               ) : (
                 <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto">
                   {seeds.map((s, i) => (
-                    <li key={s.videoId} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-[#151821]">
-                      <span className="w-4 text-center font-mono-tabular text-[10px] text-[#64748B]">{i + 1}</span>
+                    <li key={s.videoId} className="flex items-center gap-2 rounded px-1 py-0.5 hover:bg-raised">
+                      <span className="w-4 text-center font-mono-tabular text-[10px] text-faint">{i + 1}</span>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs text-[#F8FAFC]">{s.title}</p>
-                        <p className="truncate text-[10px] text-[#94A3B8]">{s.channel}</p>
+                        <p className="truncate text-xs text-ink">{s.title}</p>
+                        <p className="truncate text-[10px] text-muted">{s.channel}</p>
                       </div>
                       <button
                         type="button"
                         onClick={() => setSeeds((prev) => prev.filter((x) => x.videoId !== s.videoId))}
                         aria-label={`Quitar ${s.title}`}
-                        className="rounded p-0.5 text-[#64748B] hover:text-[#F8FAFC] cursor-pointer"
+                        className="rounded p-0.5 text-faint hover:text-ink cursor-pointer"
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -290,12 +290,12 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
             </div>
 
             {summary && (summary.likes > 0 || summary.dislikes > 0 || summary.blockedChannels.length > 0 || summary.topArtists.length > 0) ? (
-              <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-[#08090C] p-2.5 text-xs">
-                <div className="flex items-center gap-1.5 font-semibold text-[#F8FAFC]">
-                  <Sparkles className="h-3.5 w-3.5 text-[#10B981]" />
+              <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-ground p-2.5 text-xs">
+                <div className="flex items-center gap-1.5 font-semibold text-ink">
+                  <Sparkles className="h-3.5 w-3.5 text-live" />
                   Lo que la radio aprendió
                 </div>
-                <p className="font-mono-tabular text-[11px] text-[#94A3B8]">
+                <p className="font-mono-tabular text-[11px] text-muted">
                   {summary.likes} Me gusta · {summary.dislikes} No me gusta
                 </p>
                 {summary.topArtists.length > 0 ? (
@@ -303,7 +303,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
                     {summary.topArtists.map((a) => (
                       <span
                         key={a.name}
-                        className="rounded-full border border-white/[0.08] bg-[#151821] px-2 py-0.5 text-[10px] capitalize text-[#CBD5E1]"
+                        className="rounded-full border border-white/[0.08] bg-raised px-2 py-0.5 text-[10px] capitalize text-ink-soft"
                       >
                         {a.name}
                       </span>
@@ -312,7 +312,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
                 ) : null}
                 {summary.blockedChannels.length > 0 ? (
                   <div className="flex flex-col gap-1">
-                    <span className="text-[11px] text-[#94A3B8]">Canales bloqueados</span>
+                    <span className="text-[11px] text-muted">Canales bloqueados</span>
                     <div className="flex flex-wrap gap-1">
                       {summary.blockedChannels.map((name) => (
                         <button
@@ -322,7 +322,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
                             await window.tubedeckAPI?.unblockChannel?.(name);
                             void refreshSummary();
                           }}
-                          className="inline-flex items-center gap-1 rounded-full border border-[#EF4444]/30 bg-[#EF4444]/10 px-2 py-0.5 text-[10px] text-[#FCA5A5] hover:bg-[#EF4444]/20 cursor-pointer"
+                          className="inline-flex items-center gap-1 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] text-danger-soft hover:bg-danger/20 cursor-pointer"
                           title="Desbloquear"
                         >
                           {name}
@@ -339,7 +339,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
                     await window.tubedeckAPI?.resetTasteFeedback?.();
                     void refreshSummary();
                   }}
-                  className="inline-flex items-center gap-1 self-start rounded-md border border-white/[0.08] bg-[#151821] px-2 py-1 text-[11px] text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+                  className="inline-flex items-center gap-1 self-start rounded-md border border-white/[0.08] bg-raised px-2 py-1 text-[11px] text-muted hover:text-ink cursor-pointer"
                 >
                   <RotateCcw className="h-3 w-3" />
                   Reiniciar aprendizaje
@@ -350,7 +350,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-white/[0.06] pt-3">
-          <p className="text-[11px] text-[#64748B]">
+          <p className="text-[11px] text-faint">
             {seeds.length < MAX_SEEDS
               ? `Recomendado: ${MAX_SEEDS} canciones de estilos que realmente pones.`
               : 'Listo. Puedes cambiarlas cuando quieras desde Cola → Ajustar mi radio.'}
@@ -359,7 +359,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md border border-white/[0.08] bg-[#151821] px-3 py-1.5 text-xs text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+              className="rounded-md border border-white/[0.08] bg-raised px-3 py-1.5 text-xs text-muted hover:text-ink cursor-pointer"
             >
               {firstRun ? 'Omitir por ahora' : 'Cancelar'}
             </button>
@@ -367,7 +367,7 @@ export function TasteSetupModal({ open, firstRun, onClose, onSaved }: TasteSetup
               type="button"
               onClick={() => void save()}
               disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[#10B981]/60 bg-[#10B981]/15 px-3 py-1.5 text-xs font-semibold text-[#10B981] hover:bg-[#10B981]/25 disabled:opacity-50 cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-live/60 bg-live/15 px-3 py-1.5 text-xs font-semibold text-live hover:bg-live/25 disabled:opacity-50 cursor-pointer"
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               Guardar referencias

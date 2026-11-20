@@ -39,7 +39,7 @@ export function RotaryKnob({
   min,
   max,
   defaultValue = 0,
-  accentColor = '#E2E8F0',
+  accentColor = '#E4E7E1',
   bipolar = false,
   size = 40,
   onChange,
@@ -98,7 +98,7 @@ export function RotaryKnob({
       {dragging ? (
         <div
           role="tooltip"
-          className="pointer-events-none absolute -top-6 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded border border-white/[0.14] bg-[#08090C]/95 px-1.5 py-0.5 font-mono-tabular text-[10px] font-semibold text-[#F8FAFC] shadow-lg"
+          className="pointer-events-none absolute -top-6 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded border border-white/[0.14] bg-ground/95 px-1.5 py-0.5 font-mono-tabular text-[10px] font-semibold text-ink shadow-lg"
         >
           {formattedText}
         </div>
@@ -134,7 +134,7 @@ export function RotaryKnob({
             cx={center}
             cy={center}
             r={radius - 5}
-            fill="#151821"
+            fill="#1B2420"
             stroke={dragging ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.1)'}
             strokeWidth={1.1}
           />
@@ -143,13 +143,13 @@ export function RotaryKnob({
             y1={center}
             x2={pointerEnd.x}
             y2={pointerEnd.y}
-            stroke="#F8FAFC"
+            stroke="#F3F1EA"
             strokeWidth={2}
             strokeLinecap="round"
           />
         </svg>
       </div>
-      <span className="text-[9px] font-semibold tracking-wider text-[#94A3B8]">{label}</span>
+      <span className="text-[10px] font-semibold tracking-wider text-muted">{label}</span>
     </div>
   );
 }

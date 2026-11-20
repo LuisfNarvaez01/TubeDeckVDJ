@@ -21,7 +21,7 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
     preset: 'minimal-studio',
     customDataUrl: null,
     insetPercent: 8,
-    accentColor: '#0EA5E9',
+    accentColor: '#10D9A0',
     titleText: ''
   };
 
@@ -63,13 +63,13 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
   return (
     <div className="flex flex-col gap-3 text-xs">
       {/* Marcos / Video Frames */}
-      <div className="flex flex-col gap-2.5 rounded-xl border border-white/[0.06] bg-[#08090C] p-3">
+      <div className="flex flex-col gap-2.5 rounded-xl border border-white/[0.06] bg-ground p-3">
         <div className="flex items-center justify-between">
-          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F8FAFC]">
-            <Frame className="h-4 w-4 text-[#94A3B8]" />
+          <h3 className="inline-flex items-center gap-1.5 font-semibold text-ink">
+            <Frame className="h-4 w-4 text-muted" />
             Marcos de Video (Video dentro del Marco)
           </h3>
-          <span className="font-mono-tabular text-[11px] text-[#94A3B8]">
+          <span className="font-mono-tabular text-[11px] text-muted">
             {frame.enabled && frame.preset !== 'none' ? `Activo: ${frame.preset}` : 'Desactivado'}
           </span>
         </div>
@@ -96,8 +96,8 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
                 }
                 className={`rounded-lg border px-2.5 py-1 text-[11px] font-semibold cursor-pointer ${
                   active
-                    ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'border-white/30 bg-raised-2 text-ink'
+                    : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
                 }`}
               >
                 {p.label}
@@ -105,7 +105,7 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
             );
           })}
 
-          <label className="inline-flex items-center gap-1 rounded-lg border border-white/[0.1] bg-[#151821] px-2.5 py-1 text-[11px] font-semibold text-[#CBD5E1] hover:bg-[#1C202B] cursor-pointer">
+          <label className="inline-flex items-center gap-1 rounded-lg border border-white/[0.1] bg-raised px-2.5 py-1 text-[11px] font-semibold text-ink-soft hover:bg-raised-2 cursor-pointer">
             <Upload className="h-3 w-3" />
             Subir Marco PNG
             <input
@@ -118,7 +118,7 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
         </div>
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-[#94A3B8]">
+          <label className="flex flex-col gap-1 text-muted">
             Margen del Marco (<span className="font-mono-tabular">{frame.insetPercent}%</span>)
             <input
               type="range"
@@ -132,11 +132,11 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
                   frame: { ...frame, enabled: true, insetPercent: Number(e.target.value) }
                 })
               }
-              className="accent-[#E2E8F0] cursor-pointer"
+              className="accent-ink-2 cursor-pointer"
             />
           </label>
 
-          <label className="flex flex-col gap-1 text-[#94A3B8]">
+          <label className="flex flex-col gap-1 text-muted">
             Título superior del Evento / Karaoke
             <input
               type="text"
@@ -148,15 +148,15 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
                 })
               }
               placeholder="Ej. Viernes de Karaoke En Vivo"
-              className="rounded-lg border border-white/[0.06] bg-[#151821] px-2.5 py-1 text-xs text-[#F8FAFC] placeholder-[#64748B]"
+              className="rounded-lg border border-white/[0.06] bg-raised px-2.5 py-1 text-xs text-ink placeholder-faint"
             />
           </label>
         </div>
       </div>
 
       {/* Overlays: OSD, Texto, Logo, Webcam */}
-      <div className="flex flex-col gap-2 rounded-xl border border-white/[0.06] bg-[#08090C] p-3">
-        <span className="font-semibold text-[#F8FAFC]">
+      <div className="flex flex-col gap-2 rounded-xl border border-white/[0.06] bg-ground p-3">
+        <span className="font-semibold text-ink">
           Elementos en Pantalla (OSD / Logo / Cámara)
         </span>
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -167,8 +167,8 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
             }
             className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 font-medium cursor-pointer ${
               config.osd.enabled
-                ? 'border-[#10B981]/50 bg-[#10B981]/15 text-[#10B981]'
-                : 'border-white/[0.06] bg-[#151821] text-[#94A3B8]'
+                ? 'border-live/50 bg-live/15 text-live'
+                : 'border-white/[0.06] bg-raised text-muted'
             }`}
           >
             <Tv className="h-3.5 w-3.5" />
@@ -185,8 +185,8 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
             }
             className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 font-medium cursor-pointer ${
               config.marquee.enabled
-                ? 'border-white/25 bg-[#1C202B] text-[#F8FAFC]'
-                : 'border-white/[0.06] bg-[#151821] text-[#94A3B8]'
+                ? 'border-white/25 bg-raised-2 text-ink'
+                : 'border-white/[0.06] bg-raised text-muted'
             }`}
           >
             <Type className="h-3.5 w-3.5" />
@@ -201,11 +201,11 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
                 onChange({ ...config, marquee: { ...config.marquee, text: e.target.value } })
               }
               placeholder="Texto deslizante en vivo..."
-              className="w-48 rounded-lg border border-white/[0.06] bg-[#151821] px-2.5 py-1 text-xs text-[#F8FAFC]"
+              className="w-48 rounded-lg border border-white/[0.06] bg-raised px-2.5 py-1 text-xs text-ink"
             />
           ) : null}
 
-          <label className="inline-flex items-center gap-1 rounded-lg border border-white/[0.06] bg-[#151821] px-2.5 py-1 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer">
+          <label className="inline-flex items-center gap-1 rounded-lg border border-white/[0.06] bg-raised px-2.5 py-1 text-muted hover:text-ink cursor-pointer">
             <ImageIcon className="h-3.5 w-3.5" />
             Subir Logo
             <input type="file" accept="image/*" onChange={handleLogoFile} className="hidden" />
@@ -220,8 +220,8 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
                 }
                 className={`rounded border px-2 py-0.5 cursor-pointer ${
                   config.logo.enabled
-                    ? 'border-white/25 bg-[#1C202B] text-[#F8FAFC]'
-                    : 'border-white/[0.06] text-[#94A3B8]'
+                    ? 'border-white/25 bg-raised-2 text-ink'
+                    : 'border-white/[0.06] text-muted'
                 }`}
               >
                 Logo {config.logo.enabled ? 'ON' : 'OFF'}
@@ -234,7 +234,7 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
                     logo: { ...config.logo, corner: e.target.value as OverlayCorner }
                   })
                 }
-                className="rounded border border-white/[0.06] bg-[#151821] px-1.5 py-0.5 text-[11px] text-[#F8FAFC]"
+                className="rounded border border-white/[0.06] bg-raised px-1.5 py-0.5 text-[11px] text-ink"
               >
                 <option value="top-left">Sup. Izq</option>
                 <option value="top-right">Sup. Der</option>
@@ -251,8 +251,8 @@ export function OverlayControls({ config, onChange }: OverlayControlsProps): Rea
             }
             className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 font-medium cursor-pointer ${
               config.webcam.enabled
-                ? 'border-white/25 bg-[#1C202B] text-[#F8FAFC]'
-                : 'border-white/[0.06] bg-[#151821] text-[#94A3B8]'
+                ? 'border-white/25 bg-raised-2 text-ink'
+                : 'border-white/[0.06] bg-raised text-muted'
             }`}
           >
             <Camera className="h-3.5 w-3.5" />

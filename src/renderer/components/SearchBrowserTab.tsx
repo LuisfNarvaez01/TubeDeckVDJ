@@ -29,7 +29,7 @@ type ResultsViewMode = 'grid' | 'list';
 
 const VIEW_MODE_STORAGE_KEY = 'tubedeck.searchViewMode';
 const iconBtn =
-  'rounded p-1 text-[#94A3B8] transition-colors duration-150 hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer';
+  'rounded p-1 text-muted transition-colors duration-150 hover:bg-raised-2 hover:text-ink cursor-pointer';
 
 function readViewMode(): ResultsViewMode {
   try {
@@ -77,9 +77,10 @@ export function SearchBrowserTab({
     return () => ro.disconnect();
   }, []);
 
-  // Cards need ~250 px of height; in a short dock fall back to the compact list automatically.
-  const effectiveViewMode: ResultsViewMode =
-    viewMode === 'grid' && resultsAreaHeight < 250 ? 'list' : viewMode;
+  // In a short dock the card grid becomes one horizontally scrolling shelf, sized to the height.
+  const effectiveViewMode: ResultsViewMode = viewMode;
+  const shelf = viewMode === 'grid' && resultsAreaHeight < 250;
+  const shelfCardWidth = Math.round(Math.min(220, Math.max(128, ((resultsAreaHeight - 56) * 16) / 9)));
 
   const changeViewMode = (mode: ResultsViewMode): void => {
     setViewMode(mode);
@@ -158,7 +159,7 @@ export function SearchBrowserTab({
     <div
       role="group"
       aria-label="Vista de resultados"
-      className="flex items-center rounded-md border border-white/[0.06] bg-[#08090C] p-0.5"
+      className="flex items-center rounded-md border border-white/[0.06] bg-ground p-0.5"
     >
       {(
         [
@@ -173,12 +174,12 @@ export function SearchBrowserTab({
           aria-pressed={viewMode === mode}
           aria-label={`Vista ${label}`}
           title={
-            mode === 'grid' && viewMode === 'grid' && effectiveViewMode === 'list'
-              ? 'Cuadrícula (se muestra como lista hasta que el navegador tenga más alto)'
+            mode === 'grid' && shelf
+              ? 'Cuadrícula (una fila con scroll horizontal hasta que el navegador tenga más alto)'
               : `Vista ${label}`
           }
           className={`rounded p-1 transition-colors duration-150 cursor-pointer ${
-            viewMode === mode ? 'bg-[#1C202B] text-[#F8FAFC]' : 'text-[#64748B] hover:text-[#CBD5E1]'
+            viewMode === mode ? 'bg-raised-2 text-ink' : 'text-faint hover:text-ink-soft'
           }`}
         >
           <Icon className="h-3.5 w-3.5" />
@@ -193,22 +194,22 @@ export function SearchBrowserTab({
     <div className="flex h-full min-h-0 flex-col gap-2">
       {/* Search + filters toolbar */}
       <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-2">
-        <div className="flex min-w-64 flex-1 items-center gap-1.5 rounded-full border border-white/[0.08] bg-[#08090C] py-1 pl-3 pr-1 focus-within:border-white/25">
-          <Search className="h-4 w-4 shrink-0 text-[#64748B]" />
+        <div className="flex min-w-64 flex-1 items-center gap-1.5 rounded-full border border-white/[0.08] bg-ground py-1 pl-3 pr-1 focus-within:border-white/25">
+          <Search className="h-4 w-4 shrink-0 text-faint" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Buscar canción, karaoke o pegar URL de playlist de YouTube..."
             aria-label="Buscar en YouTube"
-            className="min-w-0 flex-1 bg-transparent py-0.5 text-xs text-[#F8FAFC] placeholder-[#64748B] focus:outline-none"
+            className="min-w-0 flex-1 bg-transparent py-0.5 text-xs text-ink placeholder-faint focus:outline-none"
           />
           {query ? (
             <button
               type="button"
               aria-label="Limpiar búsqueda"
               onClick={() => setQuery('')}
-              className="rounded p-0.5 text-[#64748B] hover:text-[#F8FAFC] cursor-pointer"
+              className="rounded p-0.5 text-faint hover:text-ink cursor-pointer"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -216,7 +217,7 @@ export function SearchBrowserTab({
           <button
             type="submit"
             disabled={searching}
-            className="inline-flex items-center gap-1 rounded-full bg-[#1C202B] px-3 py-1 text-xs font-semibold text-[#F8FAFC] transition-colors duration-150 hover:bg-[#262B38] disabled:opacity-50 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-full bg-raised-2 px-3 py-1 text-xs font-semibold text-ink transition-colors duration-150 hover:bg-raised-3 disabled:opacity-50 cursor-pointer"
           >
             {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
             Buscar
@@ -238,8 +239,8 @@ export function SearchBrowserTab({
               aria-pressed={quickFilter === id}
               className={`rounded-full px-2.5 py-1 font-medium transition-colors duration-150 cursor-pointer ${
                 quickFilter === id
-                  ? 'bg-[#F8FAFC] text-[#08090C]'
-                  : 'bg-[#151821] text-[#CBD5E1] hover:bg-[#1C202B] hover:text-[#F8FAFC]'
+                  ? 'bg-ink text-ground'
+                  : 'bg-raised text-ink-soft hover:bg-raised-2 hover:text-ink'
               }`}
             >
               {label}
@@ -251,8 +252,8 @@ export function SearchBrowserTab({
             aria-pressed={durationFilter !== 'all'}
             className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-mono-tabular font-medium transition-colors duration-150 cursor-pointer ${
               durationFilter !== 'all'
-                ? 'bg-[#F8FAFC] text-[#08090C]'
-                : 'bg-[#151821] text-[#CBD5E1] hover:bg-[#1C202B] hover:text-[#F8FAFC]'
+                ? 'bg-ink text-ground'
+                : 'bg-raised text-ink-soft hover:bg-raised-2 hover:text-ink'
             }`}
             title="Filtrar resultados por duración"
           >
@@ -268,7 +269,7 @@ export function SearchBrowserTab({
               title="Crate donde se agregan las canciones con el botón Crate"
               value={crateId}
               onChange={(e) => setTargetCrateId(e.target.value)}
-              className="max-w-32 rounded-md border border-white/[0.06] bg-[#151821] px-1.5 py-1 text-[11px] text-[#F8FAFC]"
+              className="max-w-32 rounded-md border border-white/[0.06] bg-raised px-1.5 py-1 text-[11px] text-ink"
             >
               {crates.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -281,7 +282,7 @@ export function SearchBrowserTab({
             <button
               type="button"
               onClick={() => onAddToQueue(filteredResults)}
-              className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] bg-[#151821] px-2.5 py-1 text-[11px] font-semibold text-[#CBD5E1] transition-colors duration-150 hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
+              className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] bg-raised px-2.5 py-1 text-[11px] font-semibold text-ink-soft transition-colors duration-150 hover:bg-raised-2 hover:text-ink cursor-pointer"
             >
               <ListPlus className="h-3.5 w-3.5" />
               Todo a Cola
@@ -292,16 +293,19 @@ export function SearchBrowserTab({
       </form>
 
       {error ? (
-        <div role="alert" className="rounded-lg border border-[#EF4444]/40 bg-[#EF4444]/10 px-3 py-2 text-xs text-[#FCA5A5]">
+        <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger-soft">
           {error}
         </div>
       ) : null}
 
-      <div ref={resultsAreaRef} className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <div
+        ref={resultsAreaRef}
+        className={`min-h-0 flex-1 pr-1 ${shelf && filteredResults.length > 0 ? 'overflow-x-auto overflow-y-hidden' : 'overflow-y-auto'}`}
+      >
         {filteredResults.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-1 p-6 text-center">
-            <Search className="h-5 w-5 text-[#334155]" />
-            <p className="text-xs text-[#94A3B8]">
+            <Search className="h-5 w-5 text-faint-2" />
+            <p className="text-xs text-muted">
               {searching
                 ? 'Buscando…'
                 : results.length === 0
@@ -309,17 +313,24 @@ export function SearchBrowserTab({
                   : 'Ningún resultado coincide con los filtros activos.'}
             </p>
             {results.length === 0 && !searching ? (
-              <p className="text-[11px] text-[#64748B]">Se reproduce en RAM, sin descargar archivos.</p>
+              <p className="text-[11px] text-faint">Se reproduce en RAM, sin descargar archivos.</p>
             ) : null}
           </div>
         ) : effectiveViewMode === 'grid' ? (
-          <ul className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-3 gap-y-4">
+          <ul
+            style={shelf ? { gridAutoColumns: `${shelfCardWidth}px` } : undefined}
+            className={`grid gap-x-3 gap-y-4 ${
+              shelf
+                ? 'grid-flow-col snap-x snap-mandatory pb-1 [&>li]:snap-start'
+                : 'grid-cols-[repeat(auto-fill,minmax(200px,1fr))]'
+            } [&>li]:transition-opacity [&>li]:duration-200 [&:has(>li:hover)>li:not(:hover)]:opacity-55 [&:has(>li:focus-within)>li:not(:focus-within)]:opacity-55`}
+          >
             {filteredResults.map((track) => {
               const wasPlayed = playedVideoIds.includes(track.videoId);
               const isPreviewing = previewingVideoId === track.videoId;
               return (
                 <li key={track.videoId} className="group flex min-w-0 flex-col gap-1.5">
-                  <div className="relative aspect-video overflow-hidden rounded-lg bg-[#151821]">
+                  <div className="relative aspect-video overflow-hidden rounded-lg bg-raised ring-0 ring-live/70 transition-[box-shadow,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:-translate-y-0.5 group-hover:shadow-[0_16px_32px_-14px_rgba(0,0,0,0.85)] group-hover:ring-2 group-focus-within:-translate-y-0.5 group-focus-within:ring-2">
                     <img
                       src={track.thumbnailUrl}
                       alt=""
@@ -328,11 +339,11 @@ export function SearchBrowserTab({
                         wasPlayed ? 'opacity-60' : ''
                       }`}
                     />
-                    <span className="absolute bottom-1.5 right-1.5 rounded bg-black/85 px-1 font-mono-tabular text-[11px] font-semibold text-[#F8FAFC]">
+                    <span className="absolute bottom-1.5 right-1.5 rounded bg-black/85 px-1 font-mono-tabular text-[11px] font-semibold text-ink">
                       {formatTrackDuration(track.durationSec)}
                     </span>
                     {wasPlayed ? (
-                      <span className="absolute left-1.5 top-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-semibold text-[#CBD5E1]">
+                      <span className="absolute left-1.5 top-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-semibold text-ink-soft">
                         Ya sonó
                       </span>
                     ) : null}
@@ -342,7 +353,7 @@ export function SearchBrowserTab({
                         type="button"
                         onClick={() => onLoadToDeck('A', track)}
                         aria-label={`Cargar en Deck A: ${track.title}`}
-                        className="flex h-9 w-9 items-center justify-center rounded-full bg-[#0EA5E9] text-sm font-extrabold text-[#08090C] transition-transform duration-150 hover:scale-105 active:scale-[0.97] cursor-pointer"
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-deck-a text-sm font-extrabold text-ground transition-transform duration-150 hover:scale-105 active:scale-[0.97] cursor-pointer"
                       >
                         A
                       </button>
@@ -350,7 +361,7 @@ export function SearchBrowserTab({
                         type="button"
                         onClick={() => onLoadToDeck('B', track)}
                         aria-label={`Cargar en Deck B: ${track.title}`}
-                        className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F59E0B] text-sm font-extrabold text-[#08090C] transition-transform duration-150 hover:scale-105 active:scale-[0.97] cursor-pointer"
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-deck-b text-sm font-extrabold text-ground transition-transform duration-150 hover:scale-105 active:scale-[0.97] cursor-pointer"
                       >
                         B
                       </button>
@@ -361,7 +372,7 @@ export function SearchBrowserTab({
                           aria-label={`Pre-escucha CUE ${track.title}`}
                           title="Pre-escucha solo en audífonos (PFL)"
                           className={`flex h-9 w-9 items-center justify-center rounded-full transition-transform duration-150 hover:scale-105 active:scale-[0.97] cursor-pointer ${
-                            isPreviewing ? 'bg-[#10B981] text-[#08090C]' : 'bg-white/90 text-[#08090C]'
+                            isPreviewing ? 'bg-live text-ground' : 'bg-white/90 text-ground'
                           }`}
                         >
                           {isPreviewing && previewLoading ? (
@@ -373,21 +384,21 @@ export function SearchBrowserTab({
                       ) : null}
                     </div>
                     {isPreviewing ? (
-                      <span className="absolute inset-x-0 bottom-0 h-0.5 bg-[#10B981]" aria-hidden="true" />
+                      <span className="absolute inset-x-0 bottom-0 h-0.5 bg-live" aria-hidden="true" />
                     ) : null}
                   </div>
 
                   <div className="flex min-w-0 gap-1">
                     <div className="min-w-0 flex-1">
                       <p
-                        className="line-clamp-2 text-[13px] font-semibold leading-snug text-[#F8FAFC]"
+                        className={`${shelf ? 'line-clamp-1' : 'line-clamp-2'} text-[13px] font-semibold leading-snug text-ink`}
                         title={track.title}
                       >
                         {track.title}
                       </p>
-                      <p className="mt-0.5 truncate text-xs text-[#94A3B8]">{track.channel}</p>
-                      {track.viewsText || track.publishedText ? (
-                        <p className="truncate text-[11px] text-[#64748B]">
+                      <p className="mt-0.5 truncate text-xs text-muted">{track.channel}</p>
+                      {!shelf && (track.viewsText || track.publishedText) ? (
+                        <p className="truncate text-[11px] text-faint">
                           {[track.viewsText, track.publishedText].filter(Boolean).join(' · ')}
                         </p>
                       ) : null}
@@ -438,24 +449,24 @@ export function SearchBrowserTab({
               return (
                 <li
                   key={track.videoId}
-                  className="group flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors duration-150 hover:bg-[#151821] focus-within:bg-[#151821]"
+                  className="group flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors duration-150 hover:bg-raised focus-within:bg-raised"
                 >
-                  <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded bg-[#151821]">
+                  <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded bg-raised">
                     <img
                       src={track.thumbnailUrl}
                       alt=""
                       loading="lazy"
                       className={`h-full w-full object-cover ${wasPlayed ? 'opacity-60' : ''}`}
                     />
-                    <span className="absolute bottom-0.5 right-0.5 rounded bg-black/85 px-1 font-mono-tabular text-[10px] font-semibold text-[#F8FAFC]">
+                    <span className="absolute bottom-0.5 right-0.5 rounded bg-black/85 px-1 font-mono-tabular text-[10px] font-semibold text-ink">
                       {formatTrackDuration(track.durationSec)}
                     </span>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-semibold text-[#F8FAFC]" title={track.title}>
+                    <p className="truncate text-[13px] font-semibold text-ink" title={track.title}>
                       {track.title}
                     </p>
-                    <p className="truncate text-xs text-[#94A3B8]">
+                    <p className="truncate text-xs text-muted">
                       {[track.channel, track.viewsText, track.publishedText].filter(Boolean).join(' · ')}
                       {wasPlayed ? ' · Ya sonó' : ''}
                     </p>
@@ -467,7 +478,7 @@ export function SearchBrowserTab({
                         onClick={() => onCuePreview(track)}
                         aria-label={`Pre-escucha CUE ${track.title}`}
                         title="Pre-escucha solo en audífonos (PFL)"
-                        className={`${iconBtn} ${isPreviewing ? 'text-[#10B981] hover:text-[#10B981]' : ''}`}
+                        className={`${iconBtn} ${isPreviewing ? 'text-live hover:text-live' : ''}`}
                       >
                         {isPreviewing && previewLoading ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -511,7 +522,7 @@ export function SearchBrowserTab({
                       type="button"
                       onClick={() => onLoadToDeck('A', track)}
                       aria-label={`Cargar en Deck A: ${track.title}`}
-                      className="ml-1 rounded-md border border-[#0EA5E9]/45 px-2 py-0.5 text-[11px] font-bold text-[#0EA5E9] transition-colors duration-150 hover:bg-[#0EA5E9]/15 cursor-pointer"
+                      className="ml-1 rounded-md border border-deck-a/45 px-2 py-0.5 text-[11px] font-bold text-deck-a transition-colors duration-150 hover:bg-deck-a/15 cursor-pointer"
                     >
                       A
                     </button>
@@ -519,7 +530,7 @@ export function SearchBrowserTab({
                       type="button"
                       onClick={() => onLoadToDeck('B', track)}
                       aria-label={`Cargar en Deck B: ${track.title}`}
-                      className="rounded-md border border-[#F59E0B]/45 px-2 py-0.5 text-[11px] font-bold text-[#F59E0B] transition-colors duration-150 hover:bg-[#F59E0B]/15 cursor-pointer"
+                      className="rounded-md border border-deck-b/45 px-2 py-0.5 text-[11px] font-bold text-deck-b transition-colors duration-150 hover:bg-deck-b/15 cursor-pointer"
                     >
                       B
                     </button>
@@ -536,7 +547,7 @@ export function SearchBrowserTab({
               type="button"
               onClick={handleLoadMore}
               disabled={searching}
-              className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-[#151821] px-4 py-1.5 text-xs text-[#CBD5E1] transition-colors duration-150 hover:bg-[#1C202B] hover:text-[#F8FAFC] disabled:opacity-50 cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-raised px-4 py-1.5 text-xs text-ink-soft transition-colors duration-150 hover:bg-raised-2 hover:text-ink disabled:opacity-50 cursor-pointer"
             >
               {searching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               Cargar más resultados

@@ -12,3 +12,8 @@ playwright-report/
 Thumbs.db
 resources/bin/
 
+
+# Impeccable working files (decision sketches, review captures, build state)
+.impeccable/mocks/
+.impeccable/review/
+.impeccable/build/

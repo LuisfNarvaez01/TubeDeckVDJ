@@ -80,6 +80,12 @@ interface DeckPanelProps {
   liveRgbRef?: MutableRefObject<Record<DeckId, RgbWaveSample[]>>;
   /** Like / dislike the track on this deck to teach the radio. */
   onTrackFeedback?: (deck: DeckId, signal: 'like' | 'dislike') => void;
+  /** This deck is audible on the master right now (playing, fader and crossfader open). */
+  onAir?: boolean;
+  /** The other deck is on air and this one is not: step back identity chrome (never controls). */
+  offAirDimmed?: boolean;
+  /** Retry loading the current track after a stream error. */
+  onRetryLoad?: (deck: DeckId) => void;
 }
 
 function formatTime(sec: number): string {
@@ -120,7 +126,10 @@ export function DeckPanel({
   onTriggerSample = () => {},
   onDeckFxChange = () => {},
   liveRgbRef,
-  onTrackFeedback
+  onTrackFeedback,
+  onAir = false,
+  offAirDimmed = false,
+  onRetryLoad
 }: DeckPanelProps): ReactElement {
   const deck = useDeckStore((s) => s.decks[deckId]);
   const setDeckPatch = useDeckStore((s) => s.setDeckPatch);
@@ -136,7 +145,7 @@ export function DeckPanel({
     setFeedbackGiven(null);
   }, [deck.track?.videoId]);
 
-  const accent = deckId === 'A' ? '#0EA5E9' : '#F59E0B';
+  const accent = deckId === 'A' ? '#10D9A0' : '#F5C542';
   const remaining = Math.max(0, deck.durationSec - deck.currentTimeSec);
   const isNearEnd = deck.playing && deck.durationSec > 20 && remaining <= 15;
   const effectiveBpm = deck.bpm ? Number((deck.bpm * (1 + deck.pitchPercent / 100)).toFixed(1)) : null;
@@ -175,18 +184,33 @@ export function DeckPanel({
 
   return (
     <section
-      className="flex min-w-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-[#0F1117] p-2.5"
+      className={`@container flex min-w-0 flex-col gap-2 rounded-xl border bg-surface p-2.5 transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        onAir
+          ? deckId === 'A'
+            ? '-translate-y-px border-deck-a/45 shadow-[0_14px_32px_-16px_rgba(16,217,160,0.45)]'
+            : '-translate-y-px border-deck-b/45 shadow-[0_14px_32px_-16px_rgba(245,197,66,0.45)]'
+          : 'border-white/[0.06]'
+      }`}
       aria-label={`Deck ${deckId}`}
     >
       {/* Header: Identity + OSD Editable Title + Stream Health + BPM + Clocks */}
       <header className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs font-extrabold text-[#08090C]"
-            style={{ backgroundColor: accent }}
-          >
-            {deckId}
-          </span>
+        <div
+          className={`flex min-w-0 flex-1 items-center gap-2.5 transition-[opacity,filter] duration-200 ${
+            offAirDimmed ? 'opacity-60 saturate-50' : ''
+          }`}
+        >
+          <div className="relative aspect-video w-[56px] shrink-0 overflow-hidden rounded-md bg-raised @2xl:w-[76px]">
+            {deck.track?.thumbnailUrl ? (
+              <img src={deck.track.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+            ) : null}
+            <span
+              className="absolute left-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded text-[11px] font-extrabold text-ground"
+              style={{ backgroundColor: accent }}
+            >
+              {deckId}
+            </span>
+          </div>
           <div className="min-w-0 flex-1">
             {editingTitle && deck.track ? (
               <input
@@ -200,7 +224,7 @@ export function DeckPanel({
                   if (e.key === 'Enter') commitTitleEdit();
                   else if (e.key === 'Escape') setEditingTitle(false);
                 }}
-                className="w-full rounded border border-white/[0.16] bg-[#08090C] px-1.5 py-0.5 text-xs font-semibold text-[#F8FAFC] focus:outline-none"
+                className="w-full rounded border border-white/[0.16] bg-ground px-1.5 py-0.5 text-xs font-semibold text-ink focus:outline-none"
               />
             ) : (
               <p
@@ -214,16 +238,23 @@ export function DeckPanel({
                     ? `${deck.track.title} (Doble clic para editar título OSD en Pantalla 2)`
                     : 'Sin pista cargada'
                 }
-                className="group/title flex cursor-text items-center gap-1 truncate text-sm font-semibold text-[#F8FAFC]"
+                className="group/title flex cursor-text items-center gap-1.5 truncate text-[14px] font-semibold leading-tight text-ink @2xl:text-[17px]"
               >
-                <span className="truncate">{displayTitle}</span>
+                <span className={`truncate transition-colors duration-200 ${onAir || !deck.track ? 'text-ink' : 'text-ink-soft'}`}>
+                  {displayTitle}
+                </span>
+                {onAir ? (
+                  <span className="shrink-0 rounded bg-live px-1.5 py-px text-[10px] font-bold tracking-wider text-ground">
+                    AL AIRE
+                  </span>
+                ) : null}
                 {deck.track ? (
-                  <Pencil className="h-2.5 w-2.5 shrink-0 text-[#64748B] opacity-0 group-hover/title:opacity-100" />
+                  <Pencil className="h-2.5 w-2.5 shrink-0 text-faint opacity-0 group-hover/title:opacity-100" />
                 ) : null}
               </p>
             )}
 
-            <div className="flex items-center gap-2 text-[10px] text-[#94A3B8]">
+            <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted">
               <span className="truncate" title={deck.track?.recommendReason}>
                 {deck.track ? deck.track.channel : 'Carga un video del buscador o cola'}
               </span>
@@ -251,9 +282,9 @@ export function DeckPanel({
                         className={`rounded p-0.5 transition-colors duration-150 cursor-pointer ${
                           active
                             ? signal === 'like'
-                              ? 'text-[#10B981]'
-                              : 'text-[#FCA5A5]'
-                            : 'text-[#64748B] hover:text-[#F8FAFC]'
+                              ? 'text-live'
+                              : 'text-danger-soft'
+                            : 'text-faint hover:text-ink'
                         }`}
                       >
                         <Icon className="h-3 w-3" />
@@ -265,13 +296,13 @@ export function DeckPanel({
 
               {healthLabel ? (
                 <div
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded border border-white/[0.06] bg-[#08090C] px-1.5 py-0.5"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded border border-white/[0.06] bg-ground px-1.5 py-0.5"
                   title={`Resolución: ${healthLabel} • Buffer RAM: ${Math.round(deck.bufferRatio * 100)}%`}
                 >
-                  <span className="font-mono-tabular text-[9px] font-semibold text-[#CBD5E1]">
+                  <span className="font-mono-tabular text-[10px] font-semibold text-ink-soft">
                     {healthLabel}
                   </span>
-                  <span className="h-1 w-10 overflow-hidden rounded-full bg-[#151821]">
+                  <span className="h-1 w-10 overflow-hidden rounded-full bg-raised">
                     <span
                       className="block h-full rounded-full transition-all duration-150"
                       style={{
@@ -284,7 +315,7 @@ export function DeckPanel({
               ) : null}
 
               {deck.autoGainDb !== 0 ? (
-                <span className="shrink-0 rounded border border-white/[0.06] bg-[#151821] px-1 font-mono-tabular text-[9px] text-[#CBD5E1]">
+                <span className="shrink-0 rounded border border-white/[0.06] bg-raised px-1 font-mono-tabular text-[10px] text-ink-soft">
                   {deck.autoGainDb > 0
                     ? `+${deck.autoGainDb.toFixed(1)}`
                     : deck.autoGainDb.toFixed(1)}{' '}
@@ -296,15 +327,15 @@ export function DeckPanel({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <div className="flex items-center gap-1 rounded-md border border-white/[0.06] bg-[#08090C] px-2 py-1 text-xs">
-            <span className="font-mono-tabular font-semibold text-[#F8FAFC]">
+          <div className="flex items-center gap-1 rounded-md border border-white/[0.06] bg-ground px-2 py-1 text-xs">
+            <span className="font-mono-tabular text-[14px] leading-none text-ink @2xl:text-[20px]">
               {effectiveBpm ? effectiveBpm.toFixed(1) : '--.-'}
             </span>
-            <span className="text-[10px] text-[#64748B]">BPM</span>
+            <span className="text-[10px] text-faint">BPM</span>
             <button
               type="button"
               onClick={() => onAdjustBpmHalfDouble(deckId, 0.5)}
-              className="rounded px-1 text-[10px] text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+              className="hidden rounded px-1 text-[10px] text-muted hover:text-ink cursor-pointer @2xl:inline"
               title="Mitad BPM"
             >
               ÷2
@@ -312,7 +343,7 @@ export function DeckPanel({
             <button
               type="button"
               onClick={() => onAdjustBpmHalfDouble(deckId, 2)}
-              className="rounded px-1 text-[10px] text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+              className="hidden rounded px-1 text-[10px] text-muted hover:text-ink cursor-pointer @2xl:inline"
               title="Doble BPM"
             >
               ×2
@@ -320,7 +351,7 @@ export function DeckPanel({
             <button
               type="button"
               onClick={() => onTapBpm(deckId)}
-              className="rounded border border-white/[0.06] bg-[#151821] px-1.5 py-0.5 text-[10px] font-semibold text-[#CBD5E1] hover:bg-[#1C202B] cursor-pointer"
+              className="rounded border border-white/[0.06] bg-raised px-1.5 py-0.5 text-[10px] font-semibold text-ink-soft hover:bg-raised-2 cursor-pointer"
             >
               TAP
             </button>
@@ -329,28 +360,22 @@ export function DeckPanel({
               onClick={() => onSync(deckId)}
               className={`relative rounded border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${
                 deck.synced
-                  ? 'border-[#10B981]/60 bg-[#10B981]/20 text-[#10B981]'
-                  : 'border-white/[0.08] bg-[#151821] text-[#CBD5E1] hover:bg-[#1C202B] hover:text-[#F8FAFC]'
+                  ? 'border-live/60 bg-live/20 text-live'
+                  : 'border-white/[0.08] bg-raised text-ink-soft hover:bg-raised-2 hover:text-ink'
               }`}
             >
               SYNC
               {showHotkeys ? (
-                <span className="hardware-keycap pointer-events-none absolute -top-2.5 -right-1 rounded px-1 text-[8px]">
+                <span className="hardware-keycap pointer-events-none absolute -top-2.5 -right-1 rounded px-1 text-[10px]">
                   {deckId === 'A' ? 'S' : '⇧S'}
                 </span>
               ) : null}
             </button>
           </div>
 
-          <div className="text-right font-mono-tabular">
-            <div className="text-xs font-semibold text-[#F8FAFC]">
-              {formatTime(deck.currentTimeSec)}
-            </div>
-            <div
-              className={`text-[10px] ${
-                isNearEnd ? 'font-bold text-[#EF4444]' : 'text-[#94A3B8]'
-              }`}
-            >
+          <div className="min-w-[64px] text-right font-mono-tabular leading-none @2xl:min-w-[88px]">
+            <div className="text-[20px] text-ink @2xl:text-[28px]">{formatTime(deck.currentTimeSec)}</div>
+            <div className={`mt-1 text-[13px] ${isNearEnd ? 'font-bold text-danger' : 'text-muted'}`}>
               -{formatTime(remaining)}
             </div>
           </div>
@@ -372,13 +397,40 @@ export function DeckPanel({
           onSeek={(t) => onSeek(deckId, t)}
         />
         {deck.loading ? (
-          <div className="absolute inset-0 flex items-center justify-center rounded-md bg-black/80 text-xs font-medium text-[#CBD5E1]">
+          <div className="absolute inset-0 flex items-center justify-center rounded-md bg-black/80 text-xs font-medium text-ink-soft">
             Cargando stream en RAM...
           </div>
         ) : null}
-        {deck.error ? (
-          <div className="mt-1 rounded border border-[#EF4444]/40 bg-[#EF4444]/15 px-2 py-1 text-xs text-[#FCA5A5]">
-            {deck.error}
+        {deck.error && !deck.loading ? (
+          <div
+            role="alert"
+            className="absolute inset-0 flex items-center justify-between gap-3 rounded-md border border-danger/40 bg-ground/95 px-3"
+          >
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-danger-soft">No se pudo cargar este video</p>
+              <p className="truncate text-[11px] text-muted">
+                YouTube no entregó el stream. Prueba de nuevo o carga otra canción.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <details className="relative">
+                <summary className="cursor-pointer list-none rounded-md px-2 py-1 text-[11px] text-muted hover:text-ink">
+                  Detalles
+                </summary>
+                <p className="absolute right-0 top-7 z-20 w-80 break-words rounded-md border border-white/[0.08] bg-surface p-2 text-[10px] text-muted shadow-xl select-text">
+                  {deck.error}
+                </p>
+              </details>
+              {onRetryLoad && deck.track ? (
+                <button
+                  type="button"
+                  onClick={() => onRetryLoad(deckId)}
+                  className="rounded-md border border-white/[0.1] bg-raised px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-raised-2 cursor-pointer"
+                >
+                  Reintentar
+                </button>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </div>
@@ -405,8 +457,8 @@ export function DeckPanel({
                 type="button"
                 disabled={!deck.track || deck.loading}
                 onClick={() => onTogglePlay(deckId)}
-                className="relative inline-flex h-8 items-center gap-1 rounded-lg px-3 text-xs font-bold text-[#08090C] disabled:opacity-40 cursor-pointer"
-                style={{ backgroundColor: deck.playing ? '#10B981' : accent }}
+                className="relative inline-flex h-8 items-center gap-1 rounded-lg px-3 text-xs font-bold text-ground disabled:opacity-40 cursor-pointer"
+                style={{ backgroundColor: deck.playing ? '#FFF4DC' : accent }}
               >
                 {deck.playing ? (
                   <Pause className="h-3.5 w-3.5" />
@@ -415,7 +467,7 @@ export function DeckPanel({
                 )}
                 {deck.playing ? 'Pausa' : 'Play'}
                 {showHotkeys ? (
-                  <span className="hardware-keycap pointer-events-none absolute -top-2 right-0 rounded px-1 text-[8px]">
+                  <span className="hardware-keycap pointer-events-none absolute -top-2 right-0 rounded px-1 text-[10px]">
                     {deckId === 'A' ? 'SPC' : '⇧SPC'}
                   </span>
                 ) : null}
@@ -427,13 +479,13 @@ export function DeckPanel({
                 onPointerDown={() => (onCueDown ? onCueDown(deckId) : onSeek(deckId, 0))}
                 onPointerUp={() => onCueUp?.(deckId)}
                 onPointerLeave={() => onCueUp?.(deckId)}
-                className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-white/[0.1] bg-[#151821] px-2.5 text-xs font-semibold text-[#F8FAFC] hover:bg-[#1C202B] disabled:opacity-40 cursor-pointer"
+                className="relative inline-flex h-8 items-center gap-1 rounded-lg border border-white/[0.1] bg-raised px-2.5 text-xs font-semibold text-ink hover:bg-raised-2 disabled:opacity-40 cursor-pointer"
                 title="Clic en pausa para fijar Cue, mantener en Cue para preescucha o en Play para regresar al Cue"
               >
-                <RotateCcw className="h-3.5 w-3.5 text-[#CBD5E1]" />
+                <RotateCcw className="h-3.5 w-3.5 text-ink-soft" />
                 Cue
                 {showHotkeys ? (
-                  <span className="hardware-keycap pointer-events-none absolute -top-2 right-0 rounded px-1 text-[8px]">
+                  <span className="hardware-keycap pointer-events-none absolute -top-2 right-0 rounded px-1 text-[10px]">
                     {deckId === 'A' ? 'Q' : 'W'}
                   </span>
                 ) : null}
@@ -444,8 +496,8 @@ export function DeckPanel({
                 onClick={() => onToggleCueMonitor(deckId)}
                 className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-semibold cursor-pointer ${
                   deck.cueEnabled
-                    ? 'border-white/35 bg-[#1C202B] text-[#F8FAFC] ring-1 ring-white/20'
-                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'border-white/35 bg-raised-2 text-ink ring-1 ring-white/20'
+                    : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
                 }`}
               >
                 <Headphones className="h-3.5 w-3.5" />
@@ -453,7 +505,7 @@ export function DeckPanel({
               </button>
             </div>
 
-            <div className="flex items-center gap-1 rounded-md border border-white/[0.06] bg-[#08090C] px-1.5 py-1 text-xs">
+            <div className="flex items-center gap-1 rounded-md border border-white/[0.06] bg-ground px-1.5 py-1 text-xs">
               <button
                 type="button"
                 onClick={() => {
@@ -461,7 +513,7 @@ export function DeckPanel({
                     deck.pitchRange === 8 ? 16 : deck.pitchRange === 16 ? 50 : 8;
                   setDeckPatch(deckId, { pitchRange: nextRange });
                 }}
-                className="rounded border border-white/[0.06] bg-[#151821] px-1 py-0.5 font-mono-tabular text-[10px] text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded border border-white/[0.06] bg-raised px-1 py-0.5 font-mono-tabular text-[10px] text-muted hover:text-ink cursor-pointer"
               >
                 ±{deck.pitchRange}%
               </button>
@@ -471,7 +523,7 @@ export function DeckPanel({
                 onPointerDown={() => onJogNudge(deckId, 0.96)}
                 onPointerUp={() => onJogNudge(deckId, 1)}
                 onPointerLeave={() => onJogNudge(deckId, 1)}
-                className="rounded border border-white/[0.06] bg-[#151821] px-1 py-0.5 text-[9px] font-bold text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded border border-white/[0.06] bg-raised px-1 py-0.5 text-[10px] font-bold text-muted hover:bg-raised-2 hover:text-ink cursor-pointer"
                 title="Nudge - (Atrasar fase)"
               >
                 N-
@@ -484,7 +536,7 @@ export function DeckPanel({
                 value={deck.pitchPercent}
                 onChange={(e) => onPitchChange(deckId, Number(e.target.value), deck.keyLock)}
                 onDoubleClick={() => onPitchChange(deckId, 0, deck.keyLock)}
-                className="w-16 accent-[#E2E8F0] cursor-pointer"
+                className="w-16 accent-ink-2 cursor-pointer"
                 aria-label={`Pitch Deck ${deckId}`}
               />
               <button
@@ -493,12 +545,12 @@ export function DeckPanel({
                 onPointerDown={() => onJogNudge(deckId, 1.04)}
                 onPointerUp={() => onJogNudge(deckId, 1)}
                 onPointerLeave={() => onJogNudge(deckId, 1)}
-                className="rounded border border-white/[0.06] bg-[#151821] px-1 py-0.5 text-[9px] font-bold text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded border border-white/[0.06] bg-raised px-1 py-0.5 text-[10px] font-bold text-muted hover:bg-raised-2 hover:text-ink cursor-pointer"
                 title="Nudge + (Adelantar fase)"
               >
                 N+
               </button>
-              <span className="w-11 text-right font-mono-tabular text-[10px] text-[#F8FAFC]">
+              <span className="w-11 text-right font-mono-tabular text-[10px] text-ink">
                 {deck.pitchPercent >= 0 ? '+' : ''}
                 {deck.pitchPercent.toFixed(1)}%
               </span>
@@ -511,14 +563,14 @@ export function DeckPanel({
               <button
                 type="button"
                 onClick={() => onLoopIn(deckId)}
-                className="rounded border border-white/[0.06] bg-[#151821] px-1.5 py-0.5 text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded border border-white/[0.06] bg-raised px-1.5 py-0.5 text-muted hover:bg-raised-2 hover:text-ink cursor-pointer"
               >
                 IN
               </button>
               <button
                 type="button"
                 onClick={() => onLoopOut(deckId)}
-                className="rounded border border-white/[0.06] bg-[#151821] px-1.5 py-0.5 text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded border border-white/[0.06] bg-raised px-1.5 py-0.5 text-muted hover:bg-raised-2 hover:text-ink cursor-pointer"
               >
                 OUT
               </button>
@@ -527,8 +579,8 @@ export function DeckPanel({
                 onClick={() => onToggleLoopExit(deckId)}
                 className={`rounded border px-2 py-0.5 font-semibold cursor-pointer ${
                   deck.loop?.active
-                    ? 'border-[#10B981]/60 bg-[#10B981]/15 text-[#10B981]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8]'
+                    ? 'border-live/60 bg-live/15 text-live'
+                    : 'border-white/[0.06] bg-raised text-muted'
                 }`}
               >
                 LOOP
@@ -541,8 +593,8 @@ export function DeckPanel({
                   onClick={() => onAutoLoop(deckId, beats)}
                   className={`rounded border px-1.5 py-0.5 font-mono-tabular cursor-pointer ${
                     deck.loop?.active && deck.loop.beats === beats
-                      ? 'border-[#10B981]/60 bg-[#10B981]/15 text-[#10B981]'
-                      : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC]'
+                      ? 'border-live/60 bg-live/15 text-live'
+                      : 'border-white/[0.06] bg-raised text-muted hover:bg-raised-2 hover:text-ink'
                   }`}
                 >
                   {beats}
@@ -550,14 +602,14 @@ export function DeckPanel({
               ))}
             </div>
 
-            <div className="flex items-center gap-1 rounded border border-white/[0.06] bg-[#08090C] px-1.5 py-0.5">
+            <div className="flex items-center gap-1 rounded border border-white/[0.06] bg-ground px-1.5 py-0.5">
               <button
                 type="button"
                 onClick={() => onPitchChange(deckId, deck.pitchPercent, !deck.keyLock)}
                 className={`rounded border px-1.5 py-0.2 text-[10px] font-semibold cursor-pointer ${
                   deck.keyLock
-                    ? 'border-white/25 bg-[#1C202B] text-[#F8FAFC]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#64748B]'
+                    ? 'border-white/25 bg-raised-2 text-ink'
+                    : 'border-white/[0.06] bg-raised text-faint'
                 }`}
                 title="Master Tempo (mantiene tono al cambiar BPM)"
               >
@@ -569,7 +621,7 @@ export function DeckPanel({
                 onClick={() =>
                   onKeyShiftChange(deckId, Math.max(-6, deck.keyShiftSemitones - 1))
                 }
-                className="rounded p-0.5 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded p-0.5 text-muted hover:text-ink cursor-pointer"
                 title="Bajar 1 semitono"
               >
                 <ChevronLeft className="h-3 w-3" />
@@ -577,7 +629,7 @@ export function DeckPanel({
               <button
                 type="button"
                 onClick={() => onKeyShiftChange(deckId, 0)}
-                className="min-w-8 text-center font-mono-tabular text-[10px] text-[#CBD5E1] cursor-pointer"
+                className="min-w-8 text-center font-mono-tabular text-[10px] text-ink-soft cursor-pointer"
                 title="Reiniciar Key Shift"
               >
                 {deck.keyShiftSemitones > 0
@@ -591,7 +643,7 @@ export function DeckPanel({
                 onClick={() =>
                   onKeyShiftChange(deckId, Math.min(6, deck.keyShiftSemitones + 1))
                 }
-                className="rounded p-0.5 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded p-0.5 text-muted hover:text-ink cursor-pointer"
                 title="Subir 1 semitono"
               >
                 <ChevronRight className="h-3 w-3" />
@@ -602,11 +654,11 @@ export function DeckPanel({
       </div>
 
       {/* Multi-Mode 44px Tactile Performance Pads with Animated Sliding Pill */}
-      <div className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-[#08090C] p-1.5">
-        <div className="relative grid grid-cols-5 rounded-md bg-[#0F1117] p-0.5">
+      <div className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-ground p-1.5">
+        <div className="relative grid grid-cols-5 rounded-md bg-surface p-0.5">
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded bg-[#1C202B] ring-1 ring-white/[0.12] transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded bg-raised-2 ring-1 ring-white/[0.12] transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]"
             style={{
               width: 'calc(20% - 2px)',
               transform: `translateX(${padModeIndex * 100}%)`
@@ -618,7 +670,7 @@ export function DeckPanel({
               type="button"
               onClick={() => setPadMode(m.id)}
               className={`relative z-10 rounded py-0.5 text-[10px] font-bold tracking-wide cursor-pointer ${
-                padMode === m.id ? 'text-[#F8FAFC]' : 'text-[#64748B] hover:text-[#CBD5E1]'
+                padMode === m.id ? 'text-ink' : 'text-faint hover:text-ink-soft'
               }`}
             >
               {m.label}
@@ -653,22 +705,24 @@ export function DeckPanel({
                       ? `Cue ${slot}: ${formatTime(cue.timeSec)} (Shift+Clic o Clic derecho para borrar)`
                       : `Guardar Hot Cue ${slot}`
                   }
-                  className={`relative flex h-11 flex-col items-center justify-center rounded-md border border-white/[0.06] border-b-2 bg-[#151821] font-mono-tabular text-[11px] font-semibold hover:bg-[#1C202B] cursor-pointer ${
+                  className={`relative flex h-11 flex-col items-center justify-center rounded-md border border-white/[0.06] bg-raised font-mono-tabular text-[11px] font-semibold hover:bg-raised-2 cursor-pointer ${
                     flashingPad === flashKey ? 'animate-pad-flash' : ''
                   }`}
                   style={{
-                    borderBottomColor: cue ? accent : 'rgba(255,255,255,0.12)',
-                    color: cue ? '#F8FAFC' : '#64748B'
+                    // A stored cue is a deck-colour tint; an empty slot stays a plain surface
+                    backgroundColor: cue ? `${accent}26` : undefined,
+                    borderColor: cue ? `${accent}66` : undefined,
+                    color: cue ? 'var(--color-ink)' : 'var(--color-faint)'
                   }}
                 >
                   <span>{slot}</span>
                   {cue ? (
-                    <span className="text-[8px] font-normal text-[#94A3B8]">
+                    <span className="text-[10px] font-normal text-muted">
                       {formatTime(cue.timeSec)}
                     </span>
                   ) : null}
                   {showHotkeys ? (
-                    <span className="hardware-keycap pointer-events-none absolute top-0.5 right-0.5 rounded px-0.5 text-[7px]">
+                    <span className="hardware-keycap pointer-events-none absolute top-0.5 right-0.5 rounded px-0.5 text-[10px]">
                       {deckId === 'A' ? slot : `⇧${slot}`}
                     </span>
                   ) : null}
@@ -691,7 +745,7 @@ export function DeckPanel({
                 }}
                 onPointerUp={() => onLoopRollEnd(deckId)}
                 onPointerLeave={() => onLoopRollEnd(deckId)}
-                className={`h-11 rounded-md border border-white/[0.06] border-b-2 border-b-[#F8FAFC]/35 bg-[#151821] font-mono-tabular text-[11px] font-semibold text-[#CBD5E1] hover:bg-[#1C202B] hover:text-[#F8FAFC] disabled:opacity-40 cursor-pointer ${
+                className={`h-11 rounded-md border border-white/[0.06] bg-raised font-mono-tabular text-[11px] font-semibold text-ink-soft hover:bg-raised-2 hover:text-ink disabled:opacity-40 cursor-pointer ${
                   flashingPad === `${deckId}-roll-${beats}` ? 'animate-pad-flash' : ''
                 }`}
               >
@@ -712,10 +766,10 @@ export function DeckPanel({
                   triggerPadFlash(`${deckId}-jump-${beats}`);
                   onBeatJump(deckId, beats);
                 }}
-                className={`h-11 rounded-md border border-white/[0.06] border-b-2 bg-[#151821] font-mono-tabular text-[11px] font-semibold text-[#CBD5E1] hover:bg-[#1C202B] hover:text-[#F8FAFC] disabled:opacity-40 cursor-pointer ${
+                className={`h-11 rounded-md border border-white/[0.06] bg-raised font-mono-tabular text-[11px] font-semibold text-ink-soft hover:bg-raised-2 hover:text-ink disabled:opacity-40 cursor-pointer ${
                   flashingPad === `${deckId}-jump-${beats}` ? 'animate-pad-flash' : ''
                 }`}
-                style={{ borderBottomColor: `${accent}88` }}
+                style={{ color: accent }}
               >
                 {beats > 0 ? `+${beats}` : beats}
               </button>
@@ -733,7 +787,7 @@ export function DeckPanel({
                   triggerPadFlash(`${deckId}-sp-${pad.id}`);
                   onTriggerSample(pad.id);
                 }}
-                className={`h-11 rounded-md border border-white/[0.06] border-b-2 border-b-white/25 bg-[#151821] text-[10px] font-semibold text-[#CBD5E1] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer ${
+                className={`h-11 rounded-md border border-white/[0.06] bg-raised text-[10px] font-semibold text-ink-soft hover:bg-raised-2 hover:text-ink cursor-pointer ${
                   flashingPad === `${deckId}-sp-${pad.id}` ? 'animate-pad-flash' : ''
                 }`}
               >
@@ -750,15 +804,15 @@ export function DeckPanel({
               return (
                 <div
                   key={fx}
-                  className="flex h-11 items-center gap-1.5 rounded-md border border-white/[0.06] bg-[#151821] px-2"
+                  className="flex h-11 items-center gap-1.5 rounded-md border border-white/[0.06] bg-raised px-2"
                 >
                   <button
                     type="button"
                     onClick={() => onDeckFxChange(deckId, fx, !st.enabled, st.wet, st.beatDiv)}
                     className={`inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase cursor-pointer ${
                       st.enabled
-                        ? 'border-[#10B981]/60 bg-[#10B981]/15 text-[#10B981]'
-                        : 'border-white/[0.06] bg-[#08090C] text-[#94A3B8]'
+                        ? 'border-live/60 bg-live/15 text-live'
+                        : 'border-white/[0.06] bg-ground text-muted'
                     }`}
                   >
                     <Sparkles className="h-2.5 w-2.5" />
@@ -774,7 +828,7 @@ export function DeckPanel({
                       onDeckFxChange(deckId, fx, st.enabled, Number(e.target.value), st.beatDiv)
                     }
                     aria-label={`${fx} Mix Deck ${deckId}`}
-                    className="w-full accent-[#E2E8F0] cursor-pointer"
+                    className="w-full accent-ink-2 cursor-pointer"
                   />
                 </div>
               );

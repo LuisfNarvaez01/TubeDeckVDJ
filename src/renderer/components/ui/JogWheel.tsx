@@ -131,7 +131,7 @@ export function JogWheel({
             onScrubDelta(1.5);
           }
         }}
-        className="relative flex h-[104px] w-[104px] shrink-0 cursor-grab items-center justify-center rounded-full border border-white/[0.08] bg-[#08090C] shadow-inner active:cursor-grabbing"
+        className="relative flex h-[104px] w-[104px] shrink-0 cursor-grab items-center justify-center rounded-full border border-white/[0.08] bg-ground shadow-inner active:cursor-grabbing"
         style={{
           boxShadow: scratching || playing ? `0 0 0 1px ${accentColor}55` : undefined
         }}
@@ -176,12 +176,12 @@ export function JogWheel({
         >
           <span
             className="absolute left-1/2 top-1 h-3 w-1 -translate-x-1/2 rounded-full"
-            style={{ backgroundColor: playing ? accentColor : '#E2E8F0' }}
+            style={{ backgroundColor: playing ? accentColor : '#E4E7E1' }}
           />
         </div>
 
         {/* Center album art spindle */}
-        <div className="relative z-10 flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-[#151821]">
+        <div className="relative z-10 flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-raised">
           {thumbnailUrl ? (
             <img
               src={thumbnailUrl}
@@ -190,7 +190,7 @@ export function JogWheel({
               className="h-full w-full object-cover"
             />
           ) : (
-            <Disc3 className="h-5 w-5 text-[#64748B]" />
+            <Disc3 className="h-5 w-5 text-faint" />
           )}
         </div>
       </div>
@@ -203,7 +203,7 @@ export function JogWheel({
           onPointerDown={() => onNudge(0.95)}
           onPointerUp={() => onNudge(1)}
           onPointerLeave={() => onNudge(1)}
-          className="rounded border border-white/[0.08] bg-[#151821] px-1.5 py-0.5 text-[10px] text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
+          className="rounded border border-white/[0.08] bg-raised px-1.5 py-0.5 text-[10px] text-muted hover:bg-raised-2 hover:text-ink cursor-pointer"
           title="Frenar momentáneamente (Bend -)"
         >
           <Minus className="h-3 w-3" />
@@ -212,7 +212,7 @@ export function JogWheel({
           type="button"
           aria-label={`Brake Deck ${deckId}`}
           onClick={onBrake}
-          className="inline-flex items-center gap-0.5 rounded border border-white/[0.08] bg-[#151821] px-1.5 py-0.5 text-[10px] font-semibold text-[#94A3B8] hover:border-[#EF4444]/50 hover:text-[#FCA5A5] cursor-pointer"
+          className="inline-flex items-center gap-0.5 rounded border border-white/[0.08] bg-raised px-1.5 py-0.5 text-[10px] font-semibold text-muted hover:border-danger/50 hover:text-danger-soft cursor-pointer"
           title="Parada tipo vinilo (Brake)"
         >
           <OctagonPause className="h-3 w-3" />
@@ -224,7 +224,7 @@ export function JogWheel({
           onPointerDown={() => onNudge(1.05)}
           onPointerUp={() => onNudge(1)}
           onPointerLeave={() => onNudge(1)}
-          className="rounded border border-white/[0.08] bg-[#151821] px-1.5 py-0.5 text-[10px] text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
+          className="rounded border border-white/[0.08] bg-raised px-1.5 py-0.5 text-[10px] text-muted hover:bg-raised-2 hover:text-ink cursor-pointer"
           title="Acelerar momentáneamente (Bend +)"
         >
           <Plus className="h-3 w-3" />

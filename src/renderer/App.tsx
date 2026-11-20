@@ -11,7 +11,6 @@ import {
   ArrowRight,
   BookOpen,
   CloudDownload,
-  Disc3,
   Frame,
   Headphones,
   Keyboard,
@@ -46,6 +45,7 @@ import { DeckPanel } from './components/DeckPanel';
 import { HistoryAndCratesTab } from './components/HistoryAndCratesTab';
 import { InteractiveGuideModal } from './components/InteractiveGuideModal';
 import { TasteSetupModal } from './components/TasteSetupModal';
+import { BrandMark } from './components/ui/BrandMark';
 import { LocalLibraryTab } from './components/LocalLibraryTab';
 import { MixerCenter } from './components/MixerCenter';
 import { OverlayControls } from './components/OverlayControls';
@@ -99,6 +99,33 @@ interface CrossfadeAnimationState {
   pauseOutgoingOnComplete: boolean;
 }
 
+function formatClock(totalSec: number): string {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+/** Time until the on-air track ends, i.e. when the next queued song takes over. */
+function NextCountdown(): ReactElement | null {
+  const crossfader = useMixerStore((s) => s.crossfader);
+  const active: DeckId = crossfader <= 0.5 ? 'A' : 'B';
+  const remaining = useDeckStore((s) => {
+    const d = s.decks[active];
+    return d.track && d.playing && d.durationSec > 0
+      ? Math.max(0, Math.round(d.durationSec - d.currentTimeSec))
+      : -1;
+  });
+  if (remaining < 0) return null;
+  return (
+    <span
+      className={`shrink-0 font-mono-tabular text-[11px] ${remaining <= 15 ? 'text-live' : 'text-muted'}`}
+      title="Tiempo para que termine la canción al aire"
+    >
+      en {formatClock(remaining)}
+    </span>
+  );
+}
+
 type FeedbackTrack = Pick<YouTubeTrack, 'videoId' | 'title' | 'channel' | 'artists'>;
 
 function sendFeedback(track: FeedbackTrack, signal: FeedbackSignal): void {
@@ -128,6 +155,16 @@ function reportImplicitFeedback(track: YouTubeTrack, audibleSec: number): void {
 
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<BrowserTab>('search');
+  // On-air state per deck (re-renders only when the A/B membership changes)
+  const decksPlayingKey = useDeckStore(
+    (s) => `${s.decks.A.playing ? 'A' : ''}${s.decks.B.playing ? 'B' : ''}`
+  );
+  const audibleKey = useMixerStore(
+    (s) =>
+      `${s.channels.A.fader > 0.05 && 1 - s.crossfader > 0.1 ? 'A' : ''}${
+        s.channels.B.fader > 0.05 && s.crossfader > 0.1 ? 'B' : ''
+      }`
+  );
   /** Explicit browser-dock height in px; null = cabin keeps its natural height. */
   const [dockHeight, setDockHeight] = useState<number | null>(() => {
     try {
@@ -780,7 +817,8 @@ export function App(): ReactElement {
             const s = syncs[id];
             const currentTimeSec = s.getCurrentTime();
             const durationSec = s.getDuration();
-            const playing = !s.isPaused();
+            // A deck whose stream failed is never "playing", whatever the media element reports.
+            const playing = !s.isPaused() && !useDeckStore.getState().decks[id].error;
             const bufferRatio = s.getBufferedRatio();
             const prev = useDeckStore.getState().decks[id];
             if (
@@ -929,7 +967,7 @@ export function App(): ReactElement {
                 active: true,
                 bands,
                 spectrum: dsp?.readMasterSpectrum() ?? null,
-                accentColor: domDeck === 'A' ? '#0EA5E9' : '#F59E0B',
+                accentColor: domDeck === 'A' ? '#10D9A0' : '#F5C542',
                 title: domSt.customOsdTitle ?? domSt.track.title,
                 channel: domSt.track.channel
               }
@@ -1327,6 +1365,17 @@ export function App(): ReactElement {
 
   const renderDeck = (deckId: DeckId) => (
     <DeckPanel
+      onAir={decksPlayingKey.includes(deckId) && audibleKey.includes(deckId)}
+      offAirDimmed={
+        !(decksPlayingKey.includes(deckId) && audibleKey.includes(deckId)) &&
+        (['A', 'B'] as const).some(
+          (d) => d !== deckId && decksPlayingKey.includes(d) && audibleKey.includes(d)
+        )
+      }
+      onRetryLoad={(d) => {
+        const t = useDeckStore.getState().decks[d].track;
+        if (t) void loadTrackOntoDeck(d, t).catch(() => {});
+      }}
       onTrackFeedback={handleDeckTrackFeedback}
       key={deckId}
       deckId={deckId}
@@ -1446,7 +1495,7 @@ export function App(): ReactElement {
   );
 
   return (
-    <div className="flex h-screen w-screen flex-col gap-2 bg-[#08090C] p-2 text-[#F8FAFC]">
+    <div className="flex h-screen w-screen flex-col gap-2 bg-ground p-2 text-ink">
       <audio ref={masterSinkAudioRef} className="hidden" />
       <audio ref={cueSinkAudioRef} className="hidden" />
       <audio
@@ -1456,12 +1505,12 @@ export function App(): ReactElement {
       />
 
       {/* Top Pro Hardware Obsidian Header Bar */}
-      <header className="flex h-10 shrink-0 items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-[#0F1117] px-3 text-xs">
+      <header className="flex h-10 shrink-0 items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-surface px-3 text-xs">
         <div className="flex shrink-0 items-center gap-2">
-          <Disc3 className="h-4 w-4 text-[#0EA5E9]" />
-          <span className="font-bold tracking-wide text-[#F8FAFC]">TubeDeck VDJ</span>
-          <span className="rounded border border-white/[0.06] bg-[#08090C] px-1.5 py-0.5 font-mono-tabular text-[10px] text-[#94A3B8]">
-            v{upd?.currentVersion ?? '2.2.0'}
+          <BrandMark className="h-5 w-5" />
+          <span className="text-[13px] font-bold tracking-tight text-ink">TubeDeck VDJ</span>
+          <span className="rounded border border-white/[0.06] bg-ground px-1.5 py-0.5 font-mono-tabular text-[10px] text-muted">
+            v{__APP_VERSION__}
           </span>
 
           <select
@@ -1469,7 +1518,7 @@ export function App(): ReactElement {
             value={settings.videoQuality}
             onChange={(e) => handleVideoQualityChange(e.target.value as VideoQualityPreference)}
             title="Calidad de video YouTube global (Auto evita congelamientos)"
-            className="rounded border border-white/[0.06] bg-[#08090C] px-2 py-1 text-[10px] text-[#F8FAFC] focus:border-white/25 focus:outline-none cursor-pointer"
+            className="rounded border border-white/[0.06] bg-ground px-2 py-1 text-[10px] text-ink focus:border-white/25 focus:outline-none cursor-pointer"
           >
             <option value="auto">Video Auto (Fluido 720p)</option>
             <option value="720p">720p HD</option>
@@ -1485,20 +1534,20 @@ export function App(): ReactElement {
             type="button"
             onClick={() => upNextRef.current?.focus()}
             title="Ir al panel Siguiente"
-            className="flex min-w-0 max-w-md items-center gap-1.5 rounded-md border border-white/[0.06] bg-[#08090C] px-2.5 py-1 text-[11px] hover:border-white/20 cursor-pointer"
+            className="flex min-w-0 max-w-md items-center gap-1.5 rounded-md border border-white/[0.06] bg-ground px-2.5 py-1 text-[11px] hover:border-white/20 cursor-pointer"
           >
-            <ArrowRight className="h-3 w-3 shrink-0 text-[#10B981]" />
-            <span className="shrink-0 font-semibold text-[#64748B]">Siguiente:</span>
+            <ArrowRight className="h-3 w-3 shrink-0 text-live" />
+            <span className="shrink-0 font-semibold text-faint">Siguiente:</span>
             {nextQueuedItem ? (
               <>
-                <span className="truncate font-semibold text-[#F8FAFC]">
+                <span className="truncate font-semibold text-ink">
                   {cleanTrackTitleForOsd(nextQueuedItem.track.title)}
                 </span>
                 <span
-                  className={`shrink-0 rounded border px-1 text-[9px] font-bold ${
+                  className={`shrink-0 rounded border px-1 text-[10px] font-bold ${
                     nextQueuedItem.track.source === 'local'
-                      ? 'border-white/[0.1] bg-[#151821] text-[#CBD5E1]'
-                      : 'border-white/[0.08] bg-[#151821] text-[#94A3B8]'
+                      ? 'border-white/[0.1] bg-raised text-ink-soft'
+                      : 'border-white/[0.08] bg-raised text-muted'
                   }`}
                 >
                   {nextQueuedItem.track.source === 'local'
@@ -1507,9 +1556,10 @@ export function App(): ReactElement {
                       ? 'RADIO'
                       : 'YT'}
                 </span>
+                <NextCountdown />
               </>
             ) : (
-              <span className="truncate text-[#64748B]">
+              <span className="truncate text-faint">
                 {libraryStore.autoRadioEnabled ? 'Radio YT lista' : 'Cola vacía'}
               </span>
             )}
@@ -1519,7 +1569,7 @@ export function App(): ReactElement {
             <button
               type="button"
               onClick={stopCuePreview}
-              className="inline-flex items-center gap-1 rounded border border-[#10B981]/50 bg-[#10B981]/15 px-2 py-0.5 text-[10px] font-semibold text-[#10B981] cursor-pointer"
+              className="inline-flex items-center gap-1 rounded border border-live/50 bg-live/15 px-2 py-0.5 text-[10px] font-semibold text-live cursor-pointer"
               title="Detener pre-escucha por audífonos"
             >
               <Headphones className="h-3 w-3" />
@@ -1529,14 +1579,14 @@ export function App(): ReactElement {
           ) : null}
 
           {settings.qualityNotice ? (
-            <div className="flex items-center gap-1 rounded border border-white/[0.12] bg-[#151821] px-2 py-0.5 text-[10px] text-[#F59E0B]">
+            <div className="flex items-center gap-1 rounded border border-white/[0.12] bg-raised px-2 py-0.5 text-[10px] text-deck-b">
               <AlertTriangle className="h-3 w-3 shrink-0" />
               <span className="max-w-44 truncate">{settings.qualityNotice}</span>
               <button
                 type="button"
                 aria-label="Cerrar aviso de calidad"
                 onClick={() => settings.setQualityNotice(null)}
-                className="text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+                className="text-muted hover:text-ink cursor-pointer"
               >
                 <X className="h-3 w-3" />
               </button>
@@ -1549,8 +1599,8 @@ export function App(): ReactElement {
           <span
             className={`hidden xl:inline-flex items-center gap-1 rounded border border-white/[0.06] px-2 py-0.5 font-semibold ${
               libraryStore.automixEnabled
-                ? 'bg-[#10B981]/15 text-[#10B981]'
-                : 'bg-[#08090C] text-[#64748B]'
+                ? 'bg-live/15 text-live'
+                : 'bg-ground text-faint'
             }`}
           >
             <Sparkles className="h-3 w-3" />
@@ -1560,8 +1610,8 @@ export function App(): ReactElement {
           <span
             className={`hidden xl:inline-flex items-center gap-1 rounded border border-white/[0.06] px-2 py-0.5 font-semibold ${
               libraryStore.autoRadioEnabled
-                ? 'bg-[#151821] text-[#CBD5E1]'
-                : 'bg-[#08090C] text-[#64748B]'
+                ? 'bg-raised text-ink-soft'
+                : 'bg-ground text-faint'
             }`}
           >
             <Radio className="h-3 w-3" />
@@ -1571,8 +1621,8 @@ export function App(): ReactElement {
           <span
             className={`inline-flex items-center gap-1 rounded border border-white/[0.06] px-2 py-0.5 font-semibold ${
               settings.outputOpen
-                ? 'bg-[#10B981]/15 text-[#10B981]'
-                : 'bg-[#08090C] text-[#64748B]'
+                ? 'bg-live/15 text-live'
+                : 'bg-ground text-faint'
             }`}
           >
             <Monitor className="h-3 w-3" />
@@ -1586,7 +1636,7 @@ export function App(): ReactElement {
                 setFramesDrawerOpen(false);
                 setSettingsDrawerOpen(true);
               }}
-              className="inline-flex items-center gap-1 rounded border border-[#10B981]/60 bg-[#10B981]/15 px-2 py-1 font-semibold text-[#10B981] cursor-pointer"
+              className="inline-flex items-center gap-1 rounded border border-live/60 bg-live/15 px-2 py-1 font-semibold text-live cursor-pointer"
             >
               <CloudDownload className="h-3 w-3" />
               {upd.state === 'downloaded'
@@ -1602,8 +1652,8 @@ export function App(): ReactElement {
             onClick={() => settings.setShowHotkeys(!settings.showHotkeys)}
             className={`inline-flex items-center gap-1 rounded border px-2 py-1 font-semibold cursor-pointer ${
               settings.showHotkeys
-                ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
-                : 'border-white/[0.06] bg-[#08090C] text-[#94A3B8] hover:text-[#F8FAFC]'
+                ? 'border-white/30 bg-raised-2 text-ink'
+                : 'border-white/[0.06] bg-ground text-muted hover:text-ink'
             }`}
             title="Mostrar/ocultar teclas rápidas sobre los controles"
           >
@@ -1619,8 +1669,8 @@ export function App(): ReactElement {
             }}
             className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 font-semibold cursor-pointer ${
               framesDrawerOpen || frameEnabled
-                ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
-                : 'border-white/[0.06] bg-[#08090C] text-[#94A3B8] hover:text-[#F8FAFC]'
+                ? 'border-white/30 bg-raised-2 text-ink'
+                : 'border-white/[0.06] bg-ground text-muted hover:text-ink'
             }`}
           >
             <Frame className="h-3.5 w-3.5" />
@@ -1630,7 +1680,7 @@ export function App(): ReactElement {
           <button
             type="button"
             onClick={() => setGuideOpen(true)}
-            className="inline-flex items-center gap-1 rounded border border-white/[0.06] bg-[#08090C] px-2.5 py-1 font-semibold text-[#94A3B8] hover:border-white/20 hover:text-[#F8FAFC] cursor-pointer"
+            className="inline-flex items-center gap-1 rounded border border-white/[0.06] bg-ground px-2.5 py-1 font-semibold text-muted hover:border-white/20 hover:text-ink cursor-pointer"
           >
             <BookOpen className="h-3.5 w-3.5" />
             Guía
@@ -1644,8 +1694,8 @@ export function App(): ReactElement {
             }}
             className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 font-semibold cursor-pointer ${
               settingsDrawerOpen
-                ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
-                : 'border-white/[0.06] bg-[#08090C] text-[#94A3B8] hover:text-[#F8FAFC]'
+                ? 'border-white/30 bg-raised-2 text-ink'
+                : 'border-white/[0.06] bg-ground text-muted hover:text-ink'
             }`}
           >
             <Sliders className="h-3.5 w-3.5" />
@@ -1724,7 +1774,7 @@ export function App(): ReactElement {
       </div>
 
       {/* Middle Row (100% full width, 3 symmetrical modules): Deck A FX & Sampler | Mixer Central | Deck B FX & Sampler */}
-      <div className="grid grid-cols-[minmax(0,33%)_minmax(420px,34%)_minmax(0,33%)] xl:grid-cols-[minmax(0,34%)_minmax(0,32%)_minmax(0,34%)] gap-2">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(560px,32%)_minmax(0,1fr)] gap-2">
         <DeckFxSamplerModule
           deckId="A"
           onDeckFxChange={handleDeckFxChange}
@@ -1844,17 +1894,17 @@ export function App(): ReactElement {
       <section
         ref={dockSectionRef}
         style={dockHeight === null ? undefined : { height: dockHeight }}
-        className={`flex min-h-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-[#0F1117] p-2.5 ${
+        className={`flex min-h-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-surface p-2.5 ${
           dockHeight === null ? 'min-h-[220px] flex-1' : 'shrink-0'
         }`}
       >
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(300px,340px)] gap-2.5 2xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="flex min-h-0 min-w-0 flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-        <nav className="relative grid w-fit grid-cols-3 rounded-lg border border-white/[0.06] bg-[#08090C] p-0.5 text-xs">
+        <nav className="relative grid w-fit grid-cols-3 rounded-lg border border-white/[0.06] bg-ground p-0.5 text-xs">
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded-md bg-[#1C202B] ring-1 ring-white/[0.12] transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded-md bg-raised-2 ring-1 ring-white/[0.12] transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]"
             style={{
               width: 'calc(33.333% - 2px)',
               transform: `translateX(${activeTabIndex * 100}%)`
@@ -1866,7 +1916,7 @@ export function App(): ReactElement {
               type="button"
               onClick={() => setActiveTab(id)}
               className={`relative z-10 whitespace-nowrap rounded-md px-3 py-1 font-semibold cursor-pointer ${
-                activeTab === id ? 'text-[#F8FAFC]' : 'text-[#94A3B8] hover:text-[#CBD5E1]'
+                activeTab === id ? 'text-ink' : 'text-muted hover:text-ink-soft'
               }`}
             >
               {getLabel(libraryStore.localTracks.length, libraryStore.queue.length)}
@@ -1879,7 +1929,7 @@ export function App(): ReactElement {
             updateDockHeight(dockHeight === null ? Math.round(window.innerHeight * 0.58) : null)
           }
           aria-pressed={dockHeight !== null}
-          className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-[#08090C] px-2.5 py-1 text-[11px] font-medium text-[#94A3B8] transition-colors duration-150 hover:border-white/20 hover:text-[#F8FAFC] cursor-pointer"
+          className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-ground px-2.5 py-1 text-[11px] font-medium text-muted transition-colors duration-150 hover:border-white/20 hover:text-ink cursor-pointer"
           title={dockHeight === null ? 'Dar más alto al navegador' : 'Volver a la cabina completa'}
         >
           {dockHeight === null ? <Maximize2 className="h-3.5 w-3.5" /> : <Minimize2 className="h-3.5 w-3.5" />}
@@ -2091,18 +2141,18 @@ export function App(): ReactElement {
           <aside
             role="dialog"
             aria-label="Marcos y Visuales"
-            className="animate-drawer-in flex h-full w-[440px] max-w-[95vw] flex-col border-l border-white/[0.08] bg-[#0F1117]/95 backdrop-blur-md shadow-2xl"
+            className="animate-drawer-in flex h-full w-[440px] max-w-[95vw] flex-col border-l border-white/[0.08] bg-surface/95 backdrop-blur-md shadow-2xl"
           >
             <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
               <div className="flex items-center gap-2">
-                <Frame className="h-4 w-4 text-[#94A3B8]" />
-                <h2 className="text-sm font-bold text-[#F8FAFC]">Marcos y Overlays en Vivo</h2>
+                <Frame className="h-4 w-4 text-muted" />
+                <h2 className="text-sm font-bold text-ink">Marcos y Overlays en Vivo</h2>
               </div>
               <button
                 type="button"
                 aria-label="Cerrar Marcos"
                 onClick={() => setFramesDrawerOpen(false)}
-                className="rounded-lg border border-white/[0.06] bg-[#151821] p-1 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded-lg border border-white/[0.06] bg-raised p-1 text-muted hover:text-ink cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -2128,12 +2178,12 @@ export function App(): ReactElement {
           <aside
             role="dialog"
             aria-label="Ajustes del Sistema"
-            className="animate-drawer-in flex h-full w-[540px] max-w-[95vw] flex-col border-l border-white/[0.08] bg-[#0F1117]/95 backdrop-blur-md shadow-2xl"
+            className="animate-drawer-in flex h-full w-[540px] max-w-[95vw] flex-col border-l border-white/[0.08] bg-surface/95 backdrop-blur-md shadow-2xl"
           >
             <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
               <div className="flex items-center gap-2">
-                <Sliders className="h-4 w-4 text-[#94A3B8]" />
-                <h2 className="text-sm font-bold text-[#F8FAFC]">
+                <Sliders className="h-4 w-4 text-muted" />
+                <h2 className="text-sm font-bold text-ink">
                   Ajustes (Audio / Pantalla / MIDI / Actualizaciones)
                 </h2>
               </div>
@@ -2141,7 +2191,7 @@ export function App(): ReactElement {
                 type="button"
                 aria-label="Cerrar Ajustes"
                 onClick={() => setSettingsDrawerOpen(false)}
-                className="rounded-lg border border-white/[0.06] bg-[#151821] p-1 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+                className="rounded-lg border border-white/[0.06] bg-raised p-1 text-muted hover:text-ink cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>

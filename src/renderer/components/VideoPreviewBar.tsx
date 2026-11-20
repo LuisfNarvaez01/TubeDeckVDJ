@@ -96,7 +96,7 @@ export function VideoPreviewBar({
 
   return (
     <section
-      className="flex flex-col justify-between gap-2 rounded-xl border border-white/[0.06] bg-[#0F1117] p-2.5"
+      className="flex flex-col justify-between gap-2 rounded-xl border border-white/[0.06] bg-surface p-2.5"
       aria-label="Cabina de Video Master"
     >
       {/* Compact Side-by-Side Monitors: Master Live (66%) + Stacked Previews A/B (34%) */}
@@ -104,21 +104,21 @@ export function VideoPreviewBar({
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between text-[10px]">
             <div className="flex items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 font-bold tracking-wider text-[#10B981]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
+              <span className="inline-flex items-center gap-1 font-bold tracking-wider text-live">
+                <span className="h-1.5 w-1.5 rounded-full bg-live" />
                 MASTER LIVE
               </span>
               {frameEnabled ? (
-                <span className="rounded border border-white/[0.12] bg-[#151821] px-1 py-0.2 text-[9px] font-semibold text-[#CBD5E1]">
+                <span className="rounded border border-white/[0.12] bg-raised px-1 py-0.2 text-[10px] font-semibold text-ink-soft">
                   MARCO
                 </span>
               ) : null}
             </div>
             <span
-              className={`rounded px-1.5 py-0.2 text-[9px] font-bold ${
+              className={`rounded px-1.5 py-0.2 text-[10px] font-bold ${
                 outputOpen
-                  ? 'bg-[#10B981]/15 text-[#10B981]'
-                  : 'bg-[#151821] text-[#64748B]'
+                  ? 'bg-live/15 text-live'
+                  : 'bg-raised text-faint'
               }`}
             >
               {outputOpen ? 'P2 LIVE' : 'P2 OFF'}
@@ -132,41 +132,41 @@ export function VideoPreviewBar({
 
         <div className="flex flex-col justify-between gap-1.5">
           <div className="flex flex-col gap-0.5">
-            <div className="flex items-center justify-between text-[9px]">
-              <span className="font-semibold tracking-wider text-[#0EA5E9]">DECK A</span>
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="font-semibold tracking-wider text-deck-a">DECK A</span>
               {activeQualityA ? (
-                <span className="font-mono-tabular text-[#64748B]">{activeQualityA}</span>
+                <span className="font-mono-tabular text-faint">{activeQualityA}</span>
               ) : null}
             </div>
             <div
               ref={refA}
-              className="aspect-video w-full overflow-hidden rounded border border-[#0EA5E9]/45 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
+              className="aspect-video w-full overflow-hidden rounded border border-deck-a/45 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
             />
           </div>
 
           <div className="flex flex-col gap-0.5">
-            <div className="flex items-center justify-between text-[9px]">
-              <span className="font-semibold tracking-wider text-[#F59E0B]">DECK B</span>
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="font-semibold tracking-wider text-deck-b">DECK B</span>
               {activeQualityB ? (
-                <span className="font-mono-tabular text-[#64748B]">{activeQualityB}</span>
+                <span className="font-mono-tabular text-faint">{activeQualityB}</span>
               ) : null}
             </div>
             <div
               ref={refB}
-              className="aspect-video w-full overflow-hidden rounded border border-[#F59E0B]/45 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
+              className="aspect-video w-full overflow-hidden rounded border border-deck-b/45 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
             />
           </div>
         </div>
       </div>
 
       {/* Broadcast Strip & Compact 2-Row 4x2 FX Matrix */}
-      <div className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-[#08090C] p-2 text-[11px]">
+      <div className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-ground p-2 text-[11px]">
         <div className="flex flex-wrap items-center justify-between gap-1">
           <div className="flex items-center gap-1">
             <select
               value={transition}
               onChange={(e) => onTransitionChange(e.target.value as VideoTransitionId)}
-              className="rounded border border-white/[0.06] bg-[#151821] px-1.5 py-0.5 text-[10px] text-[#F8FAFC]"
+              className="rounded border border-white/[0.06] bg-raised px-1.5 py-0.5 text-[10px] text-ink"
               aria-label="Transición Video"
             >
               {TRANSITIONS.map((t) => (
@@ -179,12 +179,12 @@ export function VideoPreviewBar({
             <button
               type="button"
               onClick={onTriggerAutoTransition}
-              className="relative inline-flex items-center gap-1 rounded border border-[#10B981]/50 bg-[#10B981]/15 px-2 py-0.5 text-[10px] font-semibold text-[#10B981] hover:bg-[#10B981]/25 cursor-pointer"
+              className="relative inline-flex items-center gap-1 rounded border border-live/50 bg-live/15 px-2 py-0.5 text-[10px] font-semibold text-live hover:bg-live/25 cursor-pointer"
             >
               <ArrowLeftRight className="h-3 w-3" />
               Auto {autoDurationSec}s
               {showHotkeys ? (
-                <span className="hardware-keycap pointer-events-none ml-0.5 rounded px-1 text-[8px]">
+                <span className="hardware-keycap pointer-events-none ml-0.5 rounded px-1 text-[10px]">
                   V
                 </span>
               ) : null}
@@ -193,7 +193,7 @@ export function VideoPreviewBar({
             <select
               value={autoDurationSec}
               onChange={(e) => onAutoDurationChange(Number(e.target.value))}
-              className="rounded border border-white/[0.06] bg-[#151821] px-1 py-0.5 font-mono-tabular text-[10px] text-[#F8FAFC]"
+              className="rounded border border-white/[0.06] bg-raised px-1 py-0.5 font-mono-tabular text-[10px] text-ink"
               aria-label="Duración Auto Transición"
             >
               <option value={1}>1s</option>
@@ -208,8 +208,8 @@ export function VideoPreviewBar({
                 onClick={onOpenFramesDrawer}
                 className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${
                   frameEnabled
-                    ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'border-white/30 bg-raised-2 text-ink'
+                    : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
                 }`}
               >
                 <Frame className="h-3 w-3" />
@@ -223,7 +223,7 @@ export function VideoPreviewBar({
               <select
                 value={selectedDisplayId ?? displays[0].id}
                 onChange={(e) => onSelectDisplay(Number(e.target.value))}
-                className="max-w-32 rounded border border-white/[0.06] bg-[#151821] px-1.5 py-0.5 text-[10px] text-[#F8FAFC]"
+                className="max-w-32 rounded border border-white/[0.06] bg-raised px-1.5 py-0.5 text-[10px] text-ink"
                 aria-label="Monitor Salida"
               >
                 {displays.map((d) => (
@@ -239,8 +239,8 @@ export function VideoPreviewBar({
               onClick={onToggleOutputWindow}
               className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-bold cursor-pointer ${
                 outputOpen
-                  ? 'border-[#EF4444]/60 bg-[#EF4444]/20 text-[#FCA5A5]'
-                  : 'border-[#10B981]/60 bg-[#10B981]/15 text-[#10B981] hover:bg-[#10B981]/25'
+                  ? 'border-danger/60 bg-danger/20 text-danger-soft'
+                  : 'border-live/60 bg-live/15 text-live hover:bg-live/25'
               }`}
             >
               <Monitor className="h-3 w-3" />
@@ -259,8 +259,8 @@ export function VideoPreviewBar({
                 onClick={() => onToggleFx(fx.id)}
                 className={`rounded border py-0.5 text-[10px] font-semibold cursor-pointer ${
                   activeFx[fx.id]
-                    ? 'border-white/35 bg-[#1C202B] text-[#F8FAFC]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'border-white/35 bg-raised-2 text-ink'
+                    : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
                 }`}
               >
                 {fx.label}
@@ -272,8 +272,8 @@ export function VideoPreviewBar({
               onClick={() => onToggleOsdNow?.()}
               className={`inline-flex items-center justify-center gap-1 rounded border py-0.5 text-[10px] font-semibold cursor-pointer ${
                 osdEnabled
-                  ? 'border-[#10B981]/50 bg-[#10B981]/15 text-[#10B981]'
-                  : 'border-white/[0.06] bg-[#151821] text-[#64748B]'
+                  ? 'border-live/50 bg-live/15 text-live'
+                  : 'border-white/[0.06] bg-raised text-faint'
               }`}
               title="Mostrar u ocultar rótulo de pista (OSD) en Pantalla 2"
             >
@@ -284,8 +284,8 @@ export function VideoPreviewBar({
 
           <div className="flex items-center justify-between gap-2 text-[10px]">
             <div className="flex items-center gap-1.5">
-              <Sparkles className="h-3 w-3 text-[#94A3B8]" />
-              <span className="text-[#64748B]">FX Mix</span>
+              <Sparkles className="h-3 w-3 text-muted" />
+              <span className="text-faint">FX Mix</span>
               <input
                 type="range"
                 min={0.1}
@@ -293,10 +293,10 @@ export function VideoPreviewBar({
                 step={0.05}
                 value={fxIntensity}
                 onChange={(e) => onFxIntensityChange?.(Number(e.target.value))}
-                className="w-16 accent-[#E2E8F0] cursor-pointer"
+                className="w-16 accent-ink-2 cursor-pointer"
                 aria-label="Intensidad Video FX"
               />
-              <span className="w-7 font-mono-tabular text-[#94A3B8]">
+              <span className="w-7 font-mono-tabular text-muted">
                 {Math.round(fxIntensity * 100)}%
               </span>
             </div>
@@ -309,8 +309,8 @@ export function VideoPreviewBar({
                 }
                 className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold cursor-pointer ${
                   videoMode === 'linked'
-                    ? 'border-[#10B981]/50 bg-[#10B981]/15 text-[#10B981]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8]'
+                    ? 'border-live/50 bg-live/15 text-live'
+                    : 'border-white/[0.06] bg-raised text-muted'
                 }`}
                 title="Enlazar transición de video al crossfader de audio"
               >
@@ -325,7 +325,7 @@ export function VideoPreviewBar({
                 value={videoMix}
                 disabled={videoMode === 'linked'}
                 onChange={(e) => onVideoMixChange(Number(e.target.value))}
-                className="w-16 accent-[#10B981] disabled:opacity-40 cursor-pointer"
+                className="w-16 accent-live disabled:opacity-40 cursor-pointer"
                 aria-label="Video Crossfader"
               />
             </div>

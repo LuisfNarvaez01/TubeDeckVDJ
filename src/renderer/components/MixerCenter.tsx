@@ -54,18 +54,18 @@ export function MixerCenter({
 
   const renderChannel = (deck: DeckId) => {
     const ch = mixer.channels[deck];
-    const accent = deck === 'A' ? '#0EA5E9' : '#F59E0B';
+    const accent = deck === 'A' ? '#10D9A0' : '#F5C542';
     return (
       <div
         key={deck}
-        className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-[#08090C] p-2"
+        className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-ground p-2"
       >
         <div className="flex items-center justify-between text-[10px] font-semibold">
-          <span className="inline-flex items-center gap-1 text-[#CBD5E1]">
+          <span className="inline-flex items-center gap-1 text-ink-soft">
             <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: accent }} />
             CH {deck}
           </span>
-          <span className="font-mono-tabular text-[#64748B]">{Math.round(ch.fader * 100)}%</span>
+          <span className="font-mono-tabular text-faint">{Math.round(ch.fader * 100)}%</span>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -76,7 +76,7 @@ export function MixerCenter({
               min={0}
               max={2}
               defaultValue={1}
-              accentColor="#E2E8F0"
+              accentColor="#E4E7E1"
               size={34}
               formatValue={(v) => `${Math.round(v * 100)}%`}
               onChange={(v) => onTrimChange(deck, v)}
@@ -88,7 +88,7 @@ export function MixerCenter({
               max={1}
               defaultValue={0}
               bipolar
-              accentColor="#E2E8F0"
+              accentColor="#E4E7E1"
               size={34}
               formatValue={(v) => (v === 0 ? 'OFF' : v < 0 ? `LP ${Math.round(Math.abs(v) * 100)}%` : `HP ${Math.round(v * 100)}%`)}
               onChange={(v) => onColorFilterChange(deck, v)}
@@ -110,10 +110,10 @@ export function MixerCenter({
                 <button
                   type="button"
                   onClick={() => onEqKillToggle(deck, key, !ch.eqKill[key])}
-                  className={`rounded border px-1.5 text-[8px] font-bold tracking-wider cursor-pointer ${
+                  className={`rounded border px-1.5 text-[10px] font-bold tracking-wider cursor-pointer ${
                     ch.eqKill[key]
-                      ? 'border-[#EF4444]/60 bg-[#EF4444]/20 text-[#FCA5A5]'
-                      : 'border-white/[0.06] bg-[#151821] text-[#64748B] hover:text-[#F8FAFC]'
+                      ? 'border-danger/60 bg-danger/20 text-danger-soft'
+                      : 'border-white/[0.06] bg-raised text-faint hover:text-ink'
                   }`}
                 >
                   KILL
@@ -139,10 +139,10 @@ export function MixerCenter({
                 step={0.01}
                 value={ch.fader}
                 onChange={(e) => onFaderChange(deck, Number(e.target.value))}
-                className="h-28 w-4 accent-[#E2E8F0] [writing-mode:vertical-lr] [direction:rtl] cursor-pointer"
+                className="h-28 w-4 accent-ink-2 [writing-mode:vertical-lr] [direction:rtl] cursor-pointer"
                 aria-label={`Fader Canal ${deck}`}
               />
-              <span className="font-mono-tabular text-[9px] text-[#64748B]">VOL</span>
+              <span className="font-mono-tabular text-[10px] text-faint">VOL</span>
             </div>
           </div>
         </div>
@@ -152,14 +152,14 @@ export function MixerCenter({
 
   return (
     <section
-      className="flex min-w-0 items-center justify-center rounded-xl border border-white/[0.06] bg-[#0F1117] p-2"
+      className="flex min-w-0 items-center justify-center rounded-xl border border-white/[0.06] bg-surface p-2"
       aria-label="Mixer Central"
     >
       <div className="flex w-full items-center justify-center gap-2">
         {renderChannel('A')}
 
         {/* Monochrome Master + Cue + Crossfader Center Console */}
-        <div className="flex min-w-0 flex-1 flex-col items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-[#08090C] px-2.5 py-2">
+        <div className="flex min-w-0 flex-1 flex-col items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-ground px-2.5 py-2">
           <div className="flex items-center gap-2">
             <RotaryKnob
               label="MASTER"
@@ -167,7 +167,7 @@ export function MixerCenter({
               min={0}
               max={1.5}
               defaultValue={1}
-              accentColor="#E2E8F0"
+              accentColor="#E4E7E1"
               size={36}
               formatValue={(v) => `${Math.round(v * 100)}%`}
               onChange={onMasterGainChange}
@@ -186,7 +186,7 @@ export function MixerCenter({
               min={0}
               max={1.5}
               defaultValue={1}
-              accentColor="#E2E8F0"
+              accentColor="#E4E7E1"
               size={34}
               formatValue={(v) => `${Math.round(v * 100)}%`}
               onChange={onCueGainChange}
@@ -197,7 +197,7 @@ export function MixerCenter({
               min={0}
               max={1}
               defaultValue={0}
-              accentColor="#E2E8F0"
+              accentColor="#E4E7E1"
               size={34}
               formatValue={(v) => `${Math.round(v * 100)}%`}
               onChange={onCueMixChange}
@@ -212,8 +212,8 @@ export function MixerCenter({
                 aria-label="Auto Mix A B"
                 className={`flex-1 inline-flex items-center justify-center gap-1 rounded-md border px-2 py-1 text-[10px] font-bold cursor-pointer ${
                   mixer.autoFadeActive
-                    ? 'border-[#10B981]/60 bg-[#10B981]/20 text-[#10B981]'
-                    : 'border-white/[0.1] bg-[#151821] text-[#F8FAFC] hover:bg-[#1C202B]'
+                    ? 'border-live/60 bg-live/20 text-live'
+                    : 'border-white/[0.1] bg-raised text-ink hover:bg-raised-2'
                 }`}
                 title="Mezcla automática suave de audio y video entre Deck A y Deck B"
               >
@@ -230,8 +230,8 @@ export function MixerCenter({
                 onClick={() => onToggleVideoLinked(!videoLinked)}
                 className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[10px] font-semibold cursor-pointer ${
                   videoLinked
-                    ? 'border-[#10B981]/50 bg-[#10B981]/15 text-[#10B981]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'border-live/50 bg-live/15 text-live'
+                    : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
                 }`}
                 title="Enlazar crossfader de audio con transición de video"
               >
@@ -246,8 +246,8 @@ export function MixerCenter({
                 onClick={() => onToggleAutoGain(!mixer.autoGainEnabled)}
                 className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 text-[10px] font-semibold cursor-pointer ${
                   mixer.autoGainEnabled
-                    ? 'border-white/[0.22] bg-[#1C202B] text-[#F8FAFC]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#64748B] hover:text-[#94A3B8]'
+                    ? 'border-white/[0.22] bg-raised-2 text-ink'
+                    : 'border-white/[0.06] bg-raised text-faint hover:text-muted'
                 }`}
                 title="Nivelación automática de volumen entre canciones (Auto-Gain)"
               >
@@ -258,7 +258,7 @@ export function MixerCenter({
           </div>
 
           <div className="relative flex w-full items-center gap-2 pt-0.5">
-            <span className="text-[10px] font-bold text-[#0EA5E9]">A</span>
+            <span className="text-[10px] font-bold text-deck-a">A</span>
             <input
               type="range"
               min={0}
@@ -267,18 +267,18 @@ export function MixerCenter({
               value={mixer.crossfader}
               onChange={(e) => onCrossfaderChange(Number(e.target.value), mixer.crossfaderCurve)}
               onDoubleClick={() => onCrossfaderChange(0.5, mixer.crossfaderCurve)}
-              className="w-full min-w-28 accent-[#E2E8F0] cursor-pointer"
+              className="w-full min-w-28 accent-ink-2 cursor-pointer"
               aria-label="Crossfader"
             />
-            <span className="text-[10px] font-bold text-[#F59E0B]">B</span>
+            <span className="text-[10px] font-bold text-deck-b">B</span>
             {showHotkeys ? (
-              <span className="hardware-keycap pointer-events-none absolute -top-3.5 left-1/2 -translate-x-1/2 rounded px-1 text-[8px]">
+              <span className="hardware-keycap pointer-events-none absolute -top-3.5 left-1/2 -translate-x-1/2 rounded px-1 text-[10px]">
                 ← / C / →
               </span>
             ) : null}
           </div>
 
-          <div className="flex items-center gap-1 text-[9px]">
+          <div className="flex items-center gap-1 text-[10px]">
             {(['equal-power', 'linear', 'scratch'] as CrossfaderCurve[]).map((curve) => (
               <button
                 key={curve}
@@ -286,8 +286,8 @@ export function MixerCenter({
                 onClick={() => onCrossfaderChange(mixer.crossfader, curve)}
                 className={`rounded border px-1.5 py-0.5 cursor-pointer ${
                   mixer.crossfaderCurve === curve
-                    ? 'border-white/[0.2] bg-[#1C202B] text-[#F8FAFC]'
-                    : 'border-white/[0.06] bg-[#151821] text-[#64748B] hover:text-[#94A3B8]'
+                    ? 'border-white/[0.2] bg-raised-2 text-ink'
+                    : 'border-white/[0.06] bg-raised text-faint hover:text-muted'
                 }`}
               >
                 {curve}
