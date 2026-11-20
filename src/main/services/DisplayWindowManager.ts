@@ -64,7 +64,7 @@ function defaultOutputWindowFactory(options: {
     frame: false,
     autoHideMenuBar: true,
     backgroundColor: '#000000',
-    title: 'TubeDeck VDJ — Salida Master',
+    title: 'Proyecta — Salida Master',
     webPreferences: {
       preload: path.join(moduleDir, '../preload/index.cjs'),
       contextIsolation: true,

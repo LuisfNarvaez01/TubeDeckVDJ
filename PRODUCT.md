@@ -39,7 +39,7 @@ YouTube as the music library, mixed like VirtualDJ: no downloading, no file mana
 - Radio YT: YouTube Music automix sources + local taste model; first-run reference-song setup.
 - Constraints: Electron + React 19 + Tailwind v4 renderer; `contextIsolation`/`sandbox`; strict CSP (external scripts not allowed; fonts must be bundled locally); no media files written to `userData` by streaming (E2E enforces it).
 - Deck identity colors are functional: Deck A and Deck B must stay instantly distinguishable everywhere (buttons, waveforms, queue load buttons).
-- Open decision: product name. "TubeDeck VDJ" is open to renaming; package name and `appId` (`com.tubedeck.vdj`) must not change without explicit approval because auto-update depends on them.
+- Open decision: product name. "Proyecta" is open to renaming; package name and `appId` (`com.tubedeck.vdj`) must not change without explicit approval because auto-update depends on them.
 
 ## Brand Commitments
 

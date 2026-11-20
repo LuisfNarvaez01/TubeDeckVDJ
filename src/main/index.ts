@@ -23,6 +23,8 @@ import { YtDlpBinaryManager } from './services/YtDlpBinaryManager';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
+const LEGACY_DATA_FOLDER = 'TubeDeck VDJ';
+
 let mainWindow: BrowserWindow | null = null;
 let dbService: DatabaseService | null = null;
 let ramProxy: RamStreamProxy | null = null;
@@ -75,7 +77,7 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1200,
     minHeight: 740,
     backgroundColor: '#0B0E14',
-    title: 'TubeDeck VDJ',
+    title: 'Proyecta',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(moduleDir, '../preload/index.cjs'),
@@ -98,6 +100,10 @@ function createMainWindow(): BrowserWindow {
 
   return win;
 }
+
+// Renamed to Proyecta in v3.1: keep reading the data folder created as "TubeDeck VDJ"
+// (history, crates, likes, settings) instead of starting empty under the new name.
+app.setPath('userData', path.join(app.getPath('appData'), LEGACY_DATA_FOLDER));
 
 app.whenReady().then(async () => {
   if (process.env.TUBEDECK_USER_DATA_DIR) {
@@ -131,7 +137,7 @@ app.whenReady().then(async () => {
   });
   const exporter = new SessionExporter();
   const localLibrary = new LocalLibraryService(db);
-  const recordings = new MixRecordingService(path.join(app.getPath('music'), 'TubeDeck Grabaciones'));
+  const recordings = new MixRecordingService(path.join(app.getPath('music'), 'Proyecta Grabaciones'));
   recordingService = recordings;
   const batchDownloader = new BatchDownloadService({
     binaryManager: ytDlp,

@@ -1,5 +1,5 @@
 ---
-name: TubeDeck VDJ
+name: Proyecta
 description: Two-deck YouTube video DJ booth for dark rooms; a streaming home screen at night.
 colors:
   ground: "#000000"
@@ -107,7 +107,7 @@ components:
     rounded: "{rounded.lg}"
 ---
 
-# Design System: TubeDeck VDJ
+# Design System: Proyecta
 
 ## Overview
 
@@ -165,7 +165,7 @@ Near-black chrome with three signal colours and one alarm.
 
 ## Layout
 
-Fixed desktop console. A 40px top bar (brand mark, version, the single next decision with countdown, live toggles), then a cabin of Deck A, video master and Deck B over an FX/mixer row, then a dock split from the cabin by a draggable row separator. The dock holds browser tabs on the left and a persistent "Siguiente" column on the right. The library uses an auto-fill grid of 16:9 cards (min 200px, 12px column / 16px row gaps), which becomes a single horizontally scrolling shelf of cards (snap, width sized to the dock height) when the results area is under 250px; the list view is only an explicit user choice. Spacing runs 4/6/8/12px. Gaps are tight and padding is small.
+Fixed desktop console. A 40px top bar (brand mark, version, the single next decision with countdown, live toggles), then the broadcast stage (transition controls · Preview A · the program monitor "AL AIRE" at up to 540px wide · Preview B · video FX and Screen 2 output), then one full-width camera strip per deck (identity, waveform, key, BPM, clock; a 3px tally bar on its left edge in the deck colour, glowing when on air), then the hands row (Deck A platter/transport/pads · mixer with phase meter · Deck B), then a dock split from the cabin by a draggable row separator. The dock holds browser tabs on the left and a persistent "Siguiente" column on the right. The library uses an auto-fill grid of 16:9 cards (min 200px, 12px column / 16px row gaps), which becomes a single horizontally scrolling shelf of cards (snap, width sized to the dock height) when the results area is under 250px; the list view is only an explicit user choice. Spacing runs 4/6/8/12px. Gaps are tight and padding is small.
 
 ## Elevation & Depth
 

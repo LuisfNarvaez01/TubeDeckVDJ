@@ -98,7 +98,7 @@ const TIER_RANGES: Array<{ tier: VideoQualityTier; minH: number; maxH: number }>
 
 function selectBestFormats(videoId: string, info: YtDlpInfoJson): ResolvedStream {
   if (info.is_live) {
-    throw new Error('Livestreams cannot be mixed in TubeDeck VDJ');
+    throw new Error('Livestreams cannot be mixed in Proyecta');
   }
 
   const formats = (info.formats ?? []).filter(isHttpProtocol);

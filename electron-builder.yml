@@ -1,5 +1,5 @@
 appId: com.tubedeck.vdj
-productName: TubeDeck VDJ
+productName: Proyecta
 directories:
   output: dist
   buildResources: build
@@ -36,7 +36,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: TubeDeck VDJ
+  shortcutName: Proyecta
+  artifactName: Proyecta-Setup-${version}.${ext}
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
 publish:

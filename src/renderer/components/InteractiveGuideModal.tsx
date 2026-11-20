@@ -157,7 +157,7 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
       >
         <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
           <div>
-            <h2 className="text-base font-bold text-ink">Guía Rápida de Cabina — TubeDeck VDJ</h2>
+            <h2 className="text-base font-bold text-ink">Guía rápida de cabina — Proyecta</h2>
             <p className="text-xs text-muted">
               Referencia de controles, mezcla automática de audio/video, marcos y reproducción híbrida.
             </p>

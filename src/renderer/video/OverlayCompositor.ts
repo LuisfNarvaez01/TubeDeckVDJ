@@ -92,7 +92,7 @@ export function createDefaultOverlayConfig(): OverlayConfig {
     },
     marquee: {
       enabled: false,
-      text: 'TubeDeck VDJ — En Vivo',
+      text: 'Proyecta — En Vivo',
       speedPxPerSec: 110,
       color: '#F1F5F9',
       bgOpacity: 0.72,

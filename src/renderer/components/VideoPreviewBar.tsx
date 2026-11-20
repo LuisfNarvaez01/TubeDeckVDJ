@@ -94,79 +94,47 @@ export function VideoPreviewBar({
     [attachPreviewContainer]
   );
 
+  const previewMonitor = (deck: DeckId) => {
+    const quality = deck === 'A' ? activeQualityA : activeQualityB;
+    const visibleShare = deck === 'A' ? 1 - videoMix : videoMix;
+    return (
+      <div className="flex w-[42%] min-w-0 shrink-0 flex-col gap-1">
+        <div className="flex items-center justify-between text-[10px]">
+          <span className={`font-bold tracking-[0.14em] ${deck === 'A' ? 'text-deck-a' : 'text-deck-b'}`}>
+            PREVIA {deck}
+          </span>
+          <span className="font-mono-tabular text-faint">
+            {quality ? `${quality} · ` : ''}
+            {Math.round(visibleShare * 100)}% al aire
+          </span>
+        </div>
+        <div
+          ref={deck === 'A' ? refA : refB}
+          className={`aspect-video w-full overflow-hidden rounded-lg border bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain ${
+            deck === 'A' ? 'border-deck-a/45' : 'border-deck-b/45'
+          }`}
+        />
+      </div>
+    );
+  };
+
+  const chip = 'rounded border border-white/[0.06] bg-raised px-1.5 py-1 text-[10px] text-ink';
+  const wingLabel = 'text-[10px] font-semibold uppercase tracking-[0.14em] text-faint';
+
   return (
     <section
-      className="flex flex-col justify-between gap-2 rounded-xl border border-white/[0.06] bg-surface p-2.5"
+      className="grid grid-cols-[minmax(0,1fr)_minmax(420px,540px)_minmax(0,1fr)] items-stretch gap-3 rounded-xl border border-white/[0.06] bg-surface p-2.5"
       aria-label="Cabina de Video Master"
     >
-      {/* Compact Side-by-Side Monitors: Master Live (66%) + Stacked Previews A/B (34%) */}
-      <div className="grid grid-cols-[1.85fr_1fr] gap-2">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between text-[10px]">
-            <div className="flex items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 font-bold tracking-wider text-live">
-                <span className="h-1.5 w-1.5 rounded-full bg-live" />
-                MASTER LIVE
-              </span>
-              {frameEnabled ? (
-                <span className="rounded border border-white/[0.12] bg-raised px-1 py-0.2 text-[10px] font-semibold text-ink-soft">
-                  MARCO
-                </span>
-              ) : null}
-            </div>
-            <span
-              className={`rounded px-1.5 py-0.2 text-[10px] font-bold ${
-                outputOpen
-                  ? 'bg-live/15 text-live'
-                  : 'bg-raised text-faint'
-              }`}
-            >
-              {outputOpen ? 'P2 LIVE' : 'P2 OFF'}
-            </span>
-          </div>
-
-          <div className="aspect-video w-full overflow-hidden rounded-lg border border-white/[0.08] bg-black">
-            <canvas ref={masterCanvasRef} className="h-full w-full object-contain" />
-          </div>
-        </div>
-
-        <div className="flex flex-col justify-between gap-1.5">
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="font-semibold tracking-wider text-deck-a">DECK A</span>
-              {activeQualityA ? (
-                <span className="font-mono-tabular text-faint">{activeQualityA}</span>
-              ) : null}
-            </div>
-            <div
-              ref={refA}
-              className="aspect-video w-full overflow-hidden rounded border border-deck-a/45 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
-            />
-          </div>
-
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="font-semibold tracking-wider text-deck-b">DECK B</span>
-              {activeQualityB ? (
-                <span className="font-mono-tabular text-faint">{activeQualityB}</span>
-              ) : null}
-            </div>
-            <div
-              ref={refB}
-              className="aspect-video w-full overflow-hidden rounded border border-deck-b/45 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Broadcast Strip & Compact 2-Row 4x2 FX Matrix */}
-      <div className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-ground p-2 text-[11px]">
-        <div className="flex flex-wrap items-center justify-between gap-1">
-          <div className="flex items-center gap-1">
+      {/* Left wing: video transition controls, then Preview A beside the program */}
+      <div className="flex min-w-0 items-end gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 self-stretch">
+          <span className={wingLabel}>Transición</span>
+          <div className="flex flex-wrap items-center gap-1">
             <select
               value={transition}
               onChange={(e) => onTransitionChange(e.target.value as VideoTransitionId)}
-              className="rounded border border-white/[0.06] bg-raised px-1.5 py-0.5 text-[10px] text-ink"
+              className={chip}
               aria-label="Transición Video"
             >
               {TRANSITIONS.map((t) => (
@@ -175,25 +143,10 @@ export function VideoPreviewBar({
                 </option>
               ))}
             </select>
-
-            <button
-              type="button"
-              onClick={onTriggerAutoTransition}
-              className="relative inline-flex items-center gap-1 rounded border border-live/50 bg-live/15 px-2 py-0.5 text-[10px] font-semibold text-live hover:bg-live/25 cursor-pointer"
-            >
-              <ArrowLeftRight className="h-3 w-3" />
-              Auto {autoDurationSec}s
-              {showHotkeys ? (
-                <span className="hardware-keycap pointer-events-none ml-0.5 rounded px-1 text-[10px]">
-                  V
-                </span>
-              ) : null}
-            </button>
-
             <select
               value={autoDurationSec}
               onChange={(e) => onAutoDurationChange(Number(e.target.value))}
-              className="rounded border border-white/[0.06] bg-raised px-1 py-0.5 font-mono-tabular text-[10px] text-ink"
+              className={`${chip} font-mono-tabular`}
               aria-label="Duración Auto Transición"
             >
               <option value={1}>1s</option>
@@ -201,63 +154,99 @@ export function VideoPreviewBar({
               <option value={4}>4s</option>
               <option value={8}>8s</option>
             </select>
-
-            {onOpenFramesDrawer ? (
-              <button
-                type="button"
-                onClick={onOpenFramesDrawer}
-                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${
-                  frameEnabled
-                    ? 'border-white/30 bg-raised-2 text-ink'
-                    : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
-                }`}
-              >
-                <Frame className="h-3 w-3" />
-                Marcos
-              </button>
-            ) : null}
           </div>
-
-          <div className="flex items-center gap-1">
-            {displays.length > 0 ? (
-              <select
-                value={selectedDisplayId ?? displays[0].id}
-                onChange={(e) => onSelectDisplay(Number(e.target.value))}
-                className="max-w-32 rounded border border-white/[0.06] bg-raised px-1.5 py-0.5 text-[10px] text-ink"
-                aria-label="Monitor Salida"
-              >
-                {displays.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.label} ({d.bounds.width}×{d.bounds.height})
-                  </option>
-                ))}
-              </select>
+          <button
+            type="button"
+            onClick={onTriggerAutoTransition}
+            className="relative inline-flex items-center justify-center gap-1.5 rounded-md border border-live/50 bg-live/15 px-2 py-1.5 text-[11px] font-semibold text-live hover:bg-live/25 cursor-pointer"
+          >
+            <ArrowLeftRight className="h-3.5 w-3.5" />
+            Pasar al otro video · {autoDurationSec}s
+            {showHotkeys ? (
+              <span className="hardware-keycap pointer-events-none ml-0.5 rounded px-1 text-[10px]">V</span>
             ) : null}
-
+          </button>
+          <div className="mt-auto flex items-center gap-1.5 text-[10px]">
             <button
               type="button"
-              onClick={onToggleOutputWindow}
-              className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-bold cursor-pointer ${
-                outputOpen
-                  ? 'border-danger/60 bg-danger/20 text-danger-soft'
-                  : 'border-live/60 bg-live/15 text-live hover:bg-live/25'
+              onClick={() => onVideoModeChange(videoMode === 'linked' ? 'independent' : 'linked')}
+              className={`inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-1 font-semibold cursor-pointer ${
+                videoMode === 'linked'
+                  ? 'border-live/50 bg-live/15 text-live'
+                  : 'border-white/[0.06] bg-raised text-muted'
+              }`}
+              title="Enlazar la mezcla de video al crossfader de audio"
+            >
+              <Link2 className="h-3 w-3" />
+              {videoMode === 'linked' ? 'A+V' : 'Indep'}
+            </button>
+            <span className="font-bold text-deck-a">A</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={videoMix}
+              disabled={videoMode === 'linked'}
+              onChange={(e) => onVideoMixChange(Number(e.target.value))}
+              className="min-w-0 flex-1 accent-live disabled:opacity-40 cursor-pointer"
+              aria-label="Video Crossfader"
+            />
+            <span className="font-bold text-deck-b">B</span>
+          </div>
+          {onOpenFramesDrawer ? (
+            <button
+              type="button"
+              onClick={onOpenFramesDrawer}
+              className={`inline-flex items-center justify-center gap-1 rounded border px-1.5 py-1 text-[10px] font-semibold cursor-pointer ${
+                frameEnabled
+                  ? 'border-white/30 bg-raised-2 text-ink'
+                  : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
               }`}
             >
-              <Monitor className="h-3 w-3" />
-              {outputOpen ? 'Cerrar P2' : 'Abrir P2'}
+              <Frame className="h-3 w-3" />
+              {frameEnabled ? 'Marco activo' : 'Marcos'}
             </button>
-          </div>
+          ) : null}
         </div>
+        {previewMonitor('A')}
+      </div>
 
-        {/* 2-Row Compact Video FX Pad Matrix + Intensity & Video Crossfade */}
-        <div className="flex flex-col gap-1.5 border-t border-white/[0.06] pt-1.5">
+      {/* Program: what the room sees */}
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex items-center justify-between text-[10px]">
+          <span className="inline-flex items-center gap-1.5 font-bold tracking-[0.18em] text-live">
+            <span className="h-2 w-2 rounded-full bg-danger shadow-[0_0_10px_rgba(255,82,71,0.8)]" />
+            AL AIRE
+            {frameEnabled ? (
+              <span className="rounded border border-white/[0.12] bg-raised px-1 text-[10px] font-semibold tracking-normal text-ink-soft">
+                MARCO
+              </span>
+            ) : null}
+          </span>
+          <span
+            className={`rounded px-1.5 font-bold ${outputOpen ? 'bg-live/15 text-live' : 'bg-raised text-faint'}`}
+          >
+            {outputOpen ? 'PANTALLA 2 EN VIVO' : 'PANTALLA 2 APAGADA'}
+          </span>
+        </div>
+        <div className="aspect-video w-full overflow-hidden rounded-lg bg-black ring-1 ring-white/[0.14]">
+          <canvas ref={masterCanvasRef} className="h-full w-full object-contain" />
+        </div>
+      </div>
+
+      {/* Right wing: Preview B beside the program, then video FX and Screen 2 output */}
+      <div className="flex min-w-0 items-end gap-3">
+        {previewMonitor('B')}
+        <div className="flex min-w-0 flex-1 flex-col gap-2 self-stretch">
+          <span className={wingLabel}>Efectos de video</span>
           <div className="grid grid-cols-4 gap-1">
             {FX_BUTTONS.map((fx) => (
               <button
                 key={fx.id}
                 type="button"
                 onClick={() => onToggleFx(fx.id)}
-                className={`rounded border py-0.5 text-[10px] font-semibold cursor-pointer ${
+                className={`rounded border py-1 text-[10px] font-semibold cursor-pointer ${
                   activeFx[fx.id]
                     ? 'border-white/35 bg-raised-2 text-ink'
                     : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
@@ -270,65 +259,59 @@ export function VideoPreviewBar({
               type="button"
               aria-label="Mostrar OSD Pista"
               onClick={() => onToggleOsdNow?.()}
-              className={`inline-flex items-center justify-center gap-1 rounded border py-0.5 text-[10px] font-semibold cursor-pointer ${
-                osdEnabled
-                  ? 'border-live/50 bg-live/15 text-live'
-                  : 'border-white/[0.06] bg-raised text-faint'
+              className={`inline-flex items-center justify-center gap-1 rounded border py-1 text-[10px] font-semibold cursor-pointer ${
+                osdEnabled ? 'border-live/50 bg-live/15 text-live' : 'border-white/[0.06] bg-raised text-faint'
               }`}
-              title="Mostrar u ocultar rótulo de pista (OSD) en Pantalla 2"
+              title="Mostrar u ocultar el rótulo de la canción en Pantalla 2"
             >
               <Tv className="h-2.5 w-2.5" />
               OSD
             </button>
           </div>
-
-          <div className="flex items-center justify-between gap-2 text-[10px]">
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="h-3 w-3 text-muted" />
-              <span className="text-faint">FX Mix</span>
-              <input
-                type="range"
-                min={0.1}
-                max={1}
-                step={0.05}
-                value={fxIntensity}
-                onChange={(e) => onFxIntensityChange?.(Number(e.target.value))}
-                className="w-16 accent-ink-2 cursor-pointer"
-                aria-label="Intensidad Video FX"
-              />
-              <span className="w-7 font-mono-tabular text-muted">
-                {Math.round(fxIntensity * 100)}%
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() =>
-                  onVideoModeChange(videoMode === 'linked' ? 'independent' : 'linked')
-                }
-                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold cursor-pointer ${
-                  videoMode === 'linked'
-                    ? 'border-live/50 bg-live/15 text-live'
-                    : 'border-white/[0.06] bg-raised text-muted'
-                }`}
-                title="Enlazar transición de video al crossfader de audio"
+          <div className="flex items-center gap-1.5 text-[10px]">
+            <Sparkles className="h-3 w-3 shrink-0 text-muted" />
+            <span className="shrink-0 text-faint">Intensidad</span>
+            <input
+              type="range"
+              min={0.1}
+              max={1}
+              step={0.05}
+              value={fxIntensity}
+              onChange={(e) => onFxIntensityChange?.(Number(e.target.value))}
+              className="min-w-0 flex-1 accent-ink-2 cursor-pointer"
+              aria-label="Intensidad Video FX"
+            />
+            <span className="w-8 shrink-0 text-right font-mono-tabular text-muted">
+              {Math.round(fxIntensity * 100)}%
+            </span>
+          </div>
+          <div className="mt-auto flex items-center gap-1">
+            {displays.length > 0 ? (
+              <select
+                value={selectedDisplayId ?? displays[0].id}
+                onChange={(e) => onSelectDisplay(Number(e.target.value))}
+                className={`${chip} min-w-0 flex-1`}
+                aria-label="Monitor Salida"
               >
-                <Link2 className="h-2.5 w-2.5" />
-                {videoMode === 'linked' ? 'A+V' : 'Indep'}
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={videoMix}
-                disabled={videoMode === 'linked'}
-                onChange={(e) => onVideoMixChange(Number(e.target.value))}
-                className="w-16 accent-live disabled:opacity-40 cursor-pointer"
-                aria-label="Video Crossfader"
-              />
-            </div>
+                {displays.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.label} ({d.bounds.width}×{d.bounds.height})
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <button
+              type="button"
+              onClick={onToggleOutputWindow}
+              className={`inline-flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[10px] font-bold cursor-pointer ${
+                outputOpen
+                  ? 'border-danger/60 bg-danger/20 text-danger-soft'
+                  : 'border-live/60 bg-live/15 text-live hover:bg-live/25'
+              }`}
+            >
+              <Monitor className="h-3 w-3" />
+              {outputOpen ? 'Cerrar P2' : 'Abrir P2'}
+            </button>
           </div>
         </div>
       </div>

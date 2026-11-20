@@ -64,8 +64,8 @@ test('Dual-window VDJ v2.1 cabin launches cleanly, opens Guide/Marcos/Ajustes dr
       mainPage.getByRole('region', { name: 'Cabina de Video Master', exact: true })
     ).toBeVisible();
     await expect(mainPage.getByRole('region', { name: 'Mixer Central', exact: true })).toBeVisible();
-    await expect(mainPage.getByRole('region', { name: 'Deck A FX y Sampler', exact: true })).toBeVisible();
-    await expect(mainPage.getByRole('region', { name: 'Deck B FX y Sampler', exact: true })).toBeVisible();
+    await expect(mainPage.getByRole('region', { name: 'Controles Deck A', exact: true })).toBeVisible();
+    await expect(mainPage.getByRole('region', { name: 'Controles Deck B', exact: true })).toBeVisible();
 
     await expect(mainPage.getByRole('combobox', { name: 'Calidad Video Global' })).toBeVisible();
     const keysBtn = mainPage.getByRole('button', { name: 'Mostrar Atajos' });

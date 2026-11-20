@@ -40,7 +40,6 @@ import {
 } from './audio/AudioDspEngine';
 import { AudioOutputRouter } from './audio/AudioOutputRouter';
 import { DualDeckMediaSync } from './audio/DualDeckMediaSync';
-import { DeckFxSamplerModule } from './components/DeckFxSamplerModule';
 import { DeckPanel } from './components/DeckPanel';
 import { HistoryAndCratesTab } from './components/HistoryAndCratesTab';
 import { InteractiveGuideModal } from './components/InteractiveGuideModal';
@@ -1565,8 +1564,9 @@ export function App(): ReactElement {
     }
   };
 
-  const renderDeck = (deckId: DeckId) => (
+  const renderDeck = (deckId: DeckId, layout: 'full' | 'strip' | 'controls' = 'full') => (
     <DeckPanel
+      layout={layout}
       onAir={decksPlayingKey.includes(deckId) && audibleKey.includes(deckId)}
       offAirDimmed={
         !(decksPlayingKey.includes(deckId) && audibleKey.includes(deckId)) &&
@@ -1582,7 +1582,7 @@ export function App(): ReactElement {
       }}
       onEject={handleEjectDeck}
       onTrackFeedback={handleDeckTrackFeedback}
-      key={deckId}
+      key={`${deckId}-${layout}`}
       deckId={deckId}
       activeQuality={settings.activeDeckQuality[deckId]}
       showHotkeys={settings.showHotkeys}
@@ -1713,7 +1713,7 @@ export function App(): ReactElement {
       <header className="flex h-10 shrink-0 items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-surface px-3 text-xs">
         <div className="flex shrink-0 items-center gap-2">
           <BrandMark className="h-5 w-5" />
-          <span className="text-[13px] font-bold tracking-tight text-ink">TubeDeck VDJ</span>
+          <span className="text-[13px] font-bold tracking-tight text-ink">Proyecta</span>
           <span className="rounded border border-white/[0.06] bg-ground px-1.5 py-0.5 font-mono-tabular text-[10px] text-muted">
             v{__APP_VERSION__}
           </span>
@@ -1926,10 +1926,7 @@ export function App(): ReactElement {
       <div
         className={`flex min-h-0 flex-col gap-2 overflow-y-auto ${dockHeight === null ? '' : 'flex-1'}`}
       >
-      {/* Top Row: Deck A | Compact Video Master + Stacked Previews | Deck B */}
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(390px,450px)_minmax(0,1fr)] gap-2">
-        {renderDeck('A')}
-
+      {/* Stage: Preview A | program on air | Preview B (the broadcast switcher) */}
         <VideoPreviewBar
           masterCanvasRef={masterCanvasRef}
           attachPreviewContainer={attachPreviewContainer}
@@ -1988,17 +1985,15 @@ export function App(): ReactElement {
           }}
         />
 
-        {renderDeck('B')}
+      {/* Camera rows: one line per deck, identity + waveform + key/tempo/clock */}
+      <div className="flex flex-col gap-1.5">
+        {renderDeck('A', 'strip')}
+        {renderDeck('B', 'strip')}
       </div>
 
-      {/* Middle Row (100% full width, 3 symmetrical modules): Deck A FX & Sampler | Mixer Central | Deck B FX & Sampler */}
+      {/* Hands: Deck A controls | Mixer | Deck B controls */}
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(560px,32%)_minmax(0,1fr)] gap-2">
-        <DeckFxSamplerModule
-          deckId="A"
-          onDeckFxChange={handleDeckFxChange}
-          onTriggerSample={handleTriggerSample}
-        />
-
+        {renderDeck('A', 'controls')}
         <MixerCenter
           phaseMeter={<PhaseMeter getTrackTime={getDeckTrackTime} />}
           showHotkeys={settings.showHotkeys}
@@ -2076,11 +2071,7 @@ export function App(): ReactElement {
           }
         />
 
-        <DeckFxSamplerModule
-          deckId="B"
-          onDeckFxChange={handleDeckFxChange}
-          onTriggerSample={handleTriggerSample}
-        />
+        {renderDeck('B', 'controls')}
       </div>
 
       </div>

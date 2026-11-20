@@ -1,9 +1,9 @@
-# AI Context — TubeDeck VDJ (`v3.0.0`)
+# AI Context — Proyecta (antes TubeDeck VDJ) (`v3.1.0`)
 
 Documento de referencia técnica rápida para darle contexto inmediato del proyecto a cualquier asistente de IA.
 
 ## 1. Resumen del Proyecto
-- **Nombre / Paquete:** `TubeDeck VDJ` (`tubedeck-vdj`, versión `3.0.0`, `appId`: `com.tubedeck.vdj`).
+- **Nombre / Paquete:** `Proyecta` desde v3.1 (antes `TubeDeck VDJ`). Paquete `tubedeck-vdj`, versión `3.1.0`, `appId` `com.tubedeck.vdj` — NO cambiar paquete ni appId (la actualización automática depende de ellos). La carpeta de datos sigue siendo `%APPDATA%/TubeDeck VDJ` (`LEGACY_DATA_FOLDER` en `src/main/index.ts`). Instalador: `Proyecta-Setup-<versión>.exe`.
 - **Objetivo:** Cabina DJ/VDJ de doble pantalla para Windows que mezcla videos de YouTube en streaming en memoria (**sin descargar archivos multimedia al disco** durante la reproducción normal), permite intercalar archivos o carpetas locales, renderiza video compuesto a 60 fps en Pantalla 2 con transiciones WebGL2 y marcos configurables, y ofrece descarga opcional por lotes de sesiones del historial.
 - **Repositorio / Auto-Actualizaciones:** `https://github.com/LuisfNarvaez01/TubeDeckVDJ.git` (`electron-updater` vía GitHub Releases + workflow `.github/workflows/release.yml` activado al hacer push de tags `v*`).
 
@@ -44,6 +44,7 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 - Grabación de mezcla (v3): `audio/MixRecorder.ts` (MediaRecorder del master post-limitador + canvas de Pantalla 2) → `main/services/MixRecordingService.ts` escribe por trozos en `Música/TubeDeck Grabaciones`.
 - Listas inteligentes (v3): `HistoryAndCratesService.getSmartCrate` (combina con lo que suena, Me gusta, Más tocadas, Recientes, Olvidadas).
 - Explorador local (v2.4+): `LocalLibraryService.browseDirectory` / `listDrivePlaces` (unidades, USB, accesos).
+- Distribución v3.1 "video al centro": `VideoPreviewBar` es el escenario (Previa A · AL AIRE · Previa B); `DeckPanel` tiene `layout` = `strip` (franja por deck bajo el escenario) o `controls` (plato, transporte y pads junto al mixer). `DeckFxSamplerModule` ya no se monta: FX con tiempo en beats y sampler viven en los pads del deck.
 - `src/renderer/video/`:
   - `WebGLVideoCompositor.ts` + `transitions.glsl.ts` + `effects.glsl.ts`: 9 transiciones de video, soporte de viewport interno `u_videoRect` para marcos y captura a 60 fps para Pantalla 2.
   - `VideoFxPipeline.ts`: 7 efectos visuales reactivos al análisis de bandas de audio.
@@ -96,7 +97,7 @@ npx playwright test tests/e2e/appFlow.spec.ts
 # Pruebas E2E contra ejecutable Windows empaquetado
 $env:TUBEDECK_E2E_EXE="d:\Trabajos\Pantallas\dist\win-unpacked\TubeDeck VDJ.exe"; npx playwright test tests/e2e/appFlow.spec.ts
 
-# Empaquetado NSIS sin firma de código local (genera dist/TubeDeck VDJ Setup 3.0.0.exe)
+# Empaquetado NSIS sin firma de código local (genera dist/Proyecta-Setup-3.1.0.exe)
 $env:CSC_IDENTITY_AUTO_DISCOVERY="false"; npx electron-builder --win nsis
 ```
 

@@ -90,6 +90,11 @@ interface DeckPanelProps {
   onRetryLoad?: (deck: DeckId) => void;
   /** Empty the deck (only while it is not on air). */
   onEject?: (deck: DeckId) => void;
+  /**
+   * full: whole deck in one card. strip: one-line identity + waveform + tempo (the
+   * broadcast "camera" row under the program monitor). controls: platter, transport, pads.
+   */
+  layout?: 'full' | 'strip' | 'controls';
 }
 
 function formatTime(sec: number): string {
@@ -134,8 +139,12 @@ export function DeckPanel({
   onAir = false,
   offAirDimmed = false,
   onRetryLoad,
-  onEject
+  onEject,
+  layout = 'full'
 }: DeckPanelProps): ReactElement {
+  const isStrip = layout === 'strip';
+  const showIdentity = layout !== 'controls';
+  const showPerformance = layout !== 'strip';
   const deck = useDeckStore((s) => s.decks[deckId]);
   const setDeckPatch = useDeckStore((s) => s.setDeckPatch);
   const [padMode, setPadMode] = useState<PadMode>('hot-cue');
@@ -189,20 +198,22 @@ export function DeckPanel({
 
   return (
     <section
-      className={`@container relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-xl border bg-surface p-2.5 transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-        onAir
+      className={`@container relative flex min-w-0 overflow-hidden rounded-xl border bg-surface transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        isStrip ? 'flex-row items-center gap-3 py-2 pl-3 pr-2.5' : 'flex-col gap-2 p-2.5'
+      } ${
+        onAir && showIdentity
           ? deckId === 'A'
             ? '-translate-y-px border-deck-a/45 shadow-[0_14px_32px_-16px_rgba(34,225,240,0.45)]'
             : '-translate-y-px border-deck-b/45 shadow-[0_14px_32px_-16px_rgba(255,79,168,0.45)]'
           : 'border-white/[0.06]'
       }`}
-      aria-label={`Deck ${deckId}`}
+      aria-label={layout === 'controls' ? `Controles Deck ${deckId}` : `Deck ${deckId}`}
     >
       {/* Tally light: the broadcast-camera signal of which deck the room is hearing */}
-      {deck.track ? (
+      {deck.track && showIdentity ? (
         <span
           aria-hidden="true"
-          className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] transition-[opacity,box-shadow] duration-200 ${
+          className={`pointer-events-none absolute ${isStrip ? 'inset-y-0 left-0 w-[3px]' : 'inset-x-0 top-0 h-[3px]'} transition-[opacity,box-shadow] duration-200 ${
             onAir ? 'opacity-100' : 'opacity-30'
           }`}
           style={{
@@ -213,9 +224,13 @@ export function DeckPanel({
       ) : null}
 
       {/* Header: Identity + OSD Editable Title + Stream Health + BPM + Clocks */}
-      <header className="flex items-center justify-between gap-2">
+      {showIdentity ? (
+      <>
+      <header className={isStrip ? 'contents' : 'flex items-center justify-between gap-2'}>
         <div
-          className={`flex min-w-0 flex-1 items-center gap-2.5 transition-[opacity,filter] duration-200 ${
+          className={`flex min-w-0 items-center gap-2.5 transition-[opacity,filter] duration-200 ${
+            isStrip ? 'order-1 w-[clamp(240px,24%,380px)] flex-none' : 'flex-1'
+          } ${
             offAirDimmed ? 'opacity-60 saturate-50' : ''
           }`}
         >
@@ -363,7 +378,7 @@ export function DeckPanel({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className={`flex shrink-0 items-center gap-2 ${isStrip ? 'order-3' : ''}`}>
           <KeyBadge deckId={deckId} />
           <div className="flex items-center gap-1 rounded-md border border-white/[0.06] bg-ground px-2 py-1 text-xs">
             <span className="font-mono-tabular text-[14px] leading-none text-ink @2xl:text-[20px]">
@@ -421,7 +436,7 @@ export function DeckPanel({
       </header>
 
       {/* Dual RGB Live + Overview Waveform */}
-      <div className="relative">
+      <div className={`relative ${isStrip ? 'order-2 min-w-0 flex-1' : ''}`}>
         <RgbWaveformStrip
           deckId={deckId}
           accentColor={accent}
@@ -473,6 +488,11 @@ export function DeckPanel({
         ) : null}
       </div>
 
+      </>
+      ) : null}
+
+      {showPerformance ? (
+      <>
       {/* Platter + Transport + Pitch / Key Shift / Loops */}
       <div className="flex items-center justify-between gap-2.5">
         <JogWheel
@@ -868,12 +888,27 @@ export function DeckPanel({
                     aria-label={`${fx} Mix Deck ${deckId}`}
                     className="w-full accent-ink-2 cursor-pointer"
                   />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const divs = ['1/4', '1/2', '3/4', '1/1'] as const;
+                      const next = divs[(divs.indexOf(st.beatDiv) + 1) % divs.length];
+                      onDeckFxChange(deckId, fx, st.enabled, st.wet, next);
+                    }}
+                    aria-label={`Tiempo de ${fx} Deck ${deckId}: ${st.beatDiv} de beat`}
+                    title="Tiempo del efecto en beats (clic para cambiar)"
+                    className="shrink-0 rounded border border-white/[0.06] bg-ground px-1 py-0.5 font-mono-tabular text-[10px] text-ink-soft hover:text-ink cursor-pointer"
+                  >
+                    {st.beatDiv}
+                  </button>
                 </div>
               );
             })}
           </div>
         ) : null}
       </div>
+      </>
+      ) : null}
     </section>
   );
 }

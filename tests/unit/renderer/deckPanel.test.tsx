@@ -55,7 +55,7 @@ describe('DeckPanel (Full DJ Controls)', () => {
     expect(screen.getByRole('button', { name: 'Airhorn' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'FX' }));
-    expect(screen.getByRole('button', { name: /echo/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^echo$/i })).toBeTruthy();
   });
 });
 

@@ -55,10 +55,6 @@ jobs:
         run: |
           $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $tag = "v$ver"
-          $setupSrc = "dist/TubeDeck VDJ Setup $ver.exe"
-          $blockSrc = "dist/TubeDeck VDJ Setup $ver.exe.blockmap"
-          $setupDest = "dist/TubeDeck-VDJ-Setup-$ver.exe"
-          $blockDest = "dist/TubeDeck-VDJ-Setup-$ver.exe.blockmap"
-          Copy-Item $setupSrc $setupDest -Force
-          Copy-Item $blockSrc $blockDest -Force
-          gh release create $tag "dist/latest.yml" $setupDest $blockDest --title "TubeDeck VDJ $tag" --latest --generate-notes
+          $setupDest = "dist/Proyecta-Setup-$ver.exe"
+          $blockDest = "dist/Proyecta-Setup-$ver.exe.blockmap"
+          gh release create $tag "dist/latest.yml" $setupDest $blockDest --title "Proyecta $tag" --latest --generate-notes

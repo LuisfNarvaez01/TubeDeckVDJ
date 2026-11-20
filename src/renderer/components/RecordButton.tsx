@@ -117,7 +117,7 @@ export function RecordButton({
               <span className="block text-[11px] text-muted">{hint}</span>
             </button>
           ))}
-          <p className="px-2.5 pb-1 pt-1.5 text-[10px] text-faint">Se guarda en Música › TubeDeck Grabaciones</p>
+          <p className="px-2.5 pb-1 pt-1.5 text-[10px] text-faint">Se guarda en Música › Proyecta Grabaciones</p>
         </div>
       ) : null}
 
