@@ -56,6 +56,7 @@ describe('name helpers', () => {
   it('shortens seed titles for the reason label', async () => {
     const { shortSongTitle } = await import('../../../src/main/services/RecommendationEngine');
     expect(shortSongTitle('Marc Anthony - Vivir Mi Vida (Official Video)')).toBe('Vivir Mi Vida');
+    expect(shortSongTitle('Marc Anthony | Los Exitos Mas Grandes | Salsa')).toBe('Marc Anthony');
   });
 
   it('treats different uploads of the same song as duplicates', () => {

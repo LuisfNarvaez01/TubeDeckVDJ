@@ -73,6 +73,8 @@ function hasRealVideo(track: YouTubeTrack): boolean {
 
 /** "Marc Anthony - Vivir Mi Vida (Official Video)" → "Vivir Mi Vida". */
 export function shortSongTitle(title: string): string {
+  // "Artist | Song | Channel tags" → keep the first meaningful segment
+  if (title.includes('|')) title = title.split('|')[0].trim() || title;
   let t = title.replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/\s+/g, ' ').trim();
   if (t.includes(' - ')) t = t.split(' - ').slice(1).join(' - ').trim() || t;
   return t.length > 40 ? `${t.slice(0, 39).trimEnd()}…` : t;

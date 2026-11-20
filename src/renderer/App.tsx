@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactElement
+} from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -8,6 +15,8 @@ import {
   Frame,
   Headphones,
   Keyboard,
+  Maximize2,
+  Minimize2,
   Monitor,
   Radio,
   Sliders,
@@ -67,12 +76,14 @@ import {
   type VideoTransitionId
 } from './video/WebGLVideoCompositor';
 
-type BrowserTab = 'search' | 'local' | 'queue' | 'history';
+type BrowserTab = 'search' | 'local' | 'history';
+
+const DOCK_HEIGHT_STORAGE_KEY = 'tubedeck.dockHeight';
+const DOCK_MIN_HEIGHT = 120;
 
 const BROWSER_TABS: Array<{ id: BrowserTab; getLabel: (localCount: number, qCount: number) => string }> = [
   { id: 'search', getLabel: () => 'Buscador YouTube' },
   { id: 'local', getLabel: (localCount) => `Biblioteca Local (${localCount})` },
-  { id: 'queue', getLabel: (_l, qCount) => `Cola (${qCount})` },
   { id: 'history', getLabel: () => 'Historial & Crates' }
 ];
 
@@ -117,6 +128,52 @@ function reportImplicitFeedback(track: YouTubeTrack, audibleSec: number): void {
 
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<BrowserTab>('search');
+  /** Explicit browser-dock height in px; null = cabin keeps its natural height. */
+  const [dockHeight, setDockHeight] = useState<number | null>(() => {
+    try {
+      const raw = window.localStorage.getItem(DOCK_HEIGHT_STORAGE_KEY);
+      const n = raw ? Number(raw) : NaN;
+      return Number.isFinite(n) && n > 0 ? n : null;
+    } catch {
+      return null;
+    }
+  });
+  const dockSectionRef = useRef<HTMLElement | null>(null);
+  const upNextRef = useRef<HTMLElement | null>(null);
+
+  const updateDockHeight = useCallback((next: number | null) => {
+    const clamped =
+      next === null
+        ? null
+        : Math.round(Math.min(window.innerHeight - 180, Math.max(DOCK_MIN_HEIGHT, next)));
+    setDockHeight(clamped);
+    try {
+      if (clamped === null) window.localStorage.removeItem(DOCK_HEIGHT_STORAGE_KEY);
+      else window.localStorage.setItem(DOCK_HEIGHT_STORAGE_KEY, String(clamped));
+    } catch {
+      // storage unavailable: keep the in-memory height only
+    }
+  }, []);
+
+  const handleDockResizeStart = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = dockSectionRef.current?.offsetHeight ?? 280;
+      const target = e.currentTarget;
+      target.setPointerCapture(e.pointerId);
+      const onMove = (ev: PointerEvent) => updateDockHeight(startHeight + (startY - ev.clientY));
+      const onUp = () => {
+        target.removeEventListener('pointermove', onMove);
+        target.removeEventListener('pointerup', onUp);
+        target.removeEventListener('pointercancel', onUp);
+      };
+      target.addEventListener('pointermove', onMove);
+      target.addEventListener('pointerup', onUp);
+      target.addEventListener('pointercancel', onUp);
+    },
+    [updateDockHeight]
+  );
   const [guideOpen, setGuideOpen] = useState(false);
   const [tasteSetupOpen, setTasteSetupOpen] = useState(false);
   const [tasteSetupFirstRun, setTasteSetupFirstRun] = useState(false);
@@ -1426,8 +1483,8 @@ export function App(): ReactElement {
         <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
           <button
             type="button"
-            onClick={() => setActiveTab('queue')}
-            title="Ir a Cola de Reproducción"
+            onClick={() => upNextRef.current?.focus()}
+            title="Ir al panel Siguiente"
             className="flex min-w-0 max-w-md items-center gap-1.5 rounded-md border border-white/[0.06] bg-[#08090C] px-2.5 py-1 text-[11px] hover:border-white/20 cursor-pointer"
           >
             <ArrowRight className="h-3 w-3 shrink-0 text-[#10B981]" />
@@ -1597,6 +1654,10 @@ export function App(): ReactElement {
         </div>
       </header>
 
+      {/* Cabin (decks, video, FX, mixer). Scrolls only when the browser dock is enlarged. */}
+      <div
+        className={`flex min-h-0 flex-col gap-2 overflow-y-auto ${dockHeight === null ? '' : 'flex-1'}`}
+      >
       {/* Top Row: Deck A | Compact Video Master + Stacked Previews | Deck B */}
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(390px,450px)_minmax(0,1fr)] gap-2">
         {renderDeck('A')}
@@ -1753,14 +1814,49 @@ export function App(): ReactElement {
         />
       </div>
 
-      {/* Bottom Row: 4-Tab Workspace with Sliding Pill */}
-      <section className="flex flex-1 min-h-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-[#0F1117] p-2.5">
-        <nav className="relative grid w-fit grid-cols-4 rounded-lg border border-white/[0.06] bg-[#08090C] p-0.5 text-xs">
+      </div>
+
+      {/* Drag handle between cabin and browser dock */}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Redimensionar navegador"
+        aria-valuenow={dockHeight ?? undefined}
+        tabIndex={0}
+        title="Arrastra para cambiar el alto del navegador · doble clic para restablecer"
+        onPointerDown={handleDockResizeStart}
+        onDoubleClick={() => updateDockHeight(null)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            const base = dockHeight ?? dockSectionRef.current?.offsetHeight ?? 280;
+            updateDockHeight(base + (e.key === 'ArrowUp' ? 40 : -40));
+          } else if (e.key === 'Home' || e.key === 'Escape') {
+            updateDockHeight(null);
+          }
+        }}
+        className="group -my-1.5 flex h-2 shrink-0 cursor-row-resize items-center justify-center rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
+      >
+        <span className="h-[3px] w-12 rounded-full bg-white/[0.08] transition-colors duration-150 group-hover:bg-white/30 group-focus-visible:bg-white/30" />
+      </div>
+
+      {/* Bottom Row: Browser tabs + persistent "Siguiente" (Up Next) column */}
+      <section
+        ref={dockSectionRef}
+        style={dockHeight === null ? undefined : { height: dockHeight }}
+        className={`flex min-h-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-[#0F1117] p-2.5 ${
+          dockHeight === null ? 'min-h-[220px] flex-1' : 'shrink-0'
+        }`}
+      >
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(300px,340px)] gap-2.5 2xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="flex min-h-0 min-w-0 flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+        <nav className="relative grid w-fit grid-cols-3 rounded-lg border border-white/[0.06] bg-[#08090C] p-0.5 text-xs">
           <span
             aria-hidden="true"
             className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded-md bg-[#1C202B] ring-1 ring-white/[0.12] transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]"
             style={{
-              width: 'calc(25% - 2px)',
+              width: 'calc(33.333% - 2px)',
               transform: `translateX(${activeTabIndex * 100}%)`
             }}
           />
@@ -1777,6 +1873,19 @@ export function App(): ReactElement {
             </button>
           ))}
         </nav>
+        <button
+          type="button"
+          onClick={() =>
+            updateDockHeight(dockHeight === null ? Math.round(window.innerHeight * 0.58) : null)
+          }
+          aria-pressed={dockHeight !== null}
+          className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-[#08090C] px-2.5 py-1 text-[11px] font-medium text-[#94A3B8] transition-colors duration-150 hover:border-white/20 hover:text-[#F8FAFC] cursor-pointer"
+          title={dockHeight === null ? 'Dar más alto al navegador' : 'Volver a la cabina completa'}
+        >
+          {dockHeight === null ? <Maximize2 className="h-3.5 w-3.5" /> : <Minimize2 className="h-3.5 w-3.5" />}
+          {dockHeight === null ? 'Ampliar navegador' : 'Cabina completa'}
+        </button>
+        </div>
 
         <div className="flex-1 min-h-0">
           {activeTab === 'search' ? (
@@ -1827,7 +1936,53 @@ export function App(): ReactElement {
             />
           ) : null}
 
-          {activeTab === 'queue' ? (
+          {activeTab === 'history' ? (
+            <HistoryAndCratesTab
+              activeSessionId={activeSessionId}
+              onNewSession={async (title) => {
+                const res = await window.tubedeckAPI?.startSession(title);
+                if (res?.success) {
+                  activeSessionIdRef.current = res.data.id;
+                  setActiveSessionId(res.data.id);
+                }
+              }}
+              onEndActiveSession={async () => {
+                if (!activeSessionIdRef.current) return;
+                await window.tubedeckAPI?.endSession(activeSessionIdRef.current);
+                activeSessionIdRef.current = null;
+                setActiveSessionId(null);
+              }}
+              onAddTracksToQueue={(tracks) => {
+                queueEngineRef.current.enqueueMany(tracks, 'user');
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+                upNextRef.current?.focus();
+              }}
+              onLoadToDeck={handleLoadToDeck}
+              crates={crates}
+              onRefreshCrates={async () => {
+                const res = await window.tubedeckAPI?.listCrates();
+                if (res?.success) setCrates(res.data);
+              }}
+              onStartBatchDownload={async (sessionId, format) => {
+                const res = await window.tubedeckAPI?.startBatchDownload(sessionId, format);
+                if (res?.success && res.data) {
+                  libraryStore.setBatchDownload(res.data);
+                }
+              }}
+              onCancelBatchDownload={async () => {
+                await window.tubedeckAPI?.cancelBatchDownload();
+              }}
+            />
+          ) : null}
+        </div>
+        </div>
+
+        <aside
+          ref={upNextRef}
+          tabIndex={-1}
+          aria-label="Siguiente"
+          className="flex min-h-0 min-w-0 flex-col rounded-lg focus:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
+        >
             <QueueTab
               onLoadFromQueue={async (deck, queueId) => {
                 const item = queueEngineRef.current.dequeueById(queueId);
@@ -1921,46 +2076,7 @@ export function App(): ReactElement {
                 }
               }}
             />
-          ) : null}
-
-          {activeTab === 'history' ? (
-            <HistoryAndCratesTab
-              activeSessionId={activeSessionId}
-              onNewSession={async (title) => {
-                const res = await window.tubedeckAPI?.startSession(title);
-                if (res?.success) {
-                  activeSessionIdRef.current = res.data.id;
-                  setActiveSessionId(res.data.id);
-                }
-              }}
-              onEndActiveSession={async () => {
-                if (!activeSessionIdRef.current) return;
-                await window.tubedeckAPI?.endSession(activeSessionIdRef.current);
-                activeSessionIdRef.current = null;
-                setActiveSessionId(null);
-              }}
-              onAddTracksToQueue={(tracks) => {
-                queueEngineRef.current.enqueueMany(tracks, 'user');
-                libraryStore.setQueue(queueEngineRef.current.getQueue());
-                setActiveTab('queue');
-              }}
-              onLoadToDeck={handleLoadToDeck}
-              crates={crates}
-              onRefreshCrates={async () => {
-                const res = await window.tubedeckAPI?.listCrates();
-                if (res?.success) setCrates(res.data);
-              }}
-              onStartBatchDownload={async (sessionId, format) => {
-                const res = await window.tubedeckAPI?.startBatchDownload(sessionId, format);
-                if (res?.success && res.data) {
-                  libraryStore.setBatchDownload(res.data);
-                }
-              }}
-              onCancelBatchDownload={async () => {
-                await window.tubedeckAPI?.cancelBatchDownload();
-              }}
-            />
-          ) : null}
+        </aside>
         </div>
       </section>
 

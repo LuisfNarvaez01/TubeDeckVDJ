@@ -12,7 +12,7 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 - **Frontend:** React `19.3.1`, TypeScript, Tailwind CSS v4 (`@tailwindcss/vite`), Zustand `5.1.0`, `lucide-react` (`1.76.0`).
 - **Audio y Video:** Web Audio API (`AudioDspEngine`, `AudioOutputRouter`), reproducción dual HTMLMediaElement (`DualDeckMediaSync`), WebGL2 / GLSL (`WebGLVideoCompositor` + `transitions.glsl.ts` + `effects.glsl.ts`), Canvas 2D (`OverlayCompositor`), WebRTC loopback (`outputRtcBridge`).
 - **Proceso Main / Persistencia:** `youtubei.js` `18.3.0`, binario `yt-dlp.exe` en `resources/bin/` (empaquetado en `extraResources` → `bin/`), `sql.js` `1.17.0` (SQLite WASM sin compilación nativa C++, `sql-wasm.wasm` en `extraResources`), `zod` `4.6.7`.
-- **Testing:** Vitest `5.1.1` (26 archivos, 42 tests unitarios/componentes) y Playwright `1.65.1` (`tests/e2e/appFlow.spec.ts` para binario compilado y ejecutable empaquetado).
+- **Testing:** Vitest `5.1.1` (27 archivos, 55 tests unitarios/componentes) y Playwright `1.65.1` (`tests/e2e/appFlow.spec.ts` para binario compilado y ejecutable empaquetado).
 
 ## 3. Arquitectura y Mapa de Archivos (`src/`)
 
@@ -53,13 +53,17 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 - `src/renderer/controllers/`: `HotkeyManager.ts` (atajos de teclado) y `MidiLearnEngine.ts` (Web MIDI API).
 - `src/renderer/store/`: Stores Zustand (`useDeckStore.ts`, `useMixerStore.ts`, `useLibraryStore.ts`, `useSettingsStore.ts`).
 - `src/renderer/components/`:
-  - Principales: `DeckPanel.tsx`, `MixerCenter.tsx`, `VideoPreviewBar.tsx`, `SearchBrowserTab.tsx`, `LocalLibraryTab.tsx`, `QueueTab.tsx`, `HistoryAndCratesTab.tsx`, `OverlayControls.tsx`, `SettingsTab.tsx`, `InteractiveGuideModal.tsx`, `OutputWindowView.tsx`.
+  - Principales: `DeckPanel.tsx` (incluye 👍/👎 de la pista cargada), `MixerCenter.tsx`, `VideoPreviewBar.tsx`, `SearchBrowserTab.tsx`, `LocalLibraryTab.tsx`, `QueueTab.tsx`, `HistoryAndCratesTab.tsx`, `OverlayControls.tsx`, `SettingsTab.tsx`, `InteractiveGuideModal.tsx`, `TasteSetupModal.tsx`, `OutputWindowView.tsx`.
+  - Dock inferior (estilo página de video de YouTube): izquierda 3 pestañas (`SearchBrowserTab`, `LocalLibraryTab`, `HistoryAndCratesTab`); derecha columna fija **Siguiente** (`QueueTab.tsx` dentro de `<aside aria-label="Siguiente">`, 300–380 px) con Automix/Radio, opciones plegables (`Opciones de cola`), motivo de cada sugerencia de la radio y 👍/👎/bloquear canal. `SearchBrowserTab` muestra tarjetas 16:9 (título 2 líneas, canal, vistas · fecha; A/B/CUE sobre la miniatura al hover/focus) o lista compacta (`tubedeck.searchViewMode` en localStorage) y cae a lista automáticamente si el área mide < 250 px.
+  - Divisor cabina/dock (`role="separator"`: arrastre, flechas, doble clic restablece) y botón **Ampliar navegador / Cabina completa**; alto en `tubedeck.dockHeight` (mín. 120 px). Sin alto explícito el dock tiene mín. 220 px y la cabina hace scroll interno si no cabe.
+  - `TasteSetupModal.tsx` ("Ajustar mi radio"): hasta 10 canciones de referencia (solo canciones de 1–10 min, sin mezclas), resumen de lo aprendido, desbloquear canales, reiniciar. Se abre en el primer arranque (setting `tasteSetupDismissed`) y desde Siguiente → Opciones.
+  - Señales implícitas en `App.tsx` (`reportImplicitFeedback`): sugerencia de radio audible 3–30 s y reemplazada = `skip`; ≥ 60 % escuchada = `complete`.
   - Controles `src/renderer/components/ui/`: `JogWheel.tsx`, `LedVuMeter.tsx`, `RgbWaveformStrip.tsx`, `RotaryKnob.tsx`.
 
 ## 4. Reglas de Diseño Visual (UI)
 - **Esquema Obsidian / Hardware:** Fondo base `#08090C`, paneles `#0F1117`, controles `#151821`/`#1C202B` con divisores hairline `border-white/[0.06]`, acentos Deck A `#0EA5E9`, Deck B `#F59E0B`, En vivo `#10B981` (sin violetas/morados).
 - **Cero emojis:** Prohibido usar emojis Unicode en la interfaz; utilizar únicamente íconos SVG de `lucide-react` y caracteres Unicode simples de dirección.
-- **Disposición actual (`v2.2.0`):** Barra superior con selector global de calidad, píldora **Siguiente**, estado P2, toggle **KEYS** y botones para **Marcos** (drawer), **Guía** (modal) y **Ajustes** (drawer). Fila central de 3 columnas simétricas (`DeckFxSamplerModule A` | `MixerCenter` | `DeckFxSamplerModule B`). El área inferior conserva 4 pestañas (`Buscador YouTube`, `Biblioteca Local`, `Cola`, `Historial & Crates`).
+- **Disposición actual (`v2.2.0`):** Barra superior con selector global de calidad, píldora **Siguiente**, estado P2, toggle **KEYS** y botones para **Marcos** (drawer), **Guía** (modal) y **Ajustes** (drawer). Fila central de 3 columnas simétricas (`DeckFxSamplerModule A` | `MixerCenter` | `DeckFxSamplerModule B`). Dock inferior: 3 pestañas (`Buscador YouTube`, `Biblioteca Local`, `Historial & Crates`) + columna fija `Siguiente`, con divisor arrastrable.
 
 ## 5. Comandos Clave (PowerShell en Windows)
 > **Nota:** En Windows PowerShell 5.1 no usar `&&`; separar comandos con `;` y comprobar `$LASTEXITCODE`.
@@ -74,7 +78,7 @@ npm run typecheck
 # Compilación de producción (out/main, out/preload, out/renderer)
 npm run build
 
-# Pruebas unitarias (26 archivos / 42 tests)
+# Pruebas unitarias (27 archivos / 55 tests)
 npx vitest run
 
 # Pruebas E2E contra app compilada (out/main/index.js)
