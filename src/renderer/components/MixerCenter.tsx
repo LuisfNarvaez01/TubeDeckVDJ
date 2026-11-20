@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import { ArrowLeftRight, Link2, Sparkles } from 'lucide-react';
 import type { DeckId } from '../../shared/types';
 import type { CrossfaderCurve, EqBand } from '../audio/AudioDspEngine';
 import { useMixerStore } from '../store/useMixerStore';
@@ -16,6 +17,10 @@ interface MixerCenterProps {
   onCueMixChange: (blend: number) => void;
   onCueGainChange: (level: number) => void;
   getVuLevel?: (target: DeckId | 'MASTER') => number;
+  onAutoMixSwitch?: () => void;
+  onToggleAutoGain?: (enabled: boolean) => void;
+  videoLinked?: boolean;
+  onToggleVideoLinked?: (linked: boolean) => void;
 }
 
 const BANDS: Array<{ key: EqBand; label: string }> = [
@@ -34,9 +39,14 @@ export function MixerCenter({
   onMasterGainChange,
   onCueMixChange,
   onCueGainChange,
-  getVuLevel = () => 0
+  getVuLevel = () => 0,
+  onAutoMixSwitch,
+  onToggleAutoGain,
+  videoLinked = true,
+  onToggleVideoLinked
 }: MixerCenterProps): ReactElement {
   const mixer = useMixerStore();
+  const nextAutoTarget: DeckId = mixer.crossfader <= 0.5 ? 'B' : 'A';
 
   const renderChannel = (deck: DeckId) => {
     const ch = mixer.channels[deck];
@@ -167,7 +177,60 @@ export function MixerCenter({
             />
           </div>
 
-          <div className="flex w-full items-center gap-2 pt-1">
+          <div className="flex w-full items-center gap-1.5">
+            {onAutoMixSwitch ? (
+              <button
+                type="button"
+                onClick={onAutoMixSwitch}
+                aria-label="Auto Mix A B"
+                className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-bold cursor-pointer ${
+                  mixer.autoFadeActive
+                    ? 'border-[#10B981] bg-[#10B981]/25 text-[#6EE7B7]'
+                    : 'border-[#00D4FF]/50 bg-[#00D4FF]/15 text-[#00D4FF] hover:bg-[#00D4FF]/25'
+                }`}
+                title="Mezcla automática suave de audio y video entre Deck A y Deck B"
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+                {mixer.autoFadeActive
+                  ? `FADE ➔ ${mixer.autoFadeTarget ?? nextAutoTarget}`
+                  : `AUTO MIX ➔ ${nextAutoTarget}`}
+              </button>
+            ) : null}
+
+            {onToggleVideoLinked ? (
+              <button
+                type="button"
+                onClick={() => onToggleVideoLinked(!videoLinked)}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-semibold cursor-pointer ${
+                  videoLinked
+                    ? 'border-[#10B981]/50 bg-[#10B981]/15 text-[#6EE7B7]'
+                    : 'border-[#1F2937] bg-[#0F141D] text-[#94A3B8]'
+                }`}
+                title="Enlazar crossfader de audio con transición de video"
+              >
+                <Link2 className="h-3 w-3" />
+                A+V
+              </button>
+            ) : null}
+
+            {onToggleAutoGain ? (
+              <button
+                type="button"
+                onClick={() => onToggleAutoGain(!mixer.autoGainEnabled)}
+                className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-semibold cursor-pointer ${
+                  mixer.autoGainEnabled
+                    ? 'border-[#8B5CF6]/50 bg-[#8B5CF6]/20 text-[#DDD6FE]'
+                    : 'border-[#1F2937] bg-[#0F141D] text-[#94A3B8]'
+                }`}
+                title="Nivelación automática de volumen entre canciones (Auto-Gain)"
+              >
+                <Sparkles className="h-3 w-3" />
+                AutoGain
+              </button>
+            ) : null}
+          </div>
+
+          <div className="flex w-full items-center gap-2 pt-0.5">
             <span className="text-[11px] font-bold text-[#00D4FF]">A</span>
             <input
               type="range"

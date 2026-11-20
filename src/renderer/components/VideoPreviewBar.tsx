@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import { useCallback, type ReactElement } from 'react';
 import { Monitor, ArrowLeftRight, Sparkles } from 'lucide-react';
 import type { DeckId, DisplayInfo } from '../../shared/types';
 import type { VideoCrossfaderMode, VideoTransitionId } from '../video/WebGLVideoCompositor';
@@ -67,16 +67,25 @@ export function VideoPreviewBar({
   onSelectDisplay,
   onToggleOutputWindow
 }: VideoPreviewBarProps): ReactElement {
+  const refA = useCallback(
+    (el: HTMLDivElement | null) => attachPreviewContainer('A', el),
+    [attachPreviewContainer]
+  );
+  const refB = useCallback(
+    (el: HTMLDivElement | null) => attachPreviewContainer('B', el),
+    [attachPreviewContainer]
+  );
+
   return (
     <section
-      className="flex flex-col gap-2 rounded-xl border border-[#1F2735] bg-[#131822] p-2.5"
+      className="flex flex-col gap-2 rounded-xl border border-[#1F2937] bg-[#0F141D] p-2.5 shadow-lg"
       aria-label="Cabina de Video Master"
     >
       <div className="grid grid-cols-[120px_1fr_120px] items-center gap-2">
         <div className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold tracking-wider text-[#00D4FF]">PREVIEW A</span>
           <div
-            ref={(el) => attachPreviewContainer('A', el)}
+            ref={refA}
             className="aspect-video w-full overflow-hidden rounded border border-[#00D4FF]/40 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
           />
         </div>
@@ -100,7 +109,7 @@ export function VideoPreviewBar({
         <div className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold tracking-wider text-[#FF8A00]">PREVIEW B</span>
           <div
-            ref={(el) => attachPreviewContainer('B', el)}
+            ref={refB}
             className="aspect-video w-full overflow-hidden rounded border border-[#FF8A00]/40 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
           />
         </div>

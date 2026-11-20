@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { Disc3, Radio, Sparkles, Monitor, CloudDownload } from 'lucide-react';
 import type { Crate, DeckId, MidiMapping, YouTubeTrack } from '../shared/types';
-import { AudioDspEngine, type CrossfaderCurve, type EqBand } from './audio/AudioDspEngine';
+import {
+  AudioDspEngine,
+  type AudioFxId,
+  type CrossfaderCurve,
+  type EqBand,
+  type SamplerPadId
+} from './audio/AudioDspEngine';
 import { AudioOutputRouter } from './audio/AudioOutputRouter';
 import { DualDeckMediaSync } from './audio/DualDeckMediaSync';
 import { DeckPanel } from './components/DeckPanel';
@@ -10,12 +17,13 @@ import { OverlayControls } from './components/OverlayControls';
 import { QueueTab } from './components/QueueTab';
 import { SearchBrowserTab } from './components/SearchBrowserTab';
 import { SettingsTab } from './components/SettingsTab';
+import { type RgbWaveSample } from './components/ui/RgbWaveformStrip';
 import { VideoPreviewBar } from './components/VideoPreviewBar';
 import { HotkeyManager, type HotkeyAction } from './controllers/HotkeyManager';
 import { MidiLearnEngine, type MidiLearnMode } from './controllers/MidiLearnEngine';
 import { BpmAndWaveformEngine } from './dj/BpmAndWaveformEngine';
 import { CueLoopTempoController } from './dj/CueLoopTempoController';
-import { QueueAndAutomixEngine } from './dj/QueueAndAutomixEngine';
+import { type AutomixFadeType, QueueAndAutomixEngine } from './dj/QueueAndAutomixEngine';
 import { useDeckStore } from './store/useDeckStore';
 import { useLibraryStore } from './store/useLibraryStore';
 import { useMixerStore } from './store/useMixerStore';
@@ -29,7 +37,19 @@ import {
   type VideoTransitionId
 } from './video/WebGLVideoCompositor';
 
-type BrowserTab = 'search' | 'queue' | 'history' | 'settings';
+type BrowserTab = 'search' | 'queue' | 'history' | 'overlays' | 'settings';
+
+interface CrossfadeAnimationState {
+  active: boolean;
+  startMs: number;
+  durationMs: number;
+  fromPos: number;
+  toPos: number;
+  fromDeck: DeckId;
+  toDeck: DeckId;
+  fadeType: AutomixFadeType;
+  pauseOutgoingOnComplete: boolean;
+}
 
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<BrowserTab>('search');
@@ -54,6 +74,9 @@ export function App(): ReactElement {
     B: new BpmAndWaveformEngine()
   });
   const energySamplesRef = useRef<Record<DeckId, number[]>>({ A: [], B: [] });
+  const liveRgbRef = useRef<Record<DeckId, RgbWaveSample[]>>({ A: [], B: [] });
+  const autoGainEmaRef = useRef<Record<DeckId, number>>({ A: 0.42, B: 0.42 });
+  const brakeTimersRef = useRef<Record<DeckId, number | null>>({ A: null, B: null });
   const queueEngineRef = useRef(new QueueAndAutomixEngine());
 
   const masterCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -63,7 +86,8 @@ export function App(): ReactElement {
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
   const webcamStreamRef = useRef<MediaStream | null>(null);
 
-  const autoAnimRef = useRef<{
+  const crossfadeAnimRef = useRef<CrossfadeAnimationState | null>(null);
+  const videoAutoAnimRef = useRef<{
     active: boolean;
     startMs: number;
     durationMs: number;
@@ -119,12 +143,18 @@ export function App(): ReactElement {
         if (info.cueFallback) parts.push('Audífonos');
         useSettingsStore
           .getState()
-          .setAudioNotice(`Dispositivo desconectado (${parts.join(' / ')}): revertido a salida predeterminada.`);
+          .setAudioNotice(
+            `Dispositivo desconectado (${parts.join(' / ')}): revertido a salida predeterminada.`
+          );
       });
     }
 
     if (!cueCtrlsRef.current) {
-      const persistMeta = (videoId: string, hotCues: ReturnType<CueLoopTempoController['getHotCues']>, loop: ReturnType<CueLoopTempoController['getLoop']>) => {
+      const persistMeta = (
+        videoId: string,
+        hotCues: ReturnType<CueLoopTempoController['getHotCues']>,
+        loop: ReturnType<CueLoopTempoController['getLoop']>
+      ) => {
         void window.tubedeckAPI?.upsertTrackMeta({ videoId, hotCues, loop });
       };
       cueCtrlsRef.current = {
@@ -159,11 +189,61 @@ export function App(): ReactElement {
     }
   }, []);
 
-  // Initialize displays, yt-dlp status, active mix session, crates, MIDI, WebGL compositor & WebRTC bridge
+  const cancelAutoCrossfade = useCallback(() => {
+    if (crossfadeAnimRef.current?.active) {
+      const fromDeck = crossfadeAnimRef.current.fromDeck;
+      decksSyncRef.current?.[fromDeck].setTemporaryBend(1);
+      crossfadeAnimRef.current = null;
+      useMixerStore.getState().setAutoFadeState(false, null);
+    }
+  }, []);
+
+  const startUnifiedCrossfade = useCallback(
+    async (
+      toDeck: DeckId,
+      durationSec: number,
+      fadeType: AutomixFadeType = 'smart-crossfade',
+      pauseOutgoingOnComplete = true
+    ) => {
+      const fromDeck: DeckId = toDeck === 'A' ? 'B' : 'A';
+      const syncs = decksSyncRef.current;
+      const toTrack = useDeckStore.getState().decks[toDeck].track;
+
+      if (syncs && toTrack && syncs[toDeck].isPaused()) {
+        try {
+          await syncs[toDeck].play();
+          setDeckPatch(toDeck, { playing: true });
+        } catch {
+          // ignore if stream is still buffering
+        }
+      }
+
+      const curPos = useMixerStore.getState().crossfader;
+      const toPos = toDeck === 'B' ? 1 : 0;
+      const durMs = fadeType === 'cut' ? 120 : Math.max(250, durationSec * 1000);
+
+      useMixerStore.getState().setAutoFadeState(true, toDeck);
+      crossfadeAnimRef.current = {
+        active: true,
+        startMs: performance.now(),
+        durationMs: durMs,
+        fromPos: curPos,
+        toPos,
+        fromDeck,
+        toDeck,
+        fadeType,
+        pauseOutgoingOnComplete
+      };
+    },
+    [setDeckPatch]
+  );
+
+  // Initialize displays, yt-dlp, updater, mix session, crates, MIDI, WebGL compositor & WebRTC bridge
   useEffect(() => {
     const api = window.tubedeckAPI;
     let unsubDisplays = () => {};
     let unsubClosed = () => {};
+    let unsubUpdater = () => {};
     let rtcHandle: ReturnType<typeof startOutputRtcSender> | null = null;
 
     if (api) {
@@ -192,11 +272,17 @@ export function App(): ReactElement {
       void api.getYtDlpStatus().then((res) => {
         if (res.success) useSettingsStore.getState().setYtDlpStatus(res.data);
       });
+      void api.getUpdateStatus().then((res) => {
+        if (res.success && res.data) useSettingsStore.getState().setUpdaterStatus(res.data);
+      });
       unsubDisplays = api.onDisplaysChanged((list) => {
         useSettingsStore.getState().setDisplays(list);
       });
       unsubClosed = api.onOutputClosed(() => {
         useSettingsStore.getState().setOutputOpen(false);
+      });
+      unsubUpdater = api.onUpdateStatus((status) => {
+        useSettingsStore.getState().setUpdaterStatus(status);
       });
     }
 
@@ -218,6 +304,7 @@ export function App(): ReactElement {
     return () => {
       unsubDisplays();
       unsubClosed();
+      unsubUpdater();
       rtcHandle?.dispose();
       compositorRef.current?.dispose();
       compositorRef.current = null;
@@ -226,6 +313,11 @@ export function App(): ReactElement {
 
   const loadTrackOntoDeck = useCallback(
     async (deck: DeckId, track: YouTubeTrack) => {
+      liveRgbRef.current[deck] = [];
+      autoGainEmaRef.current[deck] = 0.42;
+      queueEngineRef.current.markDeckChanged(deck);
+      queueEngineRef.current.recordPlayed(track.videoId);
+
       setDeckPatch(deck, {
         track,
         loading: true,
@@ -235,10 +327,14 @@ export function App(): ReactElement {
         hotCues: [],
         loop: null,
         bpm: null,
-        waveformPeaks: null
+        waveformPeaks: null,
+        mainCueSec: 0,
+        autoGainDb: 0
       });
 
-      const { decks, cueCtrls } = await ensureAudioInitialized();
+      const { dsp, decks, cueCtrls } = await ensureAudioInitialized();
+      dsp.setDeckAutoGain(deck, 1);
+
       const [streamRes, metaRes] = await Promise.all([
         window.tubedeckAPI.resolveStream(track.videoId),
         window.tubedeckAPI.getTrackMeta(track.videoId)
@@ -265,17 +361,19 @@ export function App(): ReactElement {
         hotCues: cues,
         loop,
         bpm: savedMeta?.bpm ?? null,
-        waveformPeaks: savedMeta?.waveformPeaks ?? null
+        waveformPeaks: savedMeta?.waveformPeaks ?? null,
+        mainCueSec: cueCtrls[deck].getMainCueSec()
       });
     },
     [ensureAudioInitialized, setDeckPatch]
   );
 
-  // Main 60fps loop: video compositor, overlay canvas, drift sync, loop boundaries, BPM energy sampling & Automix tick
+  // Main 60fps engine: unified Audio+Video fade, live RGB waveforms, Auto-Gain, Automix + Auto-Radio, WebGL master
   useEffect(() => {
     let rafId = 0;
     let lastUiUpdate = 0;
     let lastEnergySample = 0;
+    let lastWaveSample = 0;
     let lastAutomixTick = 0;
 
     const tick = (now: number) => {
@@ -286,19 +384,58 @@ export function App(): ReactElement {
       const stMixer = useMixerStore.getState();
       const stDecks = useDeckStore.getState().decks;
 
-      // Auto-timed video transition step
-      let effectiveVideoMix = stSettings.videoMode === 'linked' ? stMixer.crossfader : stSettings.videoMix;
-      if (autoAnimRef.current?.active && compositorRef.current) {
-        const anim = autoAnimRef.current;
-        const progress = Math.min(1, (now - anim.startMs) / anim.durationMs);
-        effectiveVideoMix = compositorRef.current.stepAutoTransition(progress, anim.fromSide);
+      // 1. Unified smooth Audio + Video crossfade animation
+      let effectiveVideoMix =
+        stSettings.videoMode === 'linked' ? stMixer.crossfader : stSettings.videoMix;
+
+      const cAnim = crossfadeAnimRef.current;
+      if (cAnim?.active) {
+        const rawP = Math.min(1, (now - cAnim.startMs) / cAnim.durationMs);
+        let eased = rawP;
+        if (cAnim.fadeType === 'smart-crossfade') {
+          eased = rawP * rawP * (3 - 2 * rawP);
+        } else if (cAnim.fadeType === 'cut') {
+          eased = rawP >= 0.99 ? 1 : 0;
+        } else if (cAnim.fadeType === 'backspin') {
+          eased = rawP * rawP * (3 - 2 * rawP);
+          syncs?.[cAnim.fromDeck].setTemporaryBend(Math.max(0.5, 1 - rawP * 0.5));
+        }
+
+        const pos = Math.min(
+          1,
+          Math.max(0, cAnim.fromPos + (cAnim.toPos - cAnim.fromPos) * eased)
+        );
+        dsp?.setCrossfader(pos, stMixer.crossfaderCurve);
+        if (Math.abs(pos - stMixer.crossfader) > 0.004 || rawP >= 1) {
+          useMixerStore.getState().setCrossfader(pos);
+        }
+        if (stSettings.videoMode === 'linked') {
+          effectiveVideoMix = pos;
+        } else {
+          effectiveVideoMix = pos;
+          useSettingsStore.getState().setVideoMix(pos);
+        }
+
+        if (rawP >= 1) {
+          syncs?.[cAnim.fromDeck].setTemporaryBend(1);
+          if (cAnim.pauseOutgoingOnComplete && syncs) {
+            syncs[cAnim.fromDeck].pause();
+            setDeckPatch(cAnim.fromDeck, { playing: false });
+          }
+          crossfadeAnimRef.current = null;
+          useMixerStore.getState().setAutoFadeState(false, null);
+        }
+      } else if (videoAutoAnimRef.current?.active && compositorRef.current) {
+        const vAnim = videoAutoAnimRef.current;
+        const progress = Math.min(1, (now - vAnim.startMs) / vAnim.durationMs);
+        effectiveVideoMix = compositorRef.current.stepAutoTransition(progress, vAnim.fromSide);
         useSettingsStore.getState().setVideoMix(effectiveVideoMix);
         if (progress >= 1) {
-          autoAnimRef.current.active = false;
+          videoAutoAnimRef.current.active = false;
         }
       }
 
-      // Track OSD trigger on dominant deck switch
+      // 2. Track OSD trigger on dominant deck switch
       const nextDom: DeckId = effectiveVideoMix < 0.5 ? 'A' : 'B';
       if (nextDom !== activeDominantDeckRef.current) {
         activeDominantDeckRef.current = nextDom;
@@ -317,7 +454,35 @@ export function App(): ReactElement {
           }
         });
 
-        // Energy history sample at 25Hz for BPM detection
+        // 3. Live RGB waveform buffer & Auto-Gain RMS normalizer (~22Hz)
+        if (dsp && now - lastWaveSample >= 45) {
+          lastWaveSample = now;
+          (['A', 'B'] as DeckId[]).forEach((id) => {
+            if (!syncs[id].isPaused()) {
+              const bands = dsp.readDeckFrequencyBands(id);
+              const arr = liveRgbRef.current[id];
+              arr.push(bands);
+              if (arr.length > 140) arr.shift();
+
+              if (stMixer.autoGainEnabled) {
+                const vu = dsp.readVuLevel(id);
+                if (vu > 0.03) {
+                  const ema = autoGainEmaRef.current[id] * 0.94 + vu * 0.06;
+                  autoGainEmaRef.current[id] = ema;
+                  const targetGain = Math.min(1.65, Math.max(0.65, 0.42 / Math.max(0.18, ema)));
+                  dsp.setDeckAutoGain(id, targetGain);
+                  const db = Number((20 * Math.log10(targetGain)).toFixed(1));
+                  const prevDb = useDeckStore.getState().decks[id].autoGainDb;
+                  if (Math.abs(db - prevDb) >= 0.4) {
+                    setDeckPatch(id, { autoGainDb: db });
+                  }
+                }
+              }
+            }
+          });
+        }
+
+        // 4. Energy history sample at 25Hz for automatic BPM detection
         if (dsp && now - lastEnergySample >= 40) {
           lastEnergySample = now;
           (['A', 'B'] as DeckId[]).forEach((id) => {
@@ -339,7 +504,7 @@ export function App(): ReactElement {
           });
         }
 
-        // UI clock & playhead updates at 10Hz
+        // 5. UI playhead & session logging at 10Hz
         if (now - lastUiUpdate >= 100) {
           const dtMs = lastUiUpdate === 0 ? 100 : now - lastUiUpdate;
           lastUiUpdate = now;
@@ -357,7 +522,6 @@ export function App(): ReactElement {
               setDeckPatch(id, { currentTimeSec, durationSec, playing });
             }
 
-            // Track auto-logging if audible on Master >= 10s
             const chFader = stMixer.channels[id].fader;
             const crossGain = id === 'A' ? 1 - stMixer.crossfader : stMixer.crossfader;
             if (playing && chFader > 0.05 && crossGain > 0.1 && prev.track) {
@@ -388,51 +552,67 @@ export function App(): ReactElement {
           });
         }
 
-        // Automix tick every 250ms
+        // 6. Automix + YouTube Auto-Radio tick every 250ms
         if (now - lastAutomixTick >= 250) {
           lastAutomixTick = now;
-          const activeDeck = stMixer.crossfader <= 0.5 ? 'A' : 'B';
+          const isTransitioning = Boolean(crossfadeAnimRef.current?.active);
+          const activeDeck: DeckId = isTransitioning
+            ? crossfadeAnimRef.current!.toDeck
+            : stMixer.crossfader <= 0.5
+              ? 'A'
+              : 'B';
+          const otherDeck: DeckId = activeDeck === 'A' ? 'B' : 'A';
           const deckState = useDeckStore.getState().decks[activeDeck];
-          const remainingSec = Math.max(0, deckState.durationSec - deckState.currentTimeSec);
+          const otherState = useDeckStore.getState().decks[otherDeck];
+          const isEnded = syncs[activeDeck].isEnded();
+          const remainingSec = isEnded
+            ? 0
+            : Math.max(0, deckState.durationSec - deckState.currentTimeSec);
           const lib = useLibraryStore.getState();
+
           if (lib.automixEnabled && deckState.track && deckState.durationSec > 0) {
             void queueEngineRef.current
               .tick(
-                activeDeck,
-                remainingSec,
-                deckState.playing,
+                {
+                  activeDeck,
+                  activeVideoId: deckState.track.videoId,
+                  otherDeckVideoId: otherState.track?.videoId ?? null,
+                  remainingSec,
+                  isActivePlaying: deckState.playing,
+                  isActiveEnded: isEnded,
+                  isTransitioning
+                },
                 {
                   enabled: true,
                   preloadLeadSec: 30,
-                  crossfadeDurationSec: 8,
-                  outroTriggerSec: 8
+                  crossfadeDurationSec: lib.automixFadeDurationSec,
+                  outroTriggerSec: Math.min(lib.automixFadeDurationSec, 12),
+                  autoRadioEnabled: lib.autoRadioEnabled,
+                  fadeType: lib.automixFadeType
                 },
                 {
                   loadDeck: async (targetDeck, track) => {
                     await loadTrackOntoDeck(targetDeck, track);
                     useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue());
                   },
-                  startTransition: async (fromDeck, toDeck, durationSec) => {
-                    const targetSync = decksSyncRef.current?.[toDeck];
-                    if (targetSync) {
-                      await targetSync.play();
-                      setDeckPatch(toDeck, { playing: true });
-                    }
-                    autoAnimRef.current = {
-                      active: true,
-                      startMs: performance.now(),
-                      durationMs: durationSec * 1000,
-                      fromSide: fromDeck
-                    };
-                    const targetCross = toDeck === 'B' ? 1 : 0;
-                    dspRef.current?.setCrossfader(targetCross);
-                    useMixerStore.getState().setCrossfader(targetCross);
+                  startTransition: async (_fromDeck, toDeck, durationSec, fadeType) => {
+                    await startUnifiedCrossfade(toDeck, durationSec, fadeType, true);
                     useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue());
                   },
                   onTrackSkipped: (item, reason) => {
                     useLibraryStore
                       .getState()
                       .setAutomixStatusNote(`Saltado "${item.track.title}": ${reason}`);
+                    useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue());
+                  },
+                  fetchSuggestedTracks: async (seedVideoId, excludeIds) => {
+                    const res = await window.tubedeckAPI?.getRelatedTracks(seedVideoId, excludeIds);
+                    return res?.success ? res.data : [];
+                  },
+                  onRadioQueued: (track) => {
+                    useLibraryStore
+                      .getState()
+                      .setAutomixStatusNote(`Radio YT sugirió "${track.title}"`);
                     useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue());
                   }
                 }
@@ -444,7 +624,7 @@ export function App(): ReactElement {
         }
       }
 
-      // Render Overlay + WebGL Master Compositor at 60fps
+      // 7. WebGL2 Master Video Compositor at 60fps
       if (compositorRef.current) {
         const ovCanvas = overlayCompRef.current.getCanvas();
         const ovCtx = ovCanvas.getContext('2d');
@@ -484,7 +664,7 @@ export function App(): ReactElement {
       decksSyncRef.current?.B.dispose();
       void dspRef.current?.dispose();
     };
-  }, [loadTrackOntoDeck, setDeckPatch]);
+  }, [loadTrackOntoDeck, setDeckPatch, startUnifiedCrossfade]);
 
   const handleLoadToDeck = async (deck: DeckId, track: YouTubeTrack) => {
     try {
@@ -497,48 +677,113 @@ export function App(): ReactElement {
     }
   };
 
-  const handleTogglePlay = useCallback(async (deck: DeckId) => {
-    const { decks } = await ensureAudioInitialized();
-    const sync = decks[deck];
-    if (sync.isPaused()) {
-      await sync.play();
-      setDeckPatch(deck, { playing: true });
-    } else {
-      sync.pause();
-      setDeckPatch(deck, { playing: false });
-    }
-  }, [ensureAudioInitialized, setDeckPatch]);
+  const handleTogglePlay = useCallback(
+    async (deck: DeckId) => {
+      const { decks, cueCtrls } = await ensureAudioInitialized();
+      const sync = decks[deck];
+      if (sync.isPaused()) {
+        cueCtrls[deck].cancelCuePreview();
+        await sync.play();
+        setDeckPatch(deck, { playing: true });
+      } else {
+        sync.pause();
+        setDeckPatch(deck, { playing: false });
+      }
+    },
+    [ensureAudioInitialized, setDeckPatch]
+  );
 
-  const handleSeek = useCallback(async (deck: DeckId, timeSec: number) => {
-    const sync = decksSyncRef.current?.[deck];
-    if (!sync) return;
-    await sync.seek(timeSec);
-    setDeckPatch(deck, { currentTimeSec: timeSec });
-  }, [setDeckPatch]);
+  const handleSeek = useCallback(
+    async (deck: DeckId, timeSec: number) => {
+      const sync = decksSyncRef.current?.[deck];
+      if (!sync) return;
+      await sync.seek(timeSec);
+      setDeckPatch(deck, { currentTimeSec: timeSec });
+    },
+    [setDeckPatch]
+  );
 
-  const handlePitchChange = useCallback(async (deck: DeckId, pitchPercent: number, keyLock: boolean) => {
-    const { cueCtrls } = await ensureAudioInitialized();
-    cueCtrls[deck].setPitchPercent(pitchPercent, keyLock);
-    setDeckPatch(deck, { pitchPercent, keyLock });
-  }, [ensureAudioInitialized, setDeckPatch]);
+  const handlePitchChange = useCallback(
+    async (deck: DeckId, pitchPercent: number, keyLock: boolean) => {
+      const { cueCtrls } = await ensureAudioInitialized();
+      cueCtrls[deck].setPitchPercent(pitchPercent, keyLock);
+      setDeckPatch(deck, { pitchPercent, keyLock });
+    },
+    [ensureAudioInitialized, setDeckPatch]
+  );
+
+  const handleCueDown = useCallback(
+    async (deck: DeckId) => {
+      const { decks, cueCtrls } = await ensureAudioInitialized();
+      const sync = decks[deck];
+      const res = await cueCtrls[deck].handleCueDown(sync.getCurrentTime(), !sync.isPaused());
+      setDeckPatch(deck, {
+        mainCueSec: cueCtrls[deck].getMainCueSec(),
+        currentTimeSec: sync.getCurrentTime(),
+        playing: res.action === 'preview'
+      });
+    },
+    [ensureAudioInitialized, setDeckPatch]
+  );
+
+  const handleCueUp = useCallback(
+    async (deck: DeckId) => {
+      const cueCtrl = cueCtrlsRef.current?.[deck];
+      const sync = decksSyncRef.current?.[deck];
+      if (!cueCtrl || !sync) return;
+      const reverted = await cueCtrl.handleCueUp();
+      if (reverted) {
+        setDeckPatch(deck, { playing: false, currentTimeSec: sync.getCurrentTime() });
+      }
+    },
+    [setDeckPatch]
+  );
+
+  const handleBrake = useCallback(
+    (deck: DeckId) => {
+      const sync = decksSyncRef.current?.[deck];
+      if (!sync || sync.isPaused()) return;
+      if (brakeTimersRef.current[deck]) {
+        window.clearInterval(brakeTimersRef.current[deck]!);
+      }
+      const start = performance.now();
+      const durationMs = 550;
+      const timerId = window.setInterval(() => {
+        const p = Math.min(1, (performance.now() - start) / durationMs);
+        sync.setTemporaryBend(Math.max(0.45, 1 - p * 0.55));
+        if (p >= 1) {
+          window.clearInterval(timerId);
+          brakeTimersRef.current[deck] = null;
+          sync.pause();
+          sync.setTemporaryBend(1);
+          setDeckPatch(deck, { playing: false });
+        }
+      }, 30);
+      brakeTimersRef.current[deck] = timerId;
+    },
+    [setDeckPatch]
+  );
 
   const handleTriggerAutoVideo = useCallback(() => {
     const st = useSettingsStore.getState();
     const curMix = st.videoMode === 'linked' ? useMixerStore.getState().crossfader : st.videoMix;
-    autoAnimRef.current = {
+    const toDeck: DeckId = curMix < 0.5 ? 'B' : 'A';
+    if (st.videoMode === 'linked') {
+      void startUnifiedCrossfade(toDeck, st.autoDurationSec, 'smart-crossfade', false);
+      return;
+    }
+    videoAutoAnimRef.current = {
       active: true,
       startMs: performance.now(),
       durationMs: st.autoDurationSec * 1000,
       fromSide: curMix < 0.5 ? 'A' : 'B'
     };
-    if (st.videoMode === 'linked') {
-      st.setVideoMode('auto-timed');
-    }
-  }, []);
+  }, [startUnifiedCrossfade]);
 
   const handleMidiControl = useCallback(
     (controlKey: string, val01: number) => {
       if (controlKey === 'mixer.crossfader') {
+        cancelAutoCrossfade();
         const curve = useMixerStore.getState().crossfaderCurve;
         dspRef.current?.setCrossfader(val01, curve);
         useMixerStore.getState().setCrossfader(val01);
@@ -566,7 +811,7 @@ export function App(): ReactElement {
         handleTriggerAutoVideo();
       }
     },
-    [handleTogglePlay, handleTriggerAutoVideo]
+    [cancelAutoCrossfade, handleTogglePlay, handleTriggerAutoVideo]
   );
 
   // Global keyboard shortcuts & Web MIDI init
@@ -574,10 +819,15 @@ export function App(): ReactElement {
     const dispatchHotkey = (action: HotkeyAction) => {
       if (action === 'deckA.playPause') void handleTogglePlay('A');
       else if (action === 'deckB.playPause') void handleTogglePlay('B');
-      else if (action === 'deckA.cue') void handleSeek('A', 0);
-      else if (action === 'deckB.cue') void handleSeek('B', 0);
+      else if (action === 'deckA.cue') void handleCueDown('A');
+      else if (action === 'deckB.cue') void handleCueDown('B');
       else if (action === 'video.autoTransition') handleTriggerAutoVideo();
-      else if (action === 'crossfader.left' || action === 'crossfader.right' || action === 'crossfader.center') {
+      else if (
+        action === 'crossfader.left' ||
+        action === 'crossfader.right' ||
+        action === 'crossfader.center'
+      ) {
+        cancelAutoCrossfade();
         const cur = useMixerStore.getState().crossfader;
         const next =
           action === 'crossfader.center'
@@ -615,7 +865,14 @@ export function App(): ReactElement {
       window.removeEventListener('keydown', onKeyDown);
       midiEngineRef.current.dispose();
     };
-  }, [handleMidiControl, handleSeek, handleTogglePlay, handleTriggerAutoVideo, setDeckPatch]);
+  }, [
+    cancelAutoCrossfade,
+    handleCueDown,
+    handleMidiControl,
+    handleTogglePlay,
+    handleTriggerAutoVideo,
+    setDeckPatch
+  ]);
 
   const handleToggleCueMonitor = async (deck: DeckId) => {
     const { dsp } = await ensureAudioInitialized();
@@ -648,74 +905,189 @@ export function App(): ReactElement {
     }
   };
 
+  const renderDeck = (deckId: DeckId) => (
+    <DeckPanel
+      key={deckId}
+      deckId={deckId}
+      liveRgbRef={liveRgbRef}
+      onTogglePlay={handleTogglePlay}
+      onSeek={handleSeek}
+      onToggleCueMonitor={handleToggleCueMonitor}
+      onPitchChange={handlePitchChange}
+      onCueDown={handleCueDown}
+      onCueUp={handleCueUp}
+      onJogNudge={(d, mult) => decksSyncRef.current?.[d].setTemporaryBend(mult)}
+      onJogScrub={(d, deltaSec) => {
+        const sync = decksSyncRef.current?.[d];
+        if (!sync) return;
+        const target = Math.max(0, Math.min(sync.getDuration() || 9999, sync.getCurrentTime() + deltaSec));
+        void handleSeek(d, target);
+      }}
+      onBrake={handleBrake}
+      onHotCueTrigger={async (d, slot) => {
+        const { cueCtrls, decks } = await ensureAudioInitialized();
+        await cueCtrls[d].triggerHotCue(slot, decks[d].getCurrentTime());
+        setDeckPatch(d, { hotCues: cueCtrls[d].getHotCues() });
+      }}
+      onHotCueClear={async (d, slot) => {
+        const { cueCtrls } = await ensureAudioInitialized();
+        cueCtrls[d].clearHotCue(slot);
+        setDeckPatch(d, { hotCues: cueCtrls[d].getHotCues() });
+      }}
+      onAutoLoop={async (d, beats) => {
+        const { cueCtrls, decks } = await ensureAudioInitialized();
+        const bpm = useDeckStore.getState().decks[d].bpm ?? 120;
+        const loop = cueCtrls[d].triggerAutoLoop(beats, decks[d].getCurrentTime(), bpm);
+        setDeckPatch(d, { loop });
+      }}
+      onToggleLoopExit={async (d) => {
+        const { cueCtrls } = await ensureAudioInitialized();
+        cueCtrls[d].toggleLoopExit();
+        setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
+      }}
+      onLoopIn={async (d) => {
+        const { cueCtrls, decks } = await ensureAudioInitialized();
+        cueCtrls[d].setLoopIn(decks[d].getCurrentTime());
+        setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
+      }}
+      onLoopOut={async (d) => {
+        const { cueCtrls, decks } = await ensureAudioInitialized();
+        cueCtrls[d].setLoopOut(decks[d].getCurrentTime());
+        setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
+      }}
+      onBeatJump={async (d, beats) => {
+        const { cueCtrls, decks } = await ensureAudioInitialized();
+        const st = useDeckStore.getState().decks[d];
+        const nextT = await cueCtrls[d].beatJump(
+          beats,
+          decks[d].getCurrentTime(),
+          st.bpm ?? 120,
+          decks[d].getDuration()
+        );
+        setDeckPatch(d, { currentTimeSec: nextT });
+      }}
+      onLoopRollStart={async (d, beats) => {
+        const { cueCtrls, decks } = await ensureAudioInitialized();
+        const bpm = useDeckStore.getState().decks[d].bpm ?? 120;
+        const loop = cueCtrls[d].startLoopRoll(beats, decks[d].getCurrentTime(), bpm);
+        setDeckPatch(d, { loop });
+      }}
+      onLoopRollEnd={async (d) => {
+        const cueCtrl = cueCtrlsRef.current?.[d];
+        if (!cueCtrl) return;
+        const restored = await cueCtrl.endLoopRoll();
+        setDeckPatch(d, { loop: restored });
+      }}
+      onTriggerSample={async (pad: SamplerPadId) => {
+        const { dsp } = await ensureAudioInitialized();
+        dsp.triggerSample(pad, 0.85);
+      }}
+      onDeckFxChange={async (d, fx: AudioFxId, enabled, wet) => {
+        const { dsp } = await ensureAudioInitialized();
+        const st = useDeckStore.getState().decks[d];
+        dsp.setDeckFx(d, fx, enabled, wet, st.bpm);
+        setDeckPatch(d, {
+          audioFx: {
+            ...st.audioFx,
+            [fx]: { enabled, wet }
+          }
+        });
+      }}
+      onTapBpm={(d) => {
+        const tapped = bpmEnginesRef.current[d].recordTap(performance.now());
+        if (tapped) {
+          setDeckPatch(d, { bpm: tapped });
+          const vid = useDeckStore.getState().decks[d].track?.videoId;
+          if (vid) void window.tubedeckAPI?.upsertTrackMeta({ videoId: vid, bpm: tapped });
+        }
+      }}
+      onAdjustBpmHalfDouble={(d, factor) => {
+        const cur = useDeckStore.getState().decks[d].bpm;
+        if (!cur) return;
+        setDeckPatch(d, { bpm: bpmEnginesRef.current[d].adjustHalfDouble(cur, factor) });
+      }}
+      onSync={async (d) => {
+        const other: DeckId = d === 'A' ? 'B' : 'A';
+        const selfSt = useDeckStore.getState().decks[d];
+        const otherSt = useDeckStore.getState().decks[other];
+        if (!selfSt.bpm || !otherSt.bpm) return;
+        const targetBpm = otherSt.bpm * (1 + otherSt.pitchPercent / 100);
+        const rate = bpmEnginesRef.current[d].computeSyncPlaybackRate(selfSt.bpm, targetBpm);
+        const pitchPercent = Number(((rate - 1) * 100).toFixed(1));
+        await handlePitchChange(d, pitchPercent, selfSt.keyLock);
+      }}
+    />
+  );
+
+  const upd = settings.updaterStatus;
+
   return (
-    <div className="flex h-screen w-screen flex-col gap-2.5 bg-[#0B0E14] p-2.5 text-[#F1F5F9]">
+    <div className="flex h-screen w-screen flex-col gap-2 bg-[#07090E] p-2 text-[#F8FAFC]">
       <audio ref={masterSinkAudioRef} className="hidden" />
       <audio ref={cueSinkAudioRef} className="hidden" />
 
+      {/* Top Club Pro Status Bar */}
+      <header className="flex h-8 shrink-0 items-center justify-between rounded-lg border border-[#1F2937] bg-[#0F141D] px-3 text-xs">
+        <div className="flex items-center gap-2.5">
+          <Disc3 className="h-4 w-4 text-[#00D4FF]" />
+          <span className="font-bold tracking-wide text-[#F8FAFC]">TubeDeck VDJ</span>
+          <span className="rounded border border-[#1F2937] bg-[#07090E] px-1.5 py-0.2 font-mono-tabular text-[10px] text-[#94A3B8]">
+            v{upd?.currentVersion ?? '2.0.0'}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 text-[11px]">
+          <span
+            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
+              libraryStore.automixEnabled
+                ? 'bg-[#10B981]/20 text-[#6EE7B7]'
+                : 'bg-[#07090E] text-[#64748B]'
+            }`}
+          >
+            <Sparkles className="h-3 w-3" />
+            Automix {libraryStore.automixEnabled ? 'ON' : 'OFF'}
+          </span>
+
+          <span
+            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
+              libraryStore.autoRadioEnabled
+                ? 'bg-[#8B5CF6]/20 text-[#DDD6FE]'
+                : 'bg-[#07090E] text-[#64748B]'
+            }`}
+          >
+            <Radio className="h-3 w-3" />
+            Radio YT {libraryStore.autoRadioEnabled ? 'ON' : 'OFF'}
+          </span>
+
+          <span
+            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
+              settings.outputOpen
+                ? 'bg-[#EF4444]/20 text-[#FCA5A5]'
+                : 'bg-[#07090E] text-[#64748B]'
+            }`}
+          >
+            <Monitor className="h-3 w-3" />
+            {settings.outputOpen ? 'P2 ON AIR' : 'P2 OFF'}
+          </span>
+
+          {upd?.state === 'available' || upd?.state === 'downloaded' ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab('settings')}
+              className="inline-flex items-center gap-1 rounded border border-[#10B981]/60 bg-[#10B981]/20 px-2 py-0.5 font-semibold text-[#6EE7B7] cursor-pointer"
+            >
+              <CloudDownload className="h-3 w-3" />
+              {upd.state === 'downloaded'
+                ? `Instalar v${upd.availableVersion}`
+                : `Nueva v${upd.availableVersion}`}
+            </button>
+          ) : null}
+        </div>
+      </header>
+
       {/* Top Row: Deck A | Video Master & Previews | Deck B */}
-      <div className="grid grid-cols-[1fr_440px_1fr] gap-2.5">
-        <DeckPanel
-          deckId="A"
-          onTogglePlay={handleTogglePlay}
-          onSeek={handleSeek}
-          onToggleCueMonitor={handleToggleCueMonitor}
-          onPitchChange={handlePitchChange}
-          onHotCueTrigger={async (d, slot) => {
-            const { cueCtrls, decks } = await ensureAudioInitialized();
-            await cueCtrls[d].triggerHotCue(slot, decks[d].getCurrentTime());
-            setDeckPatch(d, { hotCues: cueCtrls[d].getHotCues() });
-          }}
-          onHotCueClear={async (d, slot) => {
-            const { cueCtrls } = await ensureAudioInitialized();
-            cueCtrls[d].clearHotCue(slot);
-            setDeckPatch(d, { hotCues: cueCtrls[d].getHotCues() });
-          }}
-          onAutoLoop={async (d, beats) => {
-            const { cueCtrls, decks } = await ensureAudioInitialized();
-            const bpm = useDeckStore.getState().decks[d].bpm ?? 120;
-            const loop = cueCtrls[d].triggerAutoLoop(beats, decks[d].getCurrentTime(), bpm);
-            setDeckPatch(d, { loop });
-          }}
-          onToggleLoopExit={async (d) => {
-            const { cueCtrls } = await ensureAudioInitialized();
-            cueCtrls[d].toggleLoopExit();
-            setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
-          }}
-          onLoopIn={async (d) => {
-            const { cueCtrls, decks } = await ensureAudioInitialized();
-            cueCtrls[d].setLoopIn(decks[d].getCurrentTime());
-            setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
-          }}
-          onLoopOut={async (d) => {
-            const { cueCtrls, decks } = await ensureAudioInitialized();
-            cueCtrls[d].setLoopOut(decks[d].getCurrentTime());
-            setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
-          }}
-          onTapBpm={(d) => {
-            const tapped = bpmEnginesRef.current[d].recordTap(performance.now());
-            if (tapped) {
-              setDeckPatch(d, { bpm: tapped });
-              const vid = useDeckStore.getState().decks[d].track?.videoId;
-              if (vid) void window.tubedeckAPI?.upsertTrackMeta({ videoId: vid, bpm: tapped });
-            }
-          }}
-          onAdjustBpmHalfDouble={(d, factor) => {
-            const cur = useDeckStore.getState().decks[d].bpm;
-            if (!cur) return;
-            setDeckPatch(d, { bpm: bpmEnginesRef.current[d].adjustHalfDouble(cur, factor) });
-          }}
-          onSync={async (d) => {
-            const other: DeckId = d === 'A' ? 'B' : 'A';
-            const selfSt = useDeckStore.getState().decks[d];
-            const otherSt = useDeckStore.getState().decks[other];
-            if (!selfSt.bpm || !otherSt.bpm) return;
-            const targetBpm = otherSt.bpm * (1 + otherSt.pitchPercent / 100);
-            const rate = bpmEnginesRef.current[d].computeSyncPlaybackRate(selfSt.bpm, targetBpm);
-            const pitchPercent = Number(((rate - 1) * 100).toFixed(1));
-            await handlePitchChange(d, pitchPercent, selfSt.keyLock);
-          }}
-        />
+      <div className="grid grid-cols-[1fr_410px_1fr] gap-2">
+        {renderDeck('A')}
 
         <VideoPreviewBar
           masterCanvasRef={masterCanvasRef}
@@ -731,19 +1103,7 @@ export function App(): ReactElement {
           onVideoMixChange={(m) => settings.setVideoMix(m)}
           onVideoModeChange={(mode: VideoCrossfaderMode) => settings.setVideoMode(mode)}
           onAutoDurationChange={(sec) => settings.setAutoDurationSec(sec)}
-          onTriggerAutoTransition={() => {
-            const curMix =
-              settings.videoMode === 'linked' ? mixerStore.crossfader : settings.videoMix;
-            autoAnimRef.current = {
-              active: true,
-              startMs: performance.now(),
-              durationMs: settings.autoDurationSec * 1000,
-              fromSide: curMix < 0.5 ? 'A' : 'B'
-            };
-            if (settings.videoMode === 'linked') {
-              settings.setVideoMode('auto-timed');
-            }
-          }}
+          onTriggerAutoTransition={handleTriggerAutoVideo}
           onTransitionChange={(id: VideoTransitionId) => settings.setTransition(id)}
           onToggleFx={(fxId: VideoFxId) => {
             const cur = settings.masterFx;
@@ -775,131 +1135,93 @@ export function App(): ReactElement {
           }}
         />
 
-        <DeckPanel
-          deckId="B"
-          onTogglePlay={handleTogglePlay}
-          onSeek={handleSeek}
-          onToggleCueMonitor={handleToggleCueMonitor}
-          onPitchChange={handlePitchChange}
-          onHotCueTrigger={async (d, slot) => {
-            const { cueCtrls, decks } = await ensureAudioInitialized();
-            await cueCtrls[d].triggerHotCue(slot, decks[d].getCurrentTime());
-            setDeckPatch(d, { hotCues: cueCtrls[d].getHotCues() });
-          }}
-          onHotCueClear={async (d, slot) => {
-            const { cueCtrls } = await ensureAudioInitialized();
-            cueCtrls[d].clearHotCue(slot);
-            setDeckPatch(d, { hotCues: cueCtrls[d].getHotCues() });
-          }}
-          onAutoLoop={async (d, beats) => {
-            const { cueCtrls, decks } = await ensureAudioInitialized();
-            const bpm = useDeckStore.getState().decks[d].bpm ?? 120;
-            const loop = cueCtrls[d].triggerAutoLoop(beats, decks[d].getCurrentTime(), bpm);
-            setDeckPatch(d, { loop });
-          }}
-          onToggleLoopExit={async (d) => {
-            const { cueCtrls } = await ensureAudioInitialized();
-            cueCtrls[d].toggleLoopExit();
-            setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
-          }}
-          onLoopIn={async (d) => {
-            const { cueCtrls, decks } = await ensureAudioInitialized();
-            cueCtrls[d].setLoopIn(decks[d].getCurrentTime());
-            setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
-          }}
-          onLoopOut={async (d) => {
-            const { cueCtrls, decks } = await ensureAudioInitialized();
-            cueCtrls[d].setLoopOut(decks[d].getCurrentTime());
-            setDeckPatch(d, { loop: cueCtrls[d].getLoop() });
-          }}
-          onTapBpm={(d) => {
-            const tapped = bpmEnginesRef.current[d].recordTap(performance.now());
-            if (tapped) {
-              setDeckPatch(d, { bpm: tapped });
-              const vid = useDeckStore.getState().decks[d].track?.videoId;
-              if (vid) void window.tubedeckAPI?.upsertTrackMeta({ videoId: vid, bpm: tapped });
-            }
-          }}
-          onAdjustBpmHalfDouble={(d, factor) => {
-            const cur = useDeckStore.getState().decks[d].bpm;
-            if (!cur) return;
-            setDeckPatch(d, { bpm: bpmEnginesRef.current[d].adjustHalfDouble(cur, factor) });
-          }}
-          onSync={async (d) => {
-            const other: DeckId = d === 'A' ? 'B' : 'A';
-            const selfSt = useDeckStore.getState().decks[d];
-            const otherSt = useDeckStore.getState().decks[other];
-            if (!selfSt.bpm || !otherSt.bpm) return;
-            const targetBpm = otherSt.bpm * (1 + otherSt.pitchPercent / 100);
-            const rate = bpmEnginesRef.current[d].computeSyncPlaybackRate(selfSt.bpm, targetBpm);
-            const pitchPercent = Number(((rate - 1) * 100).toFixed(1));
-            await handlePitchChange(d, pitchPercent, selfSt.keyLock);
-          }}
-        />
+        {renderDeck('B')}
       </div>
 
-      {/* Middle Row: Mixer + Overlays */}
-      <div className="grid grid-cols-[1fr_auto] items-center gap-2.5">
-        <MixerCenter
-          onTrimChange={async (d, v) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setTrim(d, v);
-            mixerStore.setChannelPatch(d, { trim: v });
-          }}
-          onEqChange={async (d, b: EqBand, db) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setEq(d, b, db);
-            mixerStore.setEqValue(d, b, db);
-          }}
-          onEqKillToggle={async (d, b: EqBand, kill) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setEqKill(d, b, kill);
-            mixerStore.setEqKill(d, b, kill);
-          }}
-          onColorFilterChange={async (d, a) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setColorFilter(d, a);
-            mixerStore.setChannelPatch(d, { colorFilter: a });
-          }}
-          onFaderChange={async (d, level) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setChannelFader(d, level);
-            mixerStore.setChannelPatch(d, { fader: level });
-          }}
-          onCrossfaderChange={async (pos, curve: CrossfaderCurve) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setCrossfader(pos, curve);
-            mixerStore.setCrossfader(pos);
-            mixerStore.setCrossfaderCurve(curve);
-          }}
-          onMasterGainChange={async (level) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setMasterGain(level);
-            mixerStore.setMasterGain(level);
-          }}
-          onCueMixChange={async (blend) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setCueMix(blend);
-            mixerStore.setCueMix(blend);
-          }}
-          onCueGainChange={async (level) => {
-            const { dsp } = await ensureAudioInitialized();
-            dsp.setCueGain(level);
-            mixerStore.setCueGain(level);
-          }}
-          getVuLevel={(target) => dspRef.current?.readVuLevel(target) ?? 0}
-        />
-        <OverlayControls config={settings.overlayConfig} onChange={handleOverlayConfigChange} />
-      </div>
+      {/* Middle Row: Mixer Center */}
+      <MixerCenter
+        onTrimChange={async (d, v) => {
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setTrim(d, v);
+          mixerStore.setChannelPatch(d, { trim: v });
+        }}
+        onEqChange={async (d, b: EqBand, db) => {
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setEq(d, b, db);
+          mixerStore.setEqValue(d, b, db);
+        }}
+        onEqKillToggle={async (d, b: EqBand, kill) => {
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setEqKill(d, b, kill);
+          mixerStore.setEqKill(d, b, kill);
+        }}
+        onColorFilterChange={async (d, a) => {
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setColorFilter(d, a);
+          mixerStore.setChannelPatch(d, { colorFilter: a });
+        }}
+        onFaderChange={async (d, level) => {
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setChannelFader(d, level);
+          mixerStore.setChannelPatch(d, { fader: level });
+        }}
+        onCrossfaderChange={async (pos, curve: CrossfaderCurve) => {
+          cancelAutoCrossfade();
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setCrossfader(pos, curve);
+          mixerStore.setCrossfader(pos);
+          mixerStore.setCrossfaderCurve(curve);
+        }}
+        onMasterGainChange={async (level) => {
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setMasterGain(level);
+          mixerStore.setMasterGain(level);
+        }}
+        onCueMixChange={async (blend) => {
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setCueMix(blend);
+          mixerStore.setCueMix(blend);
+        }}
+        onCueGainChange={async (level) => {
+          const { dsp } = await ensureAudioInitialized();
+          dsp.setCueGain(level);
+          mixerStore.setCueGain(level);
+        }}
+        getVuLevel={(target) => dspRef.current?.readVuLevel(target) ?? 0}
+        onAutoMixSwitch={() => {
+          const target: DeckId = useMixerStore.getState().crossfader <= 0.5 ? 'B' : 'A';
+          const lib = useLibraryStore.getState();
+          void startUnifiedCrossfade(
+            target,
+            lib.automixFadeDurationSec,
+            lib.automixFadeType,
+            true
+          );
+        }}
+        onToggleAutoGain={(enabled) => {
+          mixerStore.setAutoGainEnabled(enabled);
+          if (!enabled) {
+            dspRef.current?.setDeckAutoGain('A', 1);
+            dspRef.current?.setDeckAutoGain('B', 1);
+            setDeckPatch('A', { autoGainDb: 0 });
+            setDeckPatch('B', { autoGainDb: 0 });
+          }
+        }}
+        videoLinked={settings.videoMode === 'linked'}
+        onToggleVideoLinked={(linked) =>
+          settings.setVideoMode(linked ? 'linked' : 'independent')
+        }
+      />
 
       {/* Bottom Row: Tabs */}
-      <section className="flex flex-1 min-h-0 flex-col gap-2 rounded-xl border border-[#1F2735] bg-[#131822] p-2.5">
+      <section className="flex flex-1 min-h-0 flex-col gap-2 rounded-xl border border-[#1F2937] bg-[#0F141D] p-2.5">
         <nav className="flex items-center gap-1.5 text-xs">
           {(
             [
               ['search', 'Buscador YouTube'],
               ['queue', `Cola (${libraryStore.queue.length})`],
               ['history', 'Historial & Crates'],
+              ['overlays', 'Overlays & Visuales'],
               ['settings', 'Ajustes (Audio / Pantalla / MIDI)']
             ] as const
           ).map(([id, label]) => (
@@ -907,10 +1229,10 @@ export function App(): ReactElement {
               key={id}
               type="button"
               onClick={() => setActiveTab(id)}
-              className={`rounded-lg border px-3 py-1 font-medium cursor-pointer ${
+              className={`rounded-lg border px-3 py-1 font-semibold cursor-pointer ${
                 activeTab === id
                   ? 'border-[#00D4FF] bg-[#00D4FF]/15 text-[#00D4FF]'
-                  : 'border-[#1F2735] bg-[#0B0E14] text-[#94A3B8] hover:text-[#F1F5F9]'
+                  : 'border-[#1F2937] bg-[#07090E] text-[#94A3B8] hover:text-[#F8FAFC]'
               }`}
             >
               {label}
@@ -923,7 +1245,7 @@ export function App(): ReactElement {
             <SearchBrowserTab
               onLoadToDeck={handleLoadToDeck}
               onAddToQueue={(tracks) => {
-                queueEngineRef.current.enqueueMany(tracks);
+                queueEngineRef.current.enqueueMany(tracks, 'user');
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
               crates={crates}
@@ -938,9 +1260,8 @@ export function App(): ReactElement {
           {activeTab === 'queue' ? (
             <QueueTab
               onLoadFromQueue={async (deck, queueId) => {
-                const item = queueEngineRef.current.getQueue().find((q) => q.queueId === queueId);
+                const item = queueEngineRef.current.dequeueById(queueId);
                 if (!item) return;
-                queueEngineRef.current.remove(queueId);
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
                 await handleLoadToDeck(deck, item.track);
               }}
@@ -955,6 +1276,38 @@ export function App(): ReactElement {
               onToggleAutomix={(enabled) => {
                 libraryStore.setAutomixEnabled(enabled);
                 libraryStore.setAutomixStatusNote(null);
+              }}
+              onToggleAutoRadio={(enabled) => {
+                libraryStore.setAutoRadioEnabled(enabled);
+              }}
+              onFadeTypeChange={(ft) => libraryStore.setAutomixFadeType(ft)}
+              onFadeDurationChange={(sec) => libraryStore.setAutomixFadeDurationSec(sec)}
+              onFetchSuggestionsNow={async () => {
+                const activeDeck: DeckId = useMixerStore.getState().crossfader <= 0.5 ? 'A' : 'B';
+                const seedTrack =
+                  useDeckStore.getState().decks[activeDeck].track ??
+                  useDeckStore.getState().decks[activeDeck === 'A' ? 'B' : 'A'].track;
+                if (!seedTrack || !window.tubedeckAPI) {
+                  libraryStore.setAutomixStatusNote(
+                    'Carga primero una pista en Deck A o B para pedir recomendaciones similares.'
+                  );
+                  return;
+                }
+                const existingIds = [
+                  seedTrack.videoId,
+                  ...queueEngineRef.current.getQueue().map((q) => q.track.videoId)
+                ];
+                const res = await window.tubedeckAPI.getRelatedTracks(
+                  seedTrack.videoId,
+                  existingIds
+                );
+                if (res.success && res.data.length > 0) {
+                  queueEngineRef.current.enqueueMany(res.data.slice(0, 3), 'youtube-radio');
+                  libraryStore.setQueue(queueEngineRef.current.getQueue());
+                  libraryStore.setAutomixStatusNote(
+                    `Radio YT agregó ${Math.min(3, res.data.length)} canciones sugeridas.`
+                  );
+                }
               }}
             />
           ) : null}
@@ -976,7 +1329,7 @@ export function App(): ReactElement {
                 setActiveSessionId(null);
               }}
               onAddTracksToQueue={(tracks) => {
-                queueEngineRef.current.enqueueMany(tracks);
+                queueEngineRef.current.enqueueMany(tracks, 'user');
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
                 setActiveTab('queue');
               }}
@@ -986,6 +1339,13 @@ export function App(): ReactElement {
                 const res = await window.tubedeckAPI?.listCrates();
                 if (res?.success) setCrates(res.data);
               }}
+            />
+          ) : null}
+
+          {activeTab === 'overlays' ? (
+            <OverlayControls
+              config={settings.overlayConfig}
+              onChange={handleOverlayConfigChange}
             />
           ) : null}
 
@@ -1062,6 +1422,21 @@ export function App(): ReactElement {
                   setMidiMappings(listRes.data);
                   midiEngineRef.current.loadMappings(listRes.data);
                 }
+              }}
+              onCheckForUpdates={async () => {
+                const res = await window.tubedeckAPI?.checkForUpdates();
+                if (res?.success && res.data) {
+                  settings.setUpdaterStatus(res.data);
+                }
+              }}
+              onDownloadUpdate={async () => {
+                const res = await window.tubedeckAPI?.downloadUpdate();
+                if (res?.success && res.data) {
+                  settings.setUpdaterStatus(res.data);
+                }
+              }}
+              onInstallUpdate={async () => {
+                await window.tubedeckAPI?.installUpdate();
               }}
             />
           ) : null}

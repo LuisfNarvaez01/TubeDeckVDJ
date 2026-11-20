@@ -16,8 +16,7 @@ import {
 import { YouTubeSearchService } from './services/YouTubeSearchService';
 import { YtDlpBinaryManager } from './services/YtDlpBinaryManager';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 let mainWindow: BrowserWindow | null = null;
 let dbService: DatabaseService | null = null;
@@ -72,7 +71,7 @@ function createMainWindow(): BrowserWindow {
     title: 'TubeDeck VDJ',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.cjs'),
+      preload: path.join(moduleDir, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -87,7 +86,7 @@ function createMainWindow(): BrowserWindow {
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'));
+    void win.loadFile(path.join(moduleDir, '../renderer/index.html'));
   }
 
   return win;

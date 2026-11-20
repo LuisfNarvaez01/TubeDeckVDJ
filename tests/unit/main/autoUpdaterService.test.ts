@@ -83,3 +83,4 @@ describe('AutoUpdaterService', () => {
     expect(events.length).toBeGreaterThanOrEqual(4);
   });
 });
+

@@ -61,16 +61,27 @@ test('Dual-window VDJ cabin launches cleanly, opens/closes Screen 2, and writes 
     await expect(mainPage.getByRole('button', { name: 'Buscador YouTube' })).toBeVisible();
     await expect(mainPage.getByRole('button', { name: /^Cola/ })).toBeVisible();
     await expect(mainPage.getByRole('button', { name: 'Historial & Crates' })).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: 'Overlays & Visuales' })).toBeVisible();
     await expect(
       mainPage.getByRole('button', { name: 'Ajustes (Audio / Pantalla / MIDI)' })
     ).toBeVisible();
 
-    // Switch across bottom tabs without errors
+    // Verify VirtualDJ v2.0 Club Pro controls: Jog Wheels & AUTO MIX button
+    await expect(mainPage.getByRole('slider', { name: 'Jog Wheel Deck A' })).toBeVisible();
+    await expect(mainPage.getByRole('slider', { name: 'Jog Wheel Deck B' })).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: 'Auto Mix A B' })).toBeVisible();
+
+    // Switch across bottom tabs without errors (including Cola + Radio YT & Updates card)
+    await mainPage.getByRole('button', { name: /^Cola/ }).click();
+    await expect(mainPage.getByRole('button', { name: /Radio YT:/i })).toBeVisible();
+    await expect(mainPage.getByRole('combobox', { name: 'Estilo Automix' })).toBeVisible();
+
     await mainPage.getByRole('button', { name: 'Historial & Crates' }).click();
     await expect(mainPage.getByText(/Nueva Sesión|Sesiones/i).first()).toBeVisible();
 
     await mainPage.getByRole('button', { name: 'Ajustes (Audio / Pantalla / MIDI)' }).click();
     await expect(mainPage.getByText(/Resolución Master \(60 fps\)/i)).toBeVisible();
+    await expect(mainPage.getByText(/Actualizaciones \(GitHub Releases\)/i)).toBeVisible();
 
     // 2. Open Secondary Output Window (Pantalla 2)
     const openBtn = mainPage.getByRole('button', { name: 'Abrir P2' });

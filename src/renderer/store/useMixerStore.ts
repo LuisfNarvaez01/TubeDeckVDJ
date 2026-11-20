@@ -27,6 +27,9 @@ interface MixerStore {
   masterGain: number;
   cueGain: number;
   cueMix: number;
+  autoGainEnabled: boolean;
+  autoFadeActive: boolean;
+  autoFadeTarget: DeckId | null;
   setChannelPatch: (deck: DeckId, patch: Partial<ChannelMixerState>) => void;
   setEqValue: (deck: DeckId, band: EqBand, db: number) => void;
   setEqKill: (deck: DeckId, band: EqBand, kill: boolean) => void;
@@ -35,6 +38,8 @@ interface MixerStore {
   setMasterGain: (level: number) => void;
   setCueGain: (level: number) => void;
   setCueMix: (blend: number) => void;
+  setAutoGainEnabled: (enabled: boolean) => void;
+  setAutoFadeState: (active: boolean, target: DeckId | null) => void;
 }
 
 export const useMixerStore = create<MixerStore>((set) => ({
@@ -47,6 +52,9 @@ export const useMixerStore = create<MixerStore>((set) => ({
   masterGain: 1,
   cueGain: 1,
   cueMix: 0,
+  autoGainEnabled: true,
+  autoFadeActive: false,
+  autoFadeTarget: null,
   setChannelPatch: (deck, patch) =>
     set((state) => ({
       channels: {
@@ -78,6 +86,7 @@ export const useMixerStore = create<MixerStore>((set) => ({
   setCrossfaderCurve: (crossfaderCurve) => set({ crossfaderCurve }),
   setMasterGain: (masterGain) => set({ masterGain }),
   setCueGain: (cueGain) => set({ cueGain }),
-  setCueMix: (cueMix) => set({ cueMix })
+  setCueMix: (cueMix) => set({ cueMix }),
+  setAutoGainEnabled: (autoGainEnabled) => set({ autoGainEnabled }),
+  setAutoFadeState: (autoFadeActive, autoFadeTarget) => set({ autoFadeActive, autoFadeTarget })
 }));
-

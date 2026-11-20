@@ -1,5 +1,14 @@
 import type { ReactElement } from 'react';
-import { RefreshCw, Download, Monitor, Volume2, Sliders, Trash2 } from 'lucide-react';
+import {
+  RefreshCw,
+  Download,
+  Monitor,
+  Volume2,
+  Sliders,
+  Trash2,
+  CloudDownload,
+  RotateCw
+} from 'lucide-react';
 import type { MidiMapping } from '../../shared/types';
 import type { MidiLearnMode } from '../controllers/MidiLearnEngine';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -17,6 +26,9 @@ interface SettingsTabProps {
   onInitMidi?: () => void;
   onStartMidiLearn?: (controlKey: string, mode: MidiLearnMode) => void;
   onDeleteMidiMapping?: (id: string) => void;
+  onCheckForUpdates?: () => void;
+  onDownloadUpdate?: () => void;
+  onInstallUpdate?: () => void;
 }
 
 const MIDI_CONTROLS: Array<{ key: string; label: string; mode: MidiLearnMode }> = [
@@ -40,9 +52,13 @@ export function SettingsTab({
   learningControlKey = null,
   onInitMidi,
   onStartMidiLearn,
-  onDeleteMidiMapping
+  onDeleteMidiMapping,
+  onCheckForUpdates,
+  onDownloadUpdate,
+  onInstallUpdate
 }: SettingsTabProps): ReactElement {
   const settings = useSettingsStore();
+  const upd = settings.updaterStatus;
 
   return (
     <div className="grid h-full grid-cols-2 gap-3 overflow-y-auto text-xs">
@@ -207,12 +223,89 @@ export function SettingsTab({
         ) : null}
       </div>
 
+      {/* Auto-Updater (GitHub Releases) */}
+      <div className="flex flex-col gap-2 rounded-lg border border-[#1F2937] bg-[#07090E] p-3">
+        <div className="flex items-center justify-between">
+          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F8FAFC]">
+            <CloudDownload className="h-4 w-4 text-[#00D4FF]" />
+            Actualizaciones (GitHub Releases)
+          </h3>
+          <span className="rounded bg-[#0F141D] px-2 py-0.5 font-mono-tabular text-[11px] text-[#94A3B8]">
+            v{upd?.currentVersion ?? '2.0.0'}
+          </span>
+        </div>
+
+        <div className="text-[11px] text-[#94A3B8]">
+          Estado:{' '}
+          <span className="font-semibold text-[#F8FAFC]">
+            {!upd || upd.state === 'dev-mode'
+              ? 'Modo desarrollo (auto-update activo en .exe instalado)'
+              : upd.state === 'idle'
+                ? 'Listo para comprobar'
+                : upd.state === 'checking'
+                  ? 'Buscando en GitHub...'
+                  : upd.state === 'not-available'
+                    ? 'Versión actualizada'
+                    : upd.state === 'available'
+                      ? `Disponible v${upd.availableVersion ?? ''}`
+                      : upd.state === 'downloading'
+                        ? `Descargando ${upd.progressPercent.toFixed(0)}%`
+                        : upd.state === 'downloaded'
+                          ? `Descargada v${upd.availableVersion ?? ''} — lista para instalar`
+                          : `Error: ${upd.error ?? 'fallo de red'}`}
+          </span>
+        </div>
+
+        {upd?.state === 'downloading' ? (
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#0F141D]">
+            <div
+              className="h-full bg-[#00D4FF]"
+              style={{ width: `${Math.min(100, upd.progressPercent)}%` }}
+            />
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={upd?.state === 'checking' || upd?.state === 'downloading'}
+            onClick={() => onCheckForUpdates?.()}
+            className="inline-flex items-center gap-1 rounded border border-[#00D4FF]/50 bg-[#00D4FF]/15 px-2.5 py-1 text-[11px] font-semibold text-[#00D4FF] disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Buscar actualizaciones
+          </button>
+
+          {upd?.state === 'available' ? (
+            <button
+              type="button"
+              onClick={() => onDownloadUpdate?.()}
+              className="inline-flex items-center gap-1 rounded border border-[#10B981]/50 bg-[#10B981]/20 px-2.5 py-1 text-[11px] font-semibold text-[#6EE7B7] cursor-pointer"
+            >
+              <Download className="h-3 w-3" />
+              Descargar v{upd.availableVersion}
+            </button>
+          ) : null}
+
+          {upd?.state === 'downloaded' ? (
+            <button
+              type="button"
+              onClick={() => onInstallUpdate?.()}
+              className="inline-flex items-center gap-1 rounded border border-[#10B981] bg-[#10B981] px-2.5 py-1 text-[11px] font-bold text-[#07090E] cursor-pointer"
+            >
+              <RotateCw className="h-3 w-3" />
+              Reiniciar e instalar
+            </button>
+          ) : null}
+        </div>
+      </div>
+
       {/* Keyboard shortcuts summary */}
-      <div className="flex flex-col gap-1.5 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3 text-[11px] text-[#94A3B8]">
-        <h3 className="font-semibold text-[#F1F5F9]">Atajos de Teclado DJ Activos</h3>
+      <div className="flex flex-col gap-1.5 rounded-lg border border-[#1F2937] bg-[#07090E] p-3 text-[11px] text-[#94A3B8]">
+        <h3 className="font-semibold text-[#F8FAFC]">Atajos de Teclado DJ Activos</h3>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono-tabular">
           <span>Space / Shift+Space: Play A / B</span>
-          <span>Q / W: Cue 0 Deck A / B</span>
+          <span>Q / W: Cue Deck A / B</span>
           <span>S / Shift+S: Sync A / B</span>
           <span>1..8 / Shift+1..8: Hot Cues</span>
           <span>← / → / C: Crossfader</span>

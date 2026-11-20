@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { DisplayInfo, YtDlpStatus } from '../../shared/types';
+import type { DisplayInfo, UpdateStatus, YtDlpStatus } from '../../shared/types';
 import type { AudioOutputDevice } from '../audio/AudioOutputRouter';
 import { createDefaultOverlayConfig, type OverlayConfig } from '../video/OverlayCompositor';
 import { createDefaultDeckFxState, type DeckFxState } from '../video/VideoFxPipeline';
@@ -22,6 +22,7 @@ interface SettingsStore {
   autoDurationSec: number;
   transition: VideoTransitionId;
   masterFx: DeckFxState;
+  updaterStatus: UpdateStatus | null;
   setAudioOutputs: (devices: AudioOutputDevice[]) => void;
   setMasterDeviceId: (id: string) => void;
   setCueDeviceId: (id: string) => void;
@@ -38,6 +39,7 @@ interface SettingsStore {
   setAutoDurationSec: (sec: number) => void;
   setTransition: (id: VideoTransitionId) => void;
   setMasterFx: (fx: DeckFxState) => void;
+  setUpdaterStatus: (status: UpdateStatus | null) => void;
 }
 
 export const useSettingsStore = create<SettingsStore>((set) => ({
@@ -57,6 +59,7 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   autoDurationSec: 2,
   transition: 'dissolve',
   masterFx: createDefaultDeckFxState(),
+  updaterStatus: null,
   setAudioOutputs: (audioOutputs) => set({ audioOutputs }),
   setMasterDeviceId: (masterDeviceId) => set({ masterDeviceId }),
   setCueDeviceId: (cueDeviceId) => set({ cueDeviceId }),
@@ -72,6 +75,7 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setVideoMix: (videoMix) => set({ videoMix }),
   setAutoDurationSec: (autoDurationSec) => set({ autoDurationSec }),
   setTransition: (transition) => set({ transition }),
-  setMasterFx: (masterFx) => set({ masterFx })
+  setMasterFx: (masterFx) => set({ masterFx }),
+  setUpdaterStatus: (updaterStatus) => set({ updaterStatus })
 }));
 

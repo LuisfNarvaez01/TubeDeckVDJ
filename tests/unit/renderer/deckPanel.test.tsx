@@ -46,6 +46,16 @@ describe('DeckPanel (Full DJ Controls)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Loop 4' }));
     expect(onAutoLoop).toHaveBeenCalledWith('A', 4);
+
+    // Performance pad modes switch cleanly
+    fireEvent.click(screen.getByRole('button', { name: 'JUMP' }));
+    expect(screen.getByRole('button', { name: '+4' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'SAMPLER' }));
+    expect(screen.getByRole('button', { name: 'Airhorn' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'FX' }));
+    expect(screen.getByRole('button', { name: /echo/i })).toBeTruthy();
   });
 });
 

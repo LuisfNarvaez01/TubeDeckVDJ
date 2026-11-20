@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import type { DeckId, HotCue, LoopState, YouTubeTrack } from '../../shared/types';
+import type { AudioFxId } from '../audio/AudioDspEngine';
+
+export type DeckAudioFxState = Record<AudioFxId, { enabled: boolean; wet: number }>;
 
 export interface DeckRuntimeState {
   track: YouTubeTrack | null;
@@ -16,6 +19,17 @@ export interface DeckRuntimeState {
   hotCues: HotCue[];
   loop: LoopState | null;
   waveformPeaks: number[] | null;
+  mainCueSec: number;
+  autoGainDb: number;
+  audioFx: DeckAudioFxState;
+}
+
+function createInitialAudioFx(): DeckAudioFxState {
+  return {
+    echo: { enabled: false, wet: 0.45 },
+    reverb: { enabled: false, wet: 0.45 },
+    flanger: { enabled: false, wet: 0.45 }
+  };
 }
 
 function createInitialDeckState(): DeckRuntimeState {
@@ -33,7 +47,10 @@ function createInitialDeckState(): DeckRuntimeState {
     bpm: null,
     hotCues: [],
     loop: null,
-    waveformPeaks: null
+    waveformPeaks: null,
+    mainCueSec: 0,
+    autoGainDb: 0,
+    audioFx: createInitialAudioFx()
   };
 }
 
