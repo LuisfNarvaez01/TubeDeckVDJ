@@ -29,6 +29,10 @@ export interface DeckRuntimeState {
   mainCueSec: number;
   autoGainDb: number;
   audioFx: DeckAudioFxState;
+  /** Camelot code detected for the loaded track (before key shift), e.g. "8A". */
+  musicalKey: string | null;
+  /** Track time of a beat (grid anchor) for phase metering, seconds. */
+  beatAnchorSec: number | null;
 }
 
 function createInitialAudioFx(): DeckAudioFxState {
@@ -61,7 +65,9 @@ function createInitialDeckState(): DeckRuntimeState {
     waveformPeaks: null,
     mainCueSec: 0,
     autoGainDb: 0,
-    audioFx: createInitialAudioFx()
+    audioFx: createInitialAudioFx(),
+    musicalKey: null,
+    beatAnchorSec: null
   };
 }
 

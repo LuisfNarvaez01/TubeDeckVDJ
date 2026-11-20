@@ -241,6 +241,8 @@ export class DatabaseService {
       );
       `
     );
+
+    this.applyMigration(3, 'ALTER TABLE track_metadata ADD COLUMN musical_key TEXT;');
   }
 
   private applyMigration(version: number, sql: string): void {
@@ -352,14 +354,16 @@ export class DatabaseService {
       loop: track.loop !== undefined ? track.loop : (existing?.loop ?? null),
       waveformPeaks:
         track.waveformPeaks !== undefined ? track.waveformPeaks : (existing?.waveformPeaks ?? null),
-      playCount: track.playCount ?? existing?.playCount ?? 0
+      playCount: track.playCount ?? existing?.playCount ?? 0,
+      musicalKey:
+        track.musicalKey !== undefined ? track.musicalKey : (existing?.musicalKey ?? null)
     };
 
     this.run(
       `INSERT INTO track_metadata (
          video_id, title, channel, duration_sec, thumbnail_url, bpm, beat_offset_sec,
-         gain_db, hot_cues_json, loop_json, waveform_peaks_json, play_count
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         gain_db, hot_cues_json, loop_json, waveform_peaks_json, play_count, musical_key
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(video_id) DO UPDATE SET
          title = excluded.title,
          channel = excluded.channel,
@@ -371,7 +375,8 @@ export class DatabaseService {
          hot_cues_json = excluded.hot_cues_json,
          loop_json = excluded.loop_json,
          waveform_peaks_json = excluded.waveform_peaks_json,
-         play_count = excluded.play_count`,
+         play_count = excluded.play_count,
+         musical_key = excluded.musical_key`,
       [
         merged.videoId,
         merged.title,
@@ -384,7 +389,8 @@ export class DatabaseService {
         JSON.stringify(merged.hotCues),
         merged.loop ? JSON.stringify(merged.loop) : null,
         merged.waveformPeaks ? JSON.stringify(merged.waveformPeaks) : null,
-        merged.playCount
+        merged.playCount,
+        merged.musicalKey
       ]
     );
 
@@ -413,7 +419,8 @@ export class DatabaseService {
       hotCues: parseJsonOrNull<HotCue[]>(row.hot_cues_json) ?? [],
       loop: parseJsonOrNull<LoopState>(row.loop_json),
       waveformPeaks: parseJsonOrNull<number[]>(row.waveform_peaks_json),
-      playCount: Number(row.play_count ?? 0)
+      playCount: Number(row.play_count ?? 0),
+      musicalKey: typeof row.musical_key === 'string' ? row.musical_key : null
     };
   }
 

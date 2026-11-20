@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { ArrowLeftRight, Link2, Sparkles } from 'lucide-react';
 import type { DeckId } from '../../shared/types';
 import type { CrossfaderCurve, EqBand } from '../audio/AudioDspEngine';
@@ -23,6 +23,8 @@ interface MixerCenterProps {
   videoLinked?: boolean;
   onToggleVideoLinked?: (linked: boolean) => void;
   showHotkeys?: boolean;
+  /** Beat-match meter shown above the crossfader. */
+  phaseMeter?: ReactNode;
 }
 
 const BANDS: Array<{ key: EqBand; label: string }> = [
@@ -47,7 +49,8 @@ export function MixerCenter({
   onToggleAutoGain,
   videoLinked = true,
   onToggleVideoLinked,
-  showHotkeys = false
+  showHotkeys = false,
+  phaseMeter
 }: MixerCenterProps): ReactElement {
   const mixer = useMixerStore();
   const nextAutoTarget: DeckId = mixer.crossfader <= 0.5 ? 'B' : 'A';
@@ -256,6 +259,8 @@ export function MixerCenter({
               </button>
             ) : null}
           </div>
+
+          {phaseMeter}
 
           <div className="relative flex w-full items-center gap-2 pt-0.5">
             <span className="text-[10px] font-bold text-deck-a">A</span>

@@ -13,6 +13,8 @@ import type {
   MixSession,
   Result,
   RtcSignalPayload,
+  SmartCrateQuery,
+  SmartCrateTrack,
   TasteSeedTrack,
   TasteSummary,
   TrackFeedbackInput,
@@ -69,6 +71,7 @@ export interface TubeDeckAPI {
   createCrate: (name: string, color?: string) => Promise<Result<Crate>>;
   addTrackToCrate: (crateId: string, track: YouTubeTrack) => Promise<Result<void>>;
   getCrateTracks: (crateId: string) => Promise<Result<YouTubeTrack[]>>;
+  getSmartCrate: (query: SmartCrateQuery) => Promise<Result<SmartCrateTrack[]>>;
   listMidiMappings: (deviceName?: string) => Promise<Result<MidiMapping[]>>;
   saveMidiMapping: (mapping: Omit<MidiMapping, 'id'>) => Promise<Result<MidiMapping>>;
   deleteMidiMapping: (id: string) => Promise<Result<void>>;
@@ -90,6 +93,10 @@ export interface TubeDeckAPI {
   removeLocalFolder: (folderPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
   resolveLocalFile: (filePath: string) => Promise<Result<DeckStreamEndpoints>>;
   listLocalPlaces: () => Promise<Result<LocalPlace[]>>;
+  startMixRecording: (kind: 'audio' | 'video') => Promise<Result<{ id: string; filePath: string }>>;
+  appendMixRecording: (id: string, chunk: Uint8Array) => Promise<Result<number>>;
+  stopMixRecording: (id: string) => Promise<Result<{ filePath: string; bytes: number }>>;
+  revealMixRecording: (filePath: string) => Promise<Result<void>>;
   browseLocalDir: (dirPath: string, recursive?: boolean) => Promise<Result<LocalDirListing>>;
   addLocalFolderPath: (dirPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
 }
@@ -150,6 +157,7 @@ const api: TubeDeckAPI = {
   createCrate: (name, color) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_CREATE, name, color),
   addTrackToCrate: (crateId, track) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_ADD_TRACK, crateId, track),
   getCrateTracks: (crateId) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_GET_TRACKS, crateId),
+  getSmartCrate: (query) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_SMART, query),
   listMidiMappings: (deviceName) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_LIST_MAPPINGS, deviceName),
   saveMidiMapping: (mapping) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_SAVE_MAPPING, mapping),
   deleteMidiMapping: (id) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_DELETE_MAPPING, id),
@@ -169,6 +177,10 @@ const api: TubeDeckAPI = {
   removeLocalFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REMOVE_FOLDER, folderPath),
   resolveLocalFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_RESOLVE_FILE, filePath),
   listLocalPlaces: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_LIST_PLACES),
+  startMixRecording: (kind) => ipcRenderer.invoke(IPC_CHANNELS.REC_START, kind),
+  appendMixRecording: (id, chunk) => ipcRenderer.invoke(IPC_CHANNELS.REC_CHUNK, id, chunk),
+  stopMixRecording: (id) => ipcRenderer.invoke(IPC_CHANNELS.REC_STOP, id),
+  revealMixRecording: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.REC_REVEAL, filePath),
   browseLocalDir: (dirPath, recursive) =>
     ipcRenderer.invoke(IPC_CHANNELS.LOCAL_BROWSE_DIR, dirPath, recursive === true),
   addLocalFolderPath: (dirPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_ADD_FOLDER_PATH, dirPath)

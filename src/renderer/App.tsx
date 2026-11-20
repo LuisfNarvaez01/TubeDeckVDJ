@@ -54,9 +54,20 @@ import { SearchBrowserTab } from './components/SearchBrowserTab';
 import { SettingsTab } from './components/SettingsTab';
 import { type RgbWaveSample } from './components/ui/RgbWaveformStrip';
 import { VideoPreviewBar } from './components/VideoPreviewBar';
+import { PhaseMeter } from './components/ui/PhaseMeter';
+import { RecordButton } from './components/RecordButton';
+import { MixRecorder, type MixRecordingKind } from './audio/MixRecorder';
 import { HotkeyManager, type HotkeyAction } from './controllers/HotkeyManager';
 import { MidiLearnEngine, type MidiLearnMode } from './controllers/MidiLearnEngine';
 import { BpmAndWaveformEngine } from './dj/BpmAndWaveformEngine';
+import {
+  beatPhase,
+  estimateBeatAnchor,
+  phaseCorrectionSec,
+  phaseOffsetBeats,
+  type OnsetSample
+} from './dj/BeatPhase';
+import { ChromaAccumulator } from './dj/HarmonicKey';
 import { CueLoopTempoController } from './dj/CueLoopTempoController';
 import {
   type AutomixFadeType,
@@ -241,6 +252,14 @@ export function App(): ReactElement {
   const routerRef = useRef<AudioOutputRouter | null>(null);
   const decksSyncRef = useRef<Record<DeckId, DualDeckMediaSync> | null>(null);
   const cueCtrlsRef = useRef<Record<DeckId, CueLoopTempoController> | null>(null);
+  const chromaRef = useRef<Record<DeckId, ChromaAccumulator>>({
+    A: new ChromaAccumulator(),
+    B: new ChromaAccumulator()
+  });
+  const onsetRef = useRef<Record<DeckId, OnsetSample[]>>({ A: [], B: [] });
+  const analysisTickRef = useRef<Record<DeckId, number>>({ A: 0, B: 0 });
+  const keyFrameBufRef = useRef<Float32Array<ArrayBuffer> | null>(null);
+  const beatMatchRef = useRef<(deck: DeckId) => Promise<void>>(async () => {});
   const bpmEnginesRef = useRef<Record<DeckId, BpmAndWaveformEngine>>({
     A: new BpmAndWaveformEngine(),
     B: new BpmAndWaveformEngine()
@@ -618,7 +637,9 @@ export function App(): ReactElement {
         synced: false,
         bufferRatio: 0,
         customOsdTitle: null,
-        keyShiftSemitones: 0
+        keyShiftSemitones: 0,
+        musicalKey: null,
+        beatAnchorSec: null
       });
 
       const { dsp, decks, cueCtrls } = await ensureAudioInitialized();
@@ -669,6 +690,8 @@ export function App(): ReactElement {
       const loop = savedMeta?.loop ?? null;
       cueCtrls[deck].loadTrackState(track.videoId, cues, loop);
       energySamplesRef.current[deck] = [];
+      onsetRef.current[deck] = [];
+      chromaRef.current[deck].reset();
 
       const st = useDeckStore.getState().decks[deck];
       decks[deck].setPlaybackRate(1 + st.pitchPercent / 100, st.keyLock);
@@ -681,6 +704,8 @@ export function App(): ReactElement {
         loop,
         bpm: savedMeta?.bpm ?? null,
         waveformPeaks: savedMeta?.waveformPeaks ?? null,
+        musicalKey: savedMeta?.musicalKey ?? null,
+        beatAnchorSec: savedMeta?.beatOffsetSec ?? null,
         mainCueSec: cueCtrls[deck].getMainCueSec()
       });
     },
@@ -812,6 +837,39 @@ export function App(): ReactElement {
               const bands = fxPipelineRef.current.extractAudioBands(analyser);
               const hist = energySamplesRef.current[id];
               hist.push(bands.low);
+              const deckNow = useDeckStore.getState().decks[id];
+              const vidNow = deckNow.track?.videoId;
+              if (deckNow.beatAnchorSec === null) {
+                const onsets = onsetRef.current[id];
+                onsets.push({ trackTimeSec: syncs[id].getCurrentTime(), lowEnergy: bands.low });
+                if (onsets.length > 600) onsets.shift();
+                if (deckNow.bpm && onsets.length >= 250 && analysisTickRef.current[id] % 50 === 0) {
+                  const anchor = estimateBeatAnchor(onsets, deckNow.bpm);
+                  if (anchor !== null) {
+                    setDeckPatch(id, { beatAnchorSec: anchor });
+                    if (vidNow) void window.tubedeckAPI?.upsertTrackMeta({ videoId: vidNow, beatOffsetSec: anchor });
+                  }
+                }
+              }
+              analysisTickRef.current[id] += 1;
+              if (deckNow.musicalKey === null && analysisTickRef.current[id] % 6 === 0) {
+                const keyAnalyser = dsp.getDeckKeyAnalyser(id);
+                if (keyAnalyser) {
+                  if (!keyFrameBufRef.current || keyFrameBufRef.current.length !== keyAnalyser.frequencyBinCount) {
+                    keyFrameBufRef.current = new Float32Array(new ArrayBuffer(keyAnalyser.frequencyBinCount * 4));
+                  }
+                  keyAnalyser.getFloatFrequencyData(keyFrameBufRef.current);
+                  const acc = chromaRef.current[id];
+                  acc.addFrame(keyFrameBufRef.current, dsp.getSampleRate());
+                  if (acc.frames >= 80 && acc.frames % 20 === 0) {
+                    const est = acc.estimate();
+                    if (est && est.confidence >= 0.04) {
+                      setDeckPatch(id, { musicalKey: est.camelot });
+                      if (vidNow) void window.tubedeckAPI?.upsertTrackMeta({ videoId: vidNow, musicalKey: est.camelot });
+                    }
+                  }
+                }
+              }
               if (hist.length > 250) hist.shift();
               if (hist.length === 150 && !useDeckStore.getState().decks[id].bpm) {
                 const detected = bpmEnginesRef.current[id].detectBpmFromEnergyHistory(hist, 0.04);
@@ -931,6 +989,9 @@ export function App(): ReactElement {
                   },
                   startTransition: async (_fromDeck, toDeck, durationSec, fadeType) => {
                     await startUnifiedCrossfade(toDeck, durationSec, fadeType, true);
+                    if (fadeType !== 'cut' && fadeType !== 'backspin') {
+                      void beatMatchRef.current(toDeck);
+                    }
                     useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue());
                   },
                   onTrackSkipped: (item, reason) => {
@@ -1077,7 +1138,9 @@ export function App(): ReactElement {
       synced: false,
       bufferRatio: 0,
       customOsdTitle: null,
-      keyShiftSemitones: 0
+      keyShiftSemitones: 0,
+      musicalKey: null,
+      beatAnchorSec: null
     });
     if (outgoing) libraryStore.setAutomixStatusNote(`Deck ${deck} vacío: quitaste "${outgoing.title}".`);
   };
@@ -1133,6 +1196,66 @@ export function App(): ReactElement {
     [ensureAudioInitialized, setDeckPatch]
   );
 
+  const mixRecorderRef = useRef<MixRecorder | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordingSavedPath, setRecordingSavedPath] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+
+  const getMixRecorder = (): MixRecorder => {
+    if (!mixRecorderRef.current) {
+      mixRecorderRef.current = new MixRecorder({
+        start: async (kind) => {
+          const res = await window.tubedeckAPI.startMixRecording(kind);
+          if (!res.success) throw new Error(res.error);
+          return res.data;
+        },
+        append: async (id, chunk) => {
+          const res = await window.tubedeckAPI.appendMixRecording(id, chunk);
+          if (!res.success) throw new Error(res.error);
+        },
+        stop: async (id) => {
+          const res = await window.tubedeckAPI.stopMixRecording(id);
+          if (!res.success) throw new Error(res.error);
+          return res.data;
+        }
+      });
+    }
+    return mixRecorderRef.current;
+  };
+
+  const handleStartRecording = async (kind: MixRecordingKind) => {
+    setRecordingError(null);
+    setRecordingSavedPath(null);
+    try {
+      const { dsp } = await ensureAudioInitialized();
+      const audio = dsp.getRecordingStream();
+      if (!audio) throw new Error('El audio aún no está listo.');
+      const video = kind === 'video' ? (masterCanvasRef.current?.captureStream(30) ?? null) : null;
+      await getMixRecorder().start(kind, audio, video);
+      setRecording(true);
+    } catch (err) {
+      setRecordingError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleStopRecording = async () => {
+    try {
+      const res = await getMixRecorder().stop();
+      setRecordingSavedPath(res.filePath);
+    } catch (err) {
+      setRecordingError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRecording(false);
+    }
+  };
+
+  const getRecordingElapsed = useCallback(() => mixRecorderRef.current?.elapsedSec() ?? 0, []);
+
+  const getDeckTrackTime = useCallback(
+    (deck: DeckId): number | null => decksSyncRef.current?.[deck].getCurrentTime() ?? null,
+    []
+  );
+
   const handleSync = useCallback(
     async (deck: DeckId) => {
       const other: DeckId = deck === 'A' ? 'B' : 'A';
@@ -1142,12 +1265,41 @@ export function App(): ReactElement {
       const targetBpm = otherSt.bpm * (1 + otherSt.pitchPercent / 100);
       const rate = bpmEnginesRef.current[deck].computeSyncPlaybackRate(selfSt.bpm, targetBpm);
       const pitchPercent = Number(((rate - 1) * 100).toFixed(1));
-      const { cueCtrls } = await ensureAudioInitialized();
+      const { cueCtrls, decks } = await ensureAudioInitialized();
       cueCtrls[deck].setPitchPercent(pitchPercent, selfSt.keyLock);
       setDeckPatch(deck, { pitchPercent, keyLock: selfSt.keyLock, synced: true });
+
+      // Phase: land this deck's beats on the other deck's beats (both grids known, both playing).
+      if (
+        selfSt.beatAnchorSec !== null &&
+        otherSt.beatAnchorSec !== null &&
+        !decks[deck].isPaused() &&
+        !decks[other].isPaused()
+      ) {
+        const tSelf = decks[deck].getCurrentTime();
+        const offset = phaseOffsetBeats(
+          beatPhase(decks[other].getCurrentTime(), otherSt.bpm, otherSt.beatAnchorSec),
+          beatPhase(tSelf, selfSt.bpm, selfSt.beatAnchorSec)
+        );
+        if (Math.abs(offset) > 0.03) {
+          const target = Math.max(0, tSelf + phaseCorrectionSec(offset, selfSt.bpm));
+          await decks[deck].seek(target);
+          setDeckPatch(deck, { currentTimeSec: target });
+        }
+      }
     },
     [ensureAudioInitialized, setDeckPatch]
   );
+
+  /** Automix beat-match: only when tempos are close enough to sync without chipmunking. */
+  beatMatchRef.current = async (deck: DeckId) => {
+    const other: DeckId = deck === 'A' ? 'B' : 'A';
+    const a = useDeckStore.getState().decks[deck].bpm;
+    const b = useDeckStore.getState().decks[other].bpm;
+    if (!a || !b) return;
+    const ratio = (b * (1 + useDeckStore.getState().decks[other].pitchPercent / 100)) / a;
+    if (Math.abs(ratio - 1) <= 0.08) await handleSync(deck);
+  };
 
   const handleCueDown = useCallback(
     async (deck: DeckId) => {
@@ -1649,6 +1801,19 @@ export function App(): ReactElement {
 
         {/* Right: Live Badges + KEYS Overlay Toggle + Drawers */}
         <div className="flex shrink-0 items-center gap-1.5 text-[11px]">
+          <RecordButton
+            recording={recording}
+            getElapsedSec={getRecordingElapsed}
+            onStart={(kind) => void handleStartRecording(kind)}
+            onStop={() => void handleStopRecording()}
+            lastSavedPath={recordingSavedPath}
+            onReveal={(p) => void window.tubedeckAPI.revealMixRecording(p)}
+            onDismissSaved={() => {
+              setRecordingSavedPath(null);
+              setRecordingError(null);
+            }}
+            error={recordingError}
+          />
           <span
             className={`hidden xl:inline-flex items-center gap-1 rounded border border-white/[0.06] px-2 py-0.5 font-semibold ${
               libraryStore.automixEnabled
@@ -1835,6 +2000,7 @@ export function App(): ReactElement {
         />
 
         <MixerCenter
+          phaseMeter={<PhaseMeter getTrackTime={getDeckTrackTime} />}
           showHotkeys={settings.showHotkeys}
           onTrimChange={async (d, v) => {
             const { dsp } = await ensureAudioInitialized();

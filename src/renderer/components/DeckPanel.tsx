@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { DeckId, VideoQualityTier } from '../../shared/types';
 import type { AudioFxId, FxBeatDivision, SamplerPadId } from '../audio/AudioDspEngine';
+import { HARMONIC_LABEL, harmonicMatch, shiftCamelot } from '../dj/HarmonicKey';
 import { useDeckStore } from '../store/useDeckStore';
 import { cleanTrackTitleForOsd } from '../video/OverlayCompositor';
 import { JogWheel } from './ui/JogWheel';
@@ -363,6 +364,7 @@ export function DeckPanel({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <KeyBadge deckId={deckId} />
           <div className="flex items-center gap-1 rounded-md border border-white/[0.06] bg-ground px-2 py-1 text-xs">
             <span className="font-mono-tabular text-[14px] leading-none text-ink @2xl:text-[20px]">
               {effectiveBpm ? effectiveBpm.toFixed(1) : '--.-'}
@@ -873,5 +875,42 @@ export function DeckPanel({
         ) : null}
       </div>
     </section>
+  );
+}
+
+/** Camelot key of the deck (after key shift) and how it sits against the other deck. */
+function KeyBadge({ deckId }: { deckId: DeckId }): ReactElement {
+  const self = useDeckStore((s) => s.decks[deckId]);
+  const other = useDeckStore((s) => s.decks[deckId === 'A' ? 'B' : 'A']);
+  const key = self.musicalKey ? shiftCamelot(self.musicalKey, self.keyShiftSemitones) : null;
+  const otherKey =
+    other.track && other.musicalKey ? shiftCamelot(other.musicalKey, other.keyShiftSemitones) : null;
+  const match = key && otherKey ? harmonicMatch(key, otherKey) : null;
+  const tone =
+    match === 'same' || match === 'compatible'
+      ? 'border-live/50 text-live'
+      : match === 'energy'
+        ? 'border-white/[0.16] text-ink'
+        : match === 'clash'
+          ? 'border-danger/50 text-danger-soft'
+          : 'border-white/[0.06] text-ink-soft';
+  const title = !self.track
+    ? 'Tono musical (Camelot)'
+    : !key
+      ? 'Detectando el tono… suena unos 20 s'
+      : match
+        ? `Tono ${key} frente a ${otherKey} del otro deck: ${HARMONIC_LABEL[match]}`
+        : `Tono ${key} (rueda Camelot)`;
+  return (
+    <div
+      title={title}
+      aria-label={title}
+      className={`hidden min-w-[46px] flex-col items-center rounded-md border bg-ground px-1.5 py-0.5 @2xl:flex ${tone}`}
+    >
+      <span className="font-mono-tabular text-[14px] font-semibold leading-none">{key ?? '--'}</span>
+      <span className="text-[10px] leading-tight text-faint">
+        {match ? HARMONIC_LABEL[match] : 'Tono'}
+      </span>
+    </div>
   );
 }

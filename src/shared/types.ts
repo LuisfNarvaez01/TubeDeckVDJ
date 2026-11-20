@@ -174,6 +174,8 @@ export interface TrackMetadataRecord {
   loop: LoopState | null;
   waveformPeaks: number[] | null;
   playCount: number;
+  /** Camelot code detected for the track, e.g. "8A". */
+  musicalKey?: string | null;
 }
 
 export interface UpdateStatus {
@@ -231,4 +233,21 @@ export interface LocalDirListing {
   recursive: boolean;
   /** True when a recursive scan hit the file limit. */
   truncated: boolean;
+}
+
+export type SmartCrateKind = 'match' | 'most-played' | 'recent' | 'liked' | 'forgotten';
+
+export interface SmartCrateQuery {
+  kind: SmartCrateKind;
+  /** For "match": Camelot code of what is playing (after key shift). */
+  camelot?: string | null;
+  /** For "match": effective BPM of what is playing. */
+  bpm?: number | null;
+}
+
+export interface SmartCrateTrack extends YouTubeTrack {
+  playCount?: number;
+  lastPlayedAt?: number;
+  musicalKey?: string | null;
+  bpm?: number | null;
 }

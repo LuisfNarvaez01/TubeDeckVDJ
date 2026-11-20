@@ -1,7 +1,26 @@
 import { useEffect, useState, type FormEvent, type ReactElement } from 'react';
 import { History, FolderPlus, Download, ListPlus, HardDriveDownload, X, Sparkles } from 'lucide-react';
-import type { Crate, DeckId, HistoryEntry, MixSession, YouTubeTrack } from '../../shared/types';
+import type {
+  Crate,
+  DeckId,
+  HistoryEntry,
+  MixSession,
+  SmartCrateKind,
+  SmartCrateTrack,
+  YouTubeTrack
+} from '../../shared/types';
+import { shiftCamelot } from '../dj/HarmonicKey';
+import { useDeckStore } from '../store/useDeckStore';
+import { useMixerStore } from '../store/useMixerStore';
 import { useLibraryStore } from '../store/useLibraryStore';
+
+const SMART_CRATES: { kind: SmartCrateKind; label: string; hint: string }[] = [
+  { kind: 'match', label: 'Combina con lo que suena', hint: 'Tono Camelot compatible y BPM a ±6 % del deck al aire' },
+  { kind: 'liked', label: 'Me gusta', hint: 'Canciones que marcaste con 👍' },
+  { kind: 'most-played', label: 'Más tocadas', hint: 'Lo que más has puesto en tus sesiones' },
+  { kind: 'recent', label: 'Recientes', hint: 'Lo último que sonó en el master' },
+  { kind: 'forgotten', label: 'Olvidadas', hint: 'Éxitos tuyos que no suenan hace más de 30 días' }
+];
 
 interface HistoryAndCratesTabProps {
   activeSessionId: string | null;
@@ -33,7 +52,13 @@ export function HistoryAndCratesTab({
   const [downloadFmt, setDownloadFmt] = useState<'video' | 'audio'>('video');
 
   const [selectedCrateId, setSelectedCrateId] = useState<string | null>(null);
-  const [crateTracks, setCrateTracks] = useState<YouTubeTrack[]>([]);
+  const [crateTracks, setCrateTracks] = useState<SmartCrateTrack[]>([]);
+  const [smartNote, setSmartNote] = useState<string | null>(null);
+  const crossfader = useMixerStore((s) => s.crossfader);
+  const onAirDeck: DeckId = crossfader <= 0.5 ? 'A' : 'B';
+  const onAir = useDeckStore((s) => s.decks[onAirDeck]);
+  const matchCamelot = onAir.musicalKey ? shiftCamelot(onAir.musicalKey, onAir.keyShiftSemitones) : null;
+  const matchBpm = onAir.bpm ? Number((onAir.bpm * (1 + onAir.pitchPercent / 100)).toFixed(1)) : null;
   const [newCrateName, setNewCrateName] = useState('');
 
   const tasteProfile = useLibraryStore((s) => s.tasteProfile);
@@ -63,15 +88,34 @@ export function HistoryAndCratesTab({
     });
   }, [selectedSessionId]);
 
+  const smartKind = selectedCrateId?.startsWith('smart:')
+    ? (selectedCrateId.slice(6) as SmartCrateKind)
+    : null;
+
   useEffect(() => {
+    setSmartNote(null);
     if (!selectedCrateId) {
       setCrateTracks([]);
+      return;
+    }
+    if (smartKind) {
+      if (smartKind === 'match' && !matchCamelot && !matchBpm) {
+        setCrateTracks([]);
+        setSmartNote(`Deck ${onAirDeck} aún no tiene tono ni BPM: deja sonar la canción unos 20 s.`);
+        return;
+      }
+      void window.tubedeckAPI
+        ?.getSmartCrate({ kind: smartKind, camelot: matchCamelot, bpm: matchBpm })
+        .then((res) => {
+          if (res.success) setCrateTracks(res.data);
+          else setSmartNote(res.error);
+        });
       return;
     }
     void window.tubedeckAPI?.getCrateTracks(selectedCrateId).then((res) => {
       if (res.success) setCrateTracks(res.data);
     });
-  }, [selectedCrateId]);
+  }, [selectedCrateId, smartKind, matchCamelot, matchBpm, onAirDeck]);
 
   const handleExport = async (format: 'json' | 'csv' | 'm3u') => {
     if (!selectedSessionId || !window.tubedeckAPI) return;
@@ -300,6 +344,31 @@ export function HistoryAndCratesTab({
           </button>
         </form>
 
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Listas inteligentes">
+          {SMART_CRATES.map((c) => (
+            <button
+              key={c.kind}
+              type="button"
+              title={c.hint}
+              aria-pressed={smartKind === c.kind}
+              onClick={() => setSelectedCrateId(`smart:${c.kind}`)}
+              className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[11px] cursor-pointer ${
+                smartKind === c.kind
+                  ? 'border-live/50 bg-live/15 text-live'
+                  : 'border-white/[0.06] bg-raised text-ink-soft hover:text-ink'
+              }`}
+            >
+              <Sparkles className="h-3 w-3" />
+              {c.label}
+              {c.kind === 'match' && (matchCamelot || matchBpm) ? (
+                <span className="font-mono-tabular text-faint">
+                  {[matchCamelot, matchBpm ? `${matchBpm}` : null].filter(Boolean).join(' · ')}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+
         <div className="flex flex-wrap items-center gap-1.5">
           {crates.map((c) => (
             <button
@@ -329,12 +398,29 @@ export function HistoryAndCratesTab({
         <div className="flex-1 overflow-y-auto divide-y divide-white/[0.05] rounded border border-white/[0.06]">
           {crateTracks.length === 0 ? (
             <div className="p-4 text-center text-faint">
-              Selecciona un Crate para ver o cargar sus pistas.
+              {smartNote ??
+                (smartKind
+                  ? 'Todavía no hay canciones para esta lista. Se llena sola a medida que pinchas.'
+                  : 'Selecciona un Crate o una lista inteligente.')}
             </div>
           ) : (
             crateTracks.map((t) => (
               <div key={t.videoId} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
-                <span className="truncate text-ink">{t.title}</span>
+                <div className="min-w-0">
+                  <p className="truncate text-ink">{t.title}</p>
+                  {smartKind ? (
+                    <p className="truncate font-mono-tabular text-[11px] text-muted">
+                      {[
+                        t.channel,
+                        t.musicalKey ?? null,
+                        t.bpm ? `${t.bpm.toFixed(0)} BPM` : null,
+                        t.playCount ? `${t.playCount}×` : null
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  ) : null}
+                </div>
                 <div className="flex shrink-0 gap-1">
                   <button
                     type="button"

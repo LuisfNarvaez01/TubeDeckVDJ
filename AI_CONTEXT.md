@@ -1,9 +1,9 @@
-# AI Context — TubeDeck VDJ (`v2.3.0`)
+# AI Context — TubeDeck VDJ (`v3.0.0`)
 
 Documento de referencia técnica rápida para darle contexto inmediato del proyecto a cualquier asistente de IA.
 
 ## 1. Resumen del Proyecto
-- **Nombre / Paquete:** `TubeDeck VDJ` (`tubedeck-vdj`, versión `2.3.0`, `appId`: `com.tubedeck.vdj`).
+- **Nombre / Paquete:** `TubeDeck VDJ` (`tubedeck-vdj`, versión `3.0.0`, `appId`: `com.tubedeck.vdj`).
 - **Objetivo:** Cabina DJ/VDJ de doble pantalla para Windows que mezcla videos de YouTube en streaming en memoria (**sin descargar archivos multimedia al disco** durante la reproducción normal), permite intercalar archivos o carpetas locales, renderiza video compuesto a 60 fps en Pantalla 2 con transiciones WebGL2 y marcos configurables, y ofrece descarga opcional por lotes de sesiones del historial.
 - **Repositorio / Auto-Actualizaciones:** `https://github.com/LuisfNarvaez01/TubeDeckVDJ.git` (`electron-updater` vía GitHub Releases + workflow `.github/workflows/release.yml` activado al hacer push de tags `v*`).
 
@@ -41,13 +41,18 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
   - `AudioDspEngine.ts`: EQ de 3 bandas + Kill, Color Filter, Crossfader con curvas, Sampler de 8 pads, Deck FX (Echo/Reverb/Flanger), ruteo Master/Cue.
   - `AudioOutputRouter.ts`: Ruteo hacia dispositivos de audio (`setSinkId`) para Master y Audífonos o modo Mono Split.
   - `DualDeckMediaSync.ts`: Sincronización audio/video en `dash-split`, watchdog anti-congelamiento `checkVideoHealth` con downgrade automático (`720p` → `480p` → `360p`) y soporte `mediaKind: 'audio'`.
+- Grabación de mezcla (v3): `audio/MixRecorder.ts` (MediaRecorder del master post-limitador + canvas de Pantalla 2) → `main/services/MixRecordingService.ts` escribe por trozos en `Música/TubeDeck Grabaciones`.
+- Listas inteligentes (v3): `HistoryAndCratesService.getSmartCrate` (combina con lo que suena, Me gusta, Más tocadas, Recientes, Olvidadas).
+- Explorador local (v2.4+): `LocalLibraryService.browseDirectory` / `listDrivePlaces` (unidades, USB, accesos).
 - `src/renderer/video/`:
   - `WebGLVideoCompositor.ts` + `transitions.glsl.ts` + `effects.glsl.ts`: 9 transiciones de video, soporte de viewport interno `u_videoRect` para marcos y captura a 60 fps para Pantalla 2.
   - `VideoFxPipeline.ts`: 7 efectos visuales reactivos al análisis de bandas de audio.
   - `OverlayCompositor.ts`: Marcos (`minimal-studio`, `karaoke-stage`, `gala-gold`, `club-led`, PNG `custom` vía `getVideoInsetRect()`), Logo, Marquesina, OSD de pista y Webcam.
   - `outputRtcBridge.ts`: Envío/recepción WebRTC local del stream compuesto hacia `OutputWindowView.tsx`.
 - `src/renderer/dj/`:
-  - `QueueAndAutomixEngine.ts`: Cola con precarga temprana (`immediate` 4s / `90s` / `60s` / `30s`), `moveToNext`, `interleaveBySource` (intercalar Local/YouTube), `clear()` y Radio YT automática.
+  - `QueueAndAutomixEngine.ts`: Cola con precarga temprana (`immediate` 4s / `90s` / `60s` / `30s`), `moveToNext`, `interleaveBySource` (intercalar Local/YouTube), `clear()` y Radio YT automática. Las cargas manuales reclaman el deck (`claimDeckForManualLoad`), una carga más nueva cancela a la anterior (`DeckLoadSupersededError`) y la Radio no repite canciones (`looseSongKey`).
+  - `HarmonicKey.ts` (v3): tono musical en vivo (cromagrama + perfiles Krumhansl) → código Camelot, guardado en `track_metadata.musical_key`; reglas de mezcla armónica en `src/shared/camelot.ts`.
+  - `BeatPhase.ts` (v3): ancla del beatgrid (`beat_offset_sec`), medidor de fase (`PhaseMeter.tsx`) y SYNC que alinea fase; Automix iguala BPM y fase si los tempos están a ±8 %.
   - `CueLoopTempoController.ts`: Hot Cues 1–8, Auto-Loop, Loop Roll, Beat Jump y CUE real.
   - `BpmAndWaveformEngine.ts`: Detección de BPM por energía y cálculo de tasa para Sync.
 - `src/renderer/controllers/`: `HotkeyManager.ts` (atajos de teclado) y `MidiLearnEngine.ts` (Web MIDI API).
@@ -91,7 +96,7 @@ npx playwright test tests/e2e/appFlow.spec.ts
 # Pruebas E2E contra ejecutable Windows empaquetado
 $env:TUBEDECK_E2E_EXE="d:\Trabajos\Pantallas\dist\win-unpacked\TubeDeck VDJ.exe"; npx playwright test tests/e2e/appFlow.spec.ts
 
-# Empaquetado NSIS sin firma de código local (genera dist/TubeDeck VDJ Setup 2.3.0.exe)
+# Empaquetado NSIS sin firma de código local (genera dist/TubeDeck VDJ Setup 3.0.0.exe)
 $env:CSC_IDENTITY_AUTO_DISCOVERY="false"; npx electron-builder --win nsis
 ```
 

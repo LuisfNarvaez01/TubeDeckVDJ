@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from 'electron';
+import { app, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
@@ -16,6 +16,7 @@ import type { DatabaseService } from '../services/DatabaseService';
 import type { DisplayWindowManager } from '../services/DisplayWindowManager';
 import type { HistoryAndCratesService } from '../services/HistoryAndCratesService';
 import { browseDirectory, listDrivePlaces, type LocalLibraryService } from '../services/LocalLibraryService';
+import type { MixRecordingService } from '../services/MixRecordingService';
 import type { RecommendationEngine } from '../services/RecommendationEngine';
 import type { TasteFeedbackService } from '../services/TasteFeedbackService';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
@@ -81,6 +82,7 @@ export interface MainServices {
   exporter: SessionExporter;
   updater?: AutoUpdaterService;
   localLibrary?: LocalLibraryService;
+  recordings?: MixRecordingService;
   batchDownloader?: BatchDownloadService;
   taste?: TasteFeedbackService;
   recommender?: RecommendationEngine;
@@ -406,6 +408,19 @@ export function registerIpcHandlers(services: MainServices): void {
     })
   );
 
+  ipcMain.handle(IPC_CHANNELS.CRATE_SMART, (_event, rawQuery: unknown) =>
+    wrapResult(() => {
+      const query = z
+        .object({
+          kind: z.enum(['match', 'most-played', 'recent', 'liked', 'forgotten']),
+          camelot: z.string().regex(/^\d{1,2}[AB]$/).nullish(),
+          bpm: z.number().positive().max(400).nullish()
+        })
+        .parse(rawQuery);
+      return services.history.getSmartCrate(query);
+    })
+  );
+
   ipcMain.handle(IPC_CHANNELS.CRATE_GET_TRACKS, (_event, rawCrateId: unknown) =>
     wrapResult(() => {
       const crateId = NonEmptyStringSchema.parse(rawCrateId);
@@ -555,6 +570,39 @@ export function registerIpcHandlers(services: MainServices): void {
       const folderPath = NonEmptyStringSchema.parse(rawFolder);
       services.localLibrary.removeFolder(folderPath);
       return services.localLibrary.listLibrary();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.REC_START, (_event, rawKind: unknown) =>
+    wrapResult(() => {
+      if (!services.recordings) throw new Error('Grabación no disponible');
+      const kind = z.enum(['audio', 'video']).parse(rawKind);
+      return services.recordings.start(kind);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.REC_CHUNK, (_event, rawId: unknown, rawChunk: unknown) =>
+    wrapResult(() => {
+      if (!services.recordings) throw new Error('Grabación no disponible');
+      const id = NonEmptyStringSchema.parse(rawId);
+      if (!(rawChunk instanceof Uint8Array)) throw new Error('Fragmento de grabación inválido');
+      return services.recordings.append(id, rawChunk);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.REC_STOP, (_event, rawId: unknown) =>
+    wrapResult(() => {
+      if (!services.recordings) throw new Error('Grabación no disponible');
+      return services.recordings.stop(NonEmptyStringSchema.parse(rawId));
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.REC_REVEAL, (_event, rawPath: unknown) =>
+    wrapResult(() => {
+      if (!services.recordings) return;
+      const filePath = z.string().trim().min(1).max(1000).parse(rawPath);
+      if (!services.recordings.isOwnRecording(filePath)) throw new Error('Ruta no permitida');
+      shell.showItemInFolder(filePath);
     })
   );
 
