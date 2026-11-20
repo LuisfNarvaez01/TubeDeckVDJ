@@ -21,6 +21,11 @@ export class CueLoopTempoController {
   private hotCues: HotCue[] = [];
   private loop: LoopState | null = null;
   private loopSeekInFlight = false;
+  private mainCueSec = 0;
+  private cuePreviewActive = false;
+  private rollSavedLoop: LoopState | null = null;
+  private rollStartWallMs = 0;
+  private rollStartTrackSec = 0;
 
   constructor(
     deckId: DeckId,
@@ -37,6 +42,53 @@ export class CueLoopTempoController {
     this.hotCues = [...cues].sort((a, b) => a.slot - b.slot);
     this.loop = loop ? { ...loop } : null;
     this.loopSeekInFlight = false;
+    this.mainCueSec = 0;
+    this.cuePreviewActive = false;
+    this.rollSavedLoop = null;
+  }
+
+  getMainCueSec(): number {
+    return this.mainCueSec;
+  }
+
+  setMainCue(timeSec: number): void {
+    this.mainCueSec = Math.max(0, Number(timeSec.toFixed(3)));
+  }
+
+  async handleCueDown(
+    currentTimeSec: number,
+    isPlaying: boolean
+  ): Promise<{ action: 'set' | 'preview' | 'return'; timeSec: number }> {
+    if (isPlaying) {
+      this.media.pause();
+      await this.media.seek(this.mainCueSec);
+      this.cuePreviewActive = false;
+      return { action: 'return', timeSec: this.mainCueSec };
+    }
+
+    if (Math.abs(currentTimeSec - this.mainCueSec) > 0.15) {
+      this.setMainCue(currentTimeSec);
+      this.cuePreviewActive = false;
+      return { action: 'set', timeSec: this.mainCueSec };
+    }
+
+    this.cuePreviewActive = true;
+    await this.media.play();
+    return { action: 'preview', timeSec: this.mainCueSec };
+  }
+
+  async handleCueUp(): Promise<boolean> {
+    if (!this.cuePreviewActive) {
+      return false;
+    }
+    this.cuePreviewActive = false;
+    this.media.pause();
+    await this.media.seek(this.mainCueSec);
+    return true;
+  }
+
+  cancelCuePreview(): void {
+    this.cuePreviewActive = false;
   }
 
   getHotCues(): HotCue[] {
@@ -136,6 +188,45 @@ export class CueLoopTempoController {
     const clamped = Math.min(50, Math.max(-50, percent));
     const rate = 1 + clamped / 100;
     this.media.setPlaybackRate(rate, keyLock);
+  }
+
+  async beatJump(
+    beats: number,
+    currentTimeSec: number,
+    bpm: number,
+    durationSec: number
+  ): Promise<number> {
+    const safeBpm = bpm > 20 ? bpm : 120;
+    const beatSec = 60 / safeBpm;
+    const maxSec = durationSec > 0 ? durationSec : Number.MAX_SAFE_INTEGER;
+    const target = Math.min(maxSec, Math.max(0, Number((currentTimeSec + beats * beatSec).toFixed(3))));
+    await this.media.seek(target);
+    return target;
+  }
+
+  startLoopRoll(
+    beats: 0.25 | 0.5 | 1 | 2 | 4,
+    currentTimeSec: number,
+    bpm: number,
+    nowMs = Date.now()
+  ): LoopState {
+    const safeBpm = bpm > 20 ? bpm : 120;
+    const beatSec = 60 / safeBpm;
+    const inSec = Math.max(0, currentTimeSec);
+    const outSec = Number((inSec + beats * beatSec).toFixed(4));
+    this.rollSavedLoop = this.loop ? { ...this.loop } : null;
+    this.rollStartWallMs = nowMs;
+    this.rollStartTrackSec = inSec;
+    this.loop = { active: true, inSec, outSec, beats };
+    return this.getLoop()!;
+  }
+
+  async endLoopRoll(nowMs = Date.now()): Promise<LoopState | null> {
+    const elapsedSec = Math.max(0, (nowMs - this.rollStartWallMs) / 1000);
+    this.loop = this.rollSavedLoop ? { ...this.rollSavedLoop } : null;
+    this.rollSavedLoop = null;
+    await this.media.seek(Number((this.rollStartTrackSec + elapsedSec).toFixed(3)));
+    return this.getLoop();
   }
 }
 

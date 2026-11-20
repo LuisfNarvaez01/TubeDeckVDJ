@@ -2,9 +2,21 @@ import type { DeckId } from '../../shared/types';
 
 export type CrossfaderCurve = 'equal-power' | 'linear' | 'scratch';
 export type EqBand = 'low' | 'mid' | 'high';
+export type AudioFxId = 'echo' | 'reverb' | 'flanger';
+export type SamplerPadId =
+  | 'airhorn'
+  | 'riser'
+  | 'sub-drop'
+  | 'clap'
+  | 'laser'
+  | 'siren'
+  | 'kick'
+  | 'hihat';
 
 interface DeckChannelNodes {
   trimGain: GainNode;
+  autoGain: GainNode;
+  autoGainValue: number;
   eqLow: BiquadFilterNode;
   eqMid: BiquadFilterNode;
   eqHigh: BiquadFilterNode;
@@ -13,10 +25,17 @@ interface DeckChannelNodes {
   channelFader: GainNode;
   crossfaderGain: GainNode;
   cueToggleGain: GainNode;
+  echoSendGain: GainNode | null;
+  echoDelay: DelayNode | null;
+  reverbSendGain: GainNode | null;
+  flangerSendGain: GainNode | null;
+  flangerLfo: OscillatorNode | null;
+  fxState: Record<AudioFxId, { enabled: boolean; wet: number }>;
   eqValuesDb: Record<EqBand, number>;
   eqKilled: Record<EqBand, boolean>;
   colorFilterMode: 'allpass' | 'lowpass' | 'highpass';
   timeDomainBuf: Uint8Array<ArrayBuffer>;
+  freqBuf: Uint8Array<ArrayBuffer>;
 }
 
 const KILL_DB = -60;
@@ -167,6 +186,9 @@ export class AudioDspEngine {
     const trimGain = ctx.createGain();
     trimGain.gain.value = 1;
 
+    const autoGain = ctx.createGain();
+    autoGain.gain.value = 1;
+
     const eqLow = ctx.createBiquadFilter();
     eqLow.type = 'lowshelf';
     eqLow.frequency.value = 250;
@@ -200,11 +222,73 @@ export class AudioDspEngine {
     const cueToggleGain = ctx.createGain();
     cueToggleGain.gain.value = 0;
 
-    trimGain.connect(eqLow);
+    trimGain.connect(autoGain);
+    autoGain.connect(eqLow);
     eqLow.connect(eqMid);
     eqMid.connect(eqHigh);
     eqHigh.connect(colorFilter);
     colorFilter.connect(analyser);
+
+    let echoSendGain: GainNode | null = null;
+    let echoDelay: DelayNode | null = null;
+    if (typeof ctx.createDelay === 'function') {
+      echoSendGain = ctx.createGain();
+      echoSendGain.gain.value = 0;
+      echoDelay = ctx.createDelay(2.0);
+      echoDelay.delayTime.value = 0.375;
+      const echoFb = ctx.createGain();
+      echoFb.gain.value = 0.42;
+      const echoDamp = ctx.createBiquadFilter();
+      echoDamp.type = 'lowpass';
+      echoDamp.frequency.value = 3400;
+
+      colorFilter.connect(echoSendGain);
+      echoSendGain.connect(echoDelay);
+      echoDelay.connect(echoDamp);
+      echoDamp.connect(echoFb);
+      echoFb.connect(echoDelay);
+      echoDelay.connect(analyser);
+    }
+
+    let reverbSendGain: GainNode | null = null;
+    if (typeof ctx.createConvolver === 'function' && typeof ctx.createBuffer === 'function') {
+      reverbSendGain = ctx.createGain();
+      reverbSendGain.gain.value = 0;
+      const conv = ctx.createConvolver();
+      const sampleRate = ctx.sampleRate || 44100;
+      const len = Math.floor(sampleRate * 1.4);
+      const ir = ctx.createBuffer(2, len, sampleRate);
+      for (let ch = 0; ch < 2; ch += 1) {
+        const data = ir.getChannelData(ch);
+        for (let i = 0; i < len; i += 1) {
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.4);
+        }
+      }
+      conv.buffer = ir;
+      colorFilter.connect(reverbSendGain);
+      reverbSendGain.connect(conv);
+      conv.connect(analyser);
+    }
+
+    let flangerSendGain: GainNode | null = null;
+    let flangerLfo: OscillatorNode | null = null;
+    if (typeof ctx.createDelay === 'function' && typeof ctx.createOscillator === 'function') {
+      flangerSendGain = ctx.createGain();
+      flangerSendGain.gain.value = 0;
+      const flangerDelay = ctx.createDelay(0.1);
+      flangerDelay.delayTime.value = 0.006;
+      const lfoDepth = ctx.createGain();
+      lfoDepth.gain.value = 0.003;
+      flangerLfo = ctx.createOscillator();
+      flangerLfo.frequency.value = 0.45;
+      flangerLfo.connect(lfoDepth);
+      lfoDepth.connect(flangerDelay.delayTime);
+      flangerLfo.start();
+
+      colorFilter.connect(flangerSendGain);
+      flangerSendGain.connect(flangerDelay);
+      flangerDelay.connect(analyser);
+    }
 
     analyser.connect(channelFader);
     channelFader.connect(crossfaderGain);
@@ -215,6 +299,8 @@ export class AudioDspEngine {
 
     return {
       trimGain,
+      autoGain,
+      autoGainValue: 1,
       eqLow,
       eqMid,
       eqHigh,
@@ -223,10 +309,21 @@ export class AudioDspEngine {
       channelFader,
       crossfaderGain,
       cueToggleGain,
+      echoSendGain,
+      echoDelay,
+      reverbSendGain,
+      flangerSendGain,
+      flangerLfo,
+      fxState: {
+        echo: { enabled: false, wet: 0.45 },
+        reverb: { enabled: false, wet: 0.45 },
+        flanger: { enabled: false, wet: 0.45 }
+      },
       eqValuesDb: { low: 0, mid: 0, high: 0 },
       eqKilled: { low: false, mid: false, high: false },
       colorFilterMode: 'allpass',
-      timeDomainBuf: new Uint8Array(new ArrayBuffer(analyser.fftSize))
+      timeDomainBuf: new Uint8Array(new ArrayBuffer(analyser.fftSize)),
+      freqBuf: new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount || 1024))
     };
   }
 
@@ -252,6 +349,151 @@ export class AudioDspEngine {
   setTrim(deck: DeckId, value: number): void {
     const d = this.getDeckOrThrow(deck);
     d.trimGain.gain.value = clamp(value, 0, 2);
+  }
+
+  setDeckAutoGain(deck: DeckId, gainLinear: number): void {
+    const d = this.getDeckOrThrow(deck);
+    const clamped = clamp(gainLinear, 0.35, 2.8);
+    d.autoGainValue = clamped;
+    if (this.ctx && typeof d.autoGain.gain.setTargetAtTime === 'function') {
+      d.autoGain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.08);
+    } else {
+      d.autoGain.gain.value = clamped;
+    }
+  }
+
+  getDeckAutoGain(deck: DeckId): number {
+    return this.getDeckOrThrow(deck).autoGainValue;
+  }
+
+  setDeckFx(
+    deck: DeckId,
+    fx: AudioFxId,
+    enabled: boolean,
+    wet01: number,
+    bpm?: number | null
+  ): void {
+    const d = this.getDeckOrThrow(deck);
+    const clampedWet = clamp(wet01, 0, 1);
+    d.fxState[fx] = { enabled, wet: clampedWet };
+    const activeLevel = enabled ? clampedWet : 0;
+
+    if (fx === 'echo') {
+      if (d.echoDelay && bpm && bpm > 40) {
+        d.echoDelay.delayTime.value = clamp((60 / bpm) * 0.75, 0.12, 0.9);
+      }
+      if (d.echoSendGain) {
+        d.echoSendGain.gain.value = activeLevel * 0.65;
+      }
+      return;
+    }
+
+    if (fx === 'reverb') {
+      if (d.reverbSendGain) {
+        d.reverbSendGain.gain.value = activeLevel * 0.7;
+      }
+      return;
+    }
+
+    if (d.flangerSendGain) {
+      d.flangerSendGain.gain.value = activeLevel * 0.6;
+    }
+  }
+
+  getDeckFx(deck: DeckId, fx: AudioFxId): { enabled: boolean; wet: number } {
+    return { ...this.getDeckOrThrow(deck).fxState[fx] };
+  }
+
+  readDeckFrequencyBands(deck: DeckId): { low: number; mid: number; high: number } {
+    if (!this.decks) return { low: 0, mid: 0, high: 0 };
+    const d = this.decks[deck];
+    d.analyser.getByteFrequencyData(d.freqBuf);
+    const avgRange = (start: number, end: number) => {
+      const safeEnd = Math.min(d.freqBuf.length, end);
+      if (safeEnd <= start) return 0;
+      let sum = 0;
+      for (let i = start; i < safeEnd; i += 1) sum += d.freqBuf[i];
+      return clamp(sum / ((safeEnd - start) * 255), 0, 1);
+    };
+    return {
+      low: avgRange(0, 8),
+      mid: avgRange(8, 48),
+      high: avgRange(48, 160)
+    };
+  }
+
+  triggerSample(pad: SamplerPadId, volume01 = 0.75): void {
+    if (!this.ctx || !this.masterBusSum || typeof this.ctx.createOscillator !== 'function') {
+      return;
+    }
+    const ctx = this.ctx;
+    const vol = clamp(volume01, 0.05, 1.5) * 0.45;
+    const t = ctx.currentTime;
+    const gain = ctx.createGain();
+    gain.connect(this.masterBusSum);
+
+    const playTone = (
+      type: OscillatorType,
+      fStart: number,
+      fEnd: number,
+      dur: number,
+      startOffset = 0
+    ) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(fStart, t + startOffset);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(20, fEnd), t + startOffset + dur);
+      g.gain.setValueAtTime(vol, t + startOffset);
+      g.gain.exponentialRampToValueAtTime(0.001, t + startOffset + dur);
+      osc.connect(g);
+      g.connect(gain);
+      osc.start(t + startOffset);
+      osc.stop(t + startOffset + dur + 0.02);
+    };
+
+    const playNoise = (dur: number, filterType: BiquadFilterType, freq: number) => {
+      if (typeof ctx.createBuffer !== 'function' || typeof ctx.createBufferSource !== 'function') {
+        return;
+      }
+      const sr = ctx.sampleRate || 44100;
+      const buf = ctx.createBuffer(1, Math.floor(sr * dur), sr);
+      const ch = buf.getChannelData(0);
+      for (let i = 0; i < ch.length; i += 1) ch[i] = Math.random() * 2 - 1;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const flt = ctx.createBiquadFilter();
+      flt.type = filterType;
+      flt.frequency.value = freq;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+      src.connect(flt);
+      flt.connect(g);
+      g.connect(gain);
+      src.start(t);
+    };
+
+    if (pad === 'airhorn') {
+      playTone('sawtooth', 485, 470, 0.22, 0);
+      playTone('sawtooth', 485, 465, 0.45, 0.24);
+      playTone('sawtooth', 595, 580, 0.45, 0.24);
+    } else if (pad === 'riser') {
+      playTone('sawtooth', 160, 1450, 1.1);
+    } else if (pad === 'sub-drop') {
+      playTone('sine', 120, 28, 0.85);
+    } else if (pad === 'clap') {
+      playNoise(0.22, 'bandpass', 1800);
+    } else if (pad === 'laser') {
+      playTone('square', 1400, 110, 0.28);
+    } else if (pad === 'siren') {
+      playTone('triangle', 640, 1080, 0.28, 0);
+      playTone('triangle', 1080, 620, 0.32, 0.28);
+    } else if (pad === 'kick') {
+      playTone('sine', 155, 38, 0.22);
+    } else {
+      playNoise(0.08, 'highpass', 7200);
+    }
   }
 
   setEq(deck: DeckId, band: EqBand, db: number): void {
@@ -412,6 +654,15 @@ export class AudioDspEngine {
   }
 
   async dispose(): Promise<void> {
+    if (this.decks) {
+      for (const deck of ['A', 'B'] as DeckId[]) {
+        try {
+          this.decks[deck].flangerLfo?.stop();
+        } catch {
+          // ignore already stopped LFO
+        }
+      }
+    }
     if (this.ctx) {
       await this.ctx.close();
       this.ctx = null;

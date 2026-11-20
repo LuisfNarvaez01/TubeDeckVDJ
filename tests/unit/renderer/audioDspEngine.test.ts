@@ -103,6 +103,18 @@ describe('AudioDspEngine', () => {
     expect(dsp.getCrossfaderGains().a).toBeCloseTo(0.5, 1);
     expect(dsp.getCrossfaderGains().b).toBe(1);
 
+    // Auto-Gain clamping
+    dsp.setDeckAutoGain('A', 4.5);
+    expect(dsp.getDeckAutoGain('A')).toBe(2.8);
+    dsp.setDeckAutoGain('A', 0.1);
+    expect(dsp.getDeckAutoGain('A')).toBe(0.35);
+
+    // Audio FX rack state + sample trigger safe even on mock contexts
+    dsp.setDeckFx('A', 'echo', true, 0.6, 125);
+    expect(dsp.getDeckFx('A', 'echo')).toEqual({ enabled: true, wet: 0.6 });
+    expect(() => dsp.triggerSample('airhorn', 0.8)).not.toThrow();
+    expect(dsp.readDeckFrequencyBands('A')).toEqual({ low: 0, mid: 0, high: 0 });
+
     await dsp.dispose();
   });
 });
