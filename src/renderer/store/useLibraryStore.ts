@@ -34,6 +34,9 @@ interface LibraryStore {
   setBatchDownload: (progress: BatchDownloadProgress | null) => void;
   playedVideoIds: string[];
   markTrackPlayed: (videoId: string) => void;
+  /** Tracks that were on air for at least 10 s, most recent first (session only). */
+  recentOnAir: YouTubeTrack[];
+  pushRecentOnAir: (track: YouTubeTrack) => void;
   previewingVideoId: string | null;
   previewLoading: boolean;
   setPreviewState: (videoId: string | null, loading?: boolean) => void;
@@ -66,6 +69,11 @@ export const useLibraryStore = create<LibraryStore>((set) => ({
   batchDownload: null,
   setBatchDownload: (batchDownload) => set({ batchDownload }),
   playedVideoIds: [],
+  recentOnAir: [],
+  pushRecentOnAir: (track) =>
+    set((state) => ({
+      recentOnAir: [track, ...state.recentOnAir.filter((t) => t.videoId !== track.videoId)].slice(0, 20)
+    })),
   markTrackPlayed: (videoId) =>
     set((state) => {
       if (!videoId || state.playedVideoIds.includes(videoId)) return state;

@@ -72,6 +72,9 @@ export class QueueAndAutomixEngine {
   private transitionedForDeck: Partial<Record<DeckId, boolean>> = {};
   private playedVideoIds = new Set<string>();
   private playedSongKeys = new Set<string>();
+  /** Songs the DJ took out this session (not a dislike: just "not this one"). */
+  private dismissedVideoIds = new Set<string>();
+  private dismissedSongKeys = new Set<string>();
   private radioSeedVideoId: string | null = null;
   private radioPool: YouTubeTrack[] = [];
   private lastRadioFetchMs = -Infinity;
@@ -179,6 +182,46 @@ export class QueueAndAutomixEngine {
     }
   }
 
+  /** The DJ removed this song from the queue or ejected it: never suggest it again this session. */
+  dismissSong(track: YouTubeTrack): void {
+    this.dismissedVideoIds.add(track.videoId);
+    const key = looseSongKey(track.title);
+    if (key) this.dismissedSongKeys.add(key);
+    this.radioPool = this.radioPool.filter((t) => !this.isDismissed(t));
+  }
+
+  isDismissed(track: YouTubeTrack): boolean {
+    if (this.dismissedVideoIds.has(track.videoId)) return true;
+    const key = looseSongKey(track.title);
+    return key.length > 0 && this.dismissedSongKeys.has(key);
+  }
+
+  /** User removal from the queue (as opposed to the engine consuming an item). */
+  removeByUser(queueId: string): QueueItem | null {
+    const item = this.queue.find((q) => q.queueId === queueId) ?? null;
+    if (item) {
+      this.dismissSong(item.track);
+      this.remove(queueId);
+    }
+    return item;
+  }
+
+  /** Keeps only suggestions that are new: not played, queued, dismissed or a re-upload of those. */
+  filterFreshSuggestions(tracks: YouTubeTrack[]): YouTubeTrack[] {
+    const seen = new Set<string>();
+    return tracks.filter((t) => {
+      if (this.isQueuedOrPlayedSong(t)) return false;
+      const key = looseSongKey(t.title) || t.videoId;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  getDismissedVideoIds(): string[] {
+    return Array.from(this.dismissedVideoIds);
+  }
+
   /** True when this song (any upload of it) already played this session. */
   wasSongPlayed(track: YouTubeTrack): boolean {
     if (this.playedVideoIds.has(track.videoId)) return true;
@@ -237,7 +280,7 @@ export class QueueAndAutomixEngine {
   }
 
   private collectExcludeIds(context: AutomixTickContext): string[] {
-    const excluded = new Set<string>(this.playedVideoIds);
+    const excluded = new Set<string>([...this.playedVideoIds, ...this.dismissedVideoIds]);
     if (context.activeVideoId) excluded.add(context.activeVideoId);
     if (context.otherDeckVideoId) excluded.add(context.otherDeckVideoId);
     for (const item of this.queue) {
@@ -287,7 +330,7 @@ export class QueueAndAutomixEngine {
   }
 
   private isQueuedOrPlayedSong(track: YouTubeTrack): boolean {
-    if (this.wasSongPlayed(track)) return true;
+    if (this.wasSongPlayed(track) || this.isDismissed(track)) return true;
     const key = looseSongKey(track.title);
     return key.length > 0 && this.queue.some((q) => looseSongKey(q.track.title) === key);
   }

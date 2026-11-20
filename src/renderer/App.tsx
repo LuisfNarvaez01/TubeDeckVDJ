@@ -4,7 +4,8 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
-  type ReactElement
+  type ReactElement,
+  type ReactNode
 } from 'react';
 import {
   AlertTriangle,
@@ -54,6 +55,7 @@ import { SettingsTab } from './components/SettingsTab';
 import { type RgbWaveSample } from './components/ui/RgbWaveformStrip';
 import { VideoPreviewBar } from './components/VideoPreviewBar';
 import { PhaseMeter } from './components/ui/PhaseMeter';
+import { RundownColumn } from './components/RundownColumn';
 import { RecordButton } from './components/RecordButton';
 import { useYouTubeAccess, YouTubeBlockedBanner } from './components/YouTubeAccess';
 import { MixRecorder, type MixRecordingKind } from './audio/MixRecorder';
@@ -258,6 +260,15 @@ export function App(): ReactElement {
   });
   const onsetRef = useRef<Record<DeckId, OnsetSample[]>>({ A: [], B: [] });
   const analysisTickRef = useRef<Record<DeckId, number>>({ A: 0, B: 0 });
+  /** Playback watchdog: last media time that moved, when, and recovery attempts per track. */
+  const stallRef = useRef<Record<DeckId, { lastT: number; lastMoveMs: number; videoId: string; attempts: number }>>({
+    A: { lastT: -1, lastMoveMs: 0, videoId: '', attempts: 0 },
+    B: { lastT: -1, lastMoveMs: 0, videoId: '', attempts: 0 }
+  });
+  /** A deck that could not be recovered counts as "ended" so Automix moves on. */
+  const stallEndedRef = useRef<Record<DeckId, boolean>>({ A: false, B: false });
+  const recentLoggedRef = useRef<Record<DeckId, string>>({ A: '', B: '' });
+  const recoverStallRef = useRef<(deck: DeckId, atSec: number) => void>(() => {});
   const keyFrameBufRef = useRef<Float32Array<ArrayBuffer> | null>(null);
   const beatMatchRef = useRef<(deck: DeckId) => Promise<void>>(async () => {});
   const bpmEnginesRef = useRef<Record<DeckId, BpmAndWaveformEngine>>({
@@ -295,6 +306,9 @@ export function App(): ReactElement {
   const mixerStore = useMixerStore();
   const settings = useSettingsStore();
   const libraryStore = useLibraryStore();
+  const recentOnAir = libraryStore.recentOnAir;
+  const deckATrackId = useDeckStore((st) => st.decks.A.track?.videoId ?? null);
+  const deckBTrackId = useDeckStore((st) => st.decks.B.track?.videoId ?? null);
 
   const ensureAudioInitialized = useCallback(async () => {
     if (!dspRef.current) {
@@ -618,6 +632,7 @@ export function App(): ReactElement {
         reportImplicitFeedback(outgoing, audibleSec);
       }
       const seq = (loadSeqRef.current[deck] += 1);
+      stallEndedRef.current[deck] = false;
       const isStale = (): boolean => loadSeqRef.current[deck] !== seq;
       liveRgbRef.current[deck] = [];
       autoGainEmaRef.current[deck] = 0.42;
@@ -883,6 +898,31 @@ export function App(): ReactElement {
           });
         }
 
+        // Watchdog: a deck that says it is playing but whose clock has not moved for 7 s is stuck
+        // (expired stream URL, upstream cut). Recover once in place; if it sticks again, give up.
+        (['A', 'B'] as DeckId[]).forEach((id) => {
+          const st = stDecks[id];
+          const w = stallRef.current[id];
+          const vid = st.track?.videoId ?? '';
+          if (w.videoId !== vid) {
+            stallRef.current[id] = { lastT: -1, lastMoveMs: now, videoId: vid, attempts: 0 };
+            return;
+          }
+          if (!st.track || st.loading || st.error || syncs[id].isPaused() || syncs[id].isEnded()) {
+            w.lastMoveMs = now;
+            return;
+          }
+          const t = syncs[id].getCurrentTime();
+          if (Math.abs(t - w.lastT) > 0.02) {
+            w.lastT = t;
+            w.lastMoveMs = now;
+          } else if (now - w.lastMoveMs > 7000) {
+            w.lastMoveMs = now;
+            w.attempts += 1;
+            recoverStallRef.current(id, t);
+          }
+        });
+
         if (now - lastUiUpdate >= 100) {
           const dtMs = lastUiUpdate === 0 ? 100 : now - lastUiUpdate;
           lastUiUpdate = now;
@@ -909,6 +949,10 @@ export function App(): ReactElement {
               onAirMsRef.current[id] += dtMs;
               audibleMsRef.current[id] += dtMs;
               const playKey = `${activeSessionIdRef.current}:${prev.track.videoId}`;
+              if (onAirMsRef.current[id] >= 10_000 && recentLoggedRef.current[id] !== prev.track.videoId) {
+                recentLoggedRef.current[id] = prev.track.videoId;
+                useLibraryStore.getState().pushRecentOnAir(prev.track);
+              }
               if (
                 onAirMsRef.current[id] >= 10_000 &&
                 lastLoggedTrackRef.current[id] !== playKey &&
@@ -954,7 +998,7 @@ export function App(): ReactElement {
           const otherDeck: DeckId = activeDeck === 'A' ? 'B' : 'A';
           const deckState = useDeckStore.getState().decks[activeDeck];
           const otherState = useDeckStore.getState().decks[otherDeck];
-          const isEnded = syncs[activeDeck].isEnded();
+          const isEnded = syncs[activeDeck].isEnded() || stallEndedRef.current[activeDeck];
           const remainingSec = isEnded
             ? 0
             : Math.max(0, deckState.durationSec - deckState.currentTimeSec);
@@ -1110,6 +1154,45 @@ export function App(): ReactElement {
     }
   };
 
+  recoverStallRef.current = (deck: DeckId, atSec: number) => {
+    const st = useDeckStore.getState().decks[deck];
+    const track = st.track;
+    if (!track) return;
+    const attempts = stallRef.current[deck].attempts;
+    if (attempts > 2) return; // already gave up on this track
+    const clock = `${Math.floor(atSec / 60)}:${String(Math.floor(atSec % 60)).padStart(2, '0')}`;
+    const lib = useLibraryStore.getState();
+    if (attempts <= 1) {
+      lib.setAutomixStatusNote(`Deck ${deck} se trabó en ${clock}: recargando el video…`);
+      void (async () => {
+        try {
+          if (track.source !== 'local') await window.tubedeckAPI?.invalidateStream(track.videoId);
+          await loadTrackOntoDeck(deck, track);
+          const syncs = decksSyncRef.current;
+          if (!syncs) return;
+          await syncs[deck].seek(atSec);
+          await syncs[deck].play();
+          setDeckPatch(deck, { playing: true, currentTimeSec: atSec });
+          lib.setAutomixStatusNote(`Deck ${deck} recuperado en ${clock}.`);
+        } catch {
+          // a failed reload shows the deck error; the next stall check gives up
+          stallEndedRef.current[deck] = true;
+        }
+      })();
+      return;
+    }
+    stallEndedRef.current[deck] = true;
+    if (lib.automixEnabled) {
+      lib.setAutomixStatusNote(`"${track.title}" se volvió a trabar: pasando a la siguiente.`);
+    } else {
+      void decksSyncRef.current?.[deck].pause();
+      setDeckPatch(deck, {
+        playing: false,
+        error: 'La reproducción se trabó dos veces. Reintenta o carga otra canción.'
+      });
+    }
+  };
+
   const handleEjectDeck = (deck: DeckId) => {
     const st = useDeckStore.getState().decks[deck];
     if (!st.track && !st.loading) return;
@@ -1121,6 +1204,7 @@ export function App(): ReactElement {
     decksSyncRef.current?.[deck].unload();
     liveRgbRef.current[deck] = [];
     queueEngineRef.current.releaseDeck(deck);
+    if (outgoing) queueEngineRef.current.dismissSong(outgoing);
     libraryStore.setQueue(queueEngineRef.current.getQueue());
     setDeckPatch(deck, {
       track: null,
@@ -1142,7 +1226,9 @@ export function App(): ReactElement {
       musicalKey: null,
       beatAnchorSec: null
     });
-    if (outgoing) libraryStore.setAutomixStatusNote(`Deck ${deck} vacío: quitaste "${outgoing.title}".`);
+    if (outgoing) {
+      libraryStore.setAutomixStatusNote(`Deck ${deck} vacío: "${outgoing.title}" no volverá a sugerirse en esta sesión.`);
+    }
   };
 
   const handlePlayNextInQueue = (track: YouTubeTrack) => {
@@ -1566,6 +1652,69 @@ export function App(): ReactElement {
     }
   };
 
+  const renderVideoPanel = (part: 'stage' | 'controls', wings?: { left: ReactNode; right: ReactNode }) => (
+    <VideoPreviewBar
+      part={part}
+      leftWing={wings?.left}
+      rightWing={wings?.right}
+          masterCanvasRef={masterCanvasRef}
+      attachPreviewContainer={attachPreviewContainer}
+      videoMix={settings.videoMode === 'linked' ? mixerStore.crossfader : settings.videoMix}
+      videoMode={settings.videoMode}
+      autoDurationSec={settings.autoDurationSec}
+      transition={settings.transition}
+      activeFx={settings.masterFx.enabled}
+      fxIntensity={settings.videoFxIntensity}
+      osdEnabled={settings.overlayConfig.osd.enabled}
+      displays={settings.displays}
+      selectedDisplayId={settings.selectedDisplayId}
+      outputOpen={settings.outputOpen}
+      frameEnabled={frameEnabled}
+      activeQualityA={settings.activeDeckQuality.A}
+      activeQualityB={settings.activeDeckQuality.B}
+      showHotkeys={settings.showHotkeys}
+      onVideoMixChange={(m) => settings.setVideoMix(m)}
+      onVideoModeChange={(mode: VideoCrossfaderMode) => settings.setVideoMode(mode)}
+      onAutoDurationChange={(sec) => settings.setAutoDurationSec(sec)}
+      onTriggerAutoTransition={handleTriggerAutoVideo}
+      onTransitionChange={(id: VideoTransitionId) => settings.setTransition(id)}
+      onToggleFx={(fxId: VideoFxId) => {
+        const cur = settings.masterFx;
+        settings.setMasterFx({
+          ...cur,
+          enabled: { ...cur.enabled, [fxId]: !cur.enabled[fxId] }
+        });
+      }}
+      onFxIntensityChange={(val) => settings.setVideoFxIntensity(val)}
+      onToggleOsdNow={handleToggleOsdNow}
+      onSelectDisplay={(id) => {
+        settings.setSelectedDisplayId(id);
+        if (settings.outputOpen) {
+          void window.tubedeckAPI?.moveOutputToDisplay(id, true);
+        }
+      }}
+      onToggleOutputWindow={async () => {
+        if (!window.tubedeckAPI) return;
+        if (settings.outputOpen) {
+          await window.tubedeckAPI.closeOutputWindow();
+          settings.setOutputOpen(false);
+        } else {
+          const res = await window.tubedeckAPI.openOutputWindow(
+            settings.selectedDisplayId,
+            true
+          );
+          if (res.success && res.data) {
+            settings.setOutputOpen(true);
+          }
+        }
+      }}
+      onOpenFramesDrawer={() => {
+        setSettingsDrawerOpen(false);
+        setFramesDrawerOpen(true);
+      }}
+    />
+  );
+
   const renderDeck = (deckId: DeckId, layout: 'full' | 'strip' | 'controls' = 'full') => (
     <DeckPanel
       layout={layout}
@@ -1947,68 +2096,43 @@ export function App(): ReactElement {
         className={`flex min-h-0 flex-col gap-2 overflow-y-auto ${dockHeight === null ? '' : 'flex-1'}`}
       >
       {/* Stage: Preview A | program on air | Preview B (the broadcast switcher) */}
-        <VideoPreviewBar
-          masterCanvasRef={masterCanvasRef}
-          attachPreviewContainer={attachPreviewContainer}
-          videoMix={settings.videoMode === 'linked' ? mixerStore.crossfader : settings.videoMix}
-          videoMode={settings.videoMode}
-          autoDurationSec={settings.autoDurationSec}
-          transition={settings.transition}
-          activeFx={settings.masterFx.enabled}
-          fxIntensity={settings.videoFxIntensity}
-          osdEnabled={settings.overlayConfig.osd.enabled}
-          displays={settings.displays}
-          selectedDisplayId={settings.selectedDisplayId}
-          outputOpen={settings.outputOpen}
-          frameEnabled={frameEnabled}
-          activeQualityA={settings.activeDeckQuality.A}
-          activeQualityB={settings.activeDeckQuality.B}
-          showHotkeys={settings.showHotkeys}
-          onVideoMixChange={(m) => settings.setVideoMix(m)}
-          onVideoModeChange={(mode: VideoCrossfaderMode) => settings.setVideoMode(mode)}
-          onAutoDurationChange={(sec) => settings.setAutoDurationSec(sec)}
-          onTriggerAutoTransition={handleTriggerAutoVideo}
-          onTransitionChange={(id: VideoTransitionId) => settings.setTransition(id)}
-          onToggleFx={(fxId: VideoFxId) => {
-            const cur = settings.masterFx;
-            settings.setMasterFx({
-              ...cur,
-              enabled: { ...cur.enabled, [fxId]: !cur.enabled[fxId] }
-            });
-          }}
-          onFxIntensityChange={(val) => settings.setVideoFxIntensity(val)}
-          onToggleOsdNow={handleToggleOsdNow}
-          onSelectDisplay={(id) => {
-            settings.setSelectedDisplayId(id);
-            if (settings.outputOpen) {
-              void window.tubedeckAPI?.moveOutputToDisplay(id, true);
-            }
-          }}
-          onToggleOutputWindow={async () => {
-            if (!window.tubedeckAPI) return;
-            if (settings.outputOpen) {
-              await window.tubedeckAPI.closeOutputWindow();
-              settings.setOutputOpen(false);
-            } else {
-              const res = await window.tubedeckAPI.openOutputWindow(
-                settings.selectedDisplayId,
-                true
-              );
-              if (res.success && res.data) {
-                settings.setOutputOpen(true);
-              }
-            }
-          }}
-          onOpenFramesDrawer={() => {
-            setSettingsDrawerOpen(false);
-            setFramesDrawerOpen(true);
-          }}
-        />
+        {renderVideoPanel('stage', {
+          left: (
+            <RundownColumn
+              title="Anteriores"
+              emptyText="Aquí aparecerá lo que ya sonó."
+              numbering="previous"
+              tracks={recentOnAir
+                .filter((t) => t.videoId !== deckATrackId && t.videoId !== deckBTrackId)
+                .slice(0, 2)}
+              onLoadToDeck={(d, t) => void handleLoadToDeck(d, t)}
+            />
+          ),
+          right: (
+            <RundownColumn
+              title="Siguientes"
+              emptyText={libraryStore.autoRadioEnabled ? 'La Radio llenará la cola.' : 'La cola está vacía.'}
+              align="end"
+              tracks={libraryStore.queue.slice(0, 2).map((q) => q.track)}
+              onLoadToDeck={(d, t) => void handleLoadToDeck(d, t)}
+              onRemove={(_t, idx) => {
+                const item = libraryStore.queue[idx];
+                if (!item) return;
+                const removed = queueEngineRef.current.removeByUser(item.queueId);
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+                if (removed) {
+                  libraryStore.setAutomixStatusNote(`Quitada "${removed.track.title}": no volverá a sugerirse en esta sesión.`);
+                }
+              }}
+            />
+          )
+        })}
 
       {/* Decks with their platters either side of the mixer */}
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(540px,31%)_minmax(0,1fr)] gap-2">
         {renderDeck('A')}
         <MixerCenter
+          topSlot={renderVideoPanel('controls')}
           phaseMeter={<PhaseMeter getTrackTime={getDeckTrackTime} />}
           showHotkeys={settings.showHotkeys}
           onTrimChange={async (d, v) => {
@@ -2279,7 +2403,10 @@ export function App(): ReactElement {
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
               onRemoveQueueItem={(queueId) => {
-                queueEngineRef.current.remove(queueId);
+                const removed = queueEngineRef.current.removeByUser(queueId);
+                if (removed) {
+                  libraryStore.setAutomixStatusNote(`Quitada "${removed.track.title}": no volverá a sugerirse en esta sesión.`);
+                }
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
               onOpenTasteSetup={() => {
@@ -2342,17 +2469,21 @@ export function App(): ReactElement {
                 }
                 const existingIds = [
                   seedTrack.videoId,
-                  ...queueEngineRef.current.getQueue().map((q) => q.track.videoId)
+                  ...queueEngineRef.current.getQueue().map((q) => q.track.videoId),
+                  ...queueEngineRef.current.getDismissedVideoIds()
                 ];
                 const res = await (window.tubedeckAPI.getRecommendedTracks
                   ? window.tubedeckAPI.getRecommendedTracks(seedTrack.videoId, existingIds, seedTrack.title)
                   : window.tubedeckAPI.getRelatedTracks(seedTrack.videoId, existingIds));
-                if (res.success && res.data.length > 0) {
-                  queueEngineRef.current.enqueueMany(res.data.slice(0, 3), 'youtube-radio');
+                const fresh = res.success ? queueEngineRef.current.filterFreshSuggestions(res.data) : [];
+                if (fresh.length > 0) {
+                  queueEngineRef.current.enqueueMany(fresh.slice(0, 3), 'youtube-radio');
                   libraryStore.setQueue(queueEngineRef.current.getQueue());
                   libraryStore.setAutomixStatusNote(
-                    `Radio YT agregó ${Math.min(3, res.data.length)} canciones según tus gustos.`
+                    `Radio YT agregó ${Math.min(3, fresh.length)} canciones según tus gustos.`
                   );
+                } else if (res.success) {
+                  libraryStore.setAutomixStatusNote('No hay sugerencias nuevas por ahora: prueba con otra canción sonando.');
                 }
               }}
             />

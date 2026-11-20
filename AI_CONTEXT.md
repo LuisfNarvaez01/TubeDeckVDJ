@@ -1,9 +1,9 @@
-# AI Context — Proyecta (antes TubeDeck VDJ) (`v3.1.1`)
+# AI Context — Proyecta (antes TubeDeck VDJ) (`v3.1.2`)
 
 Documento de referencia técnica rápida para darle contexto inmediato del proyecto a cualquier asistente de IA.
 
 ## 1. Resumen del Proyecto
-- **Nombre / Paquete:** `Proyecta` desde v3.1 (antes `TubeDeck VDJ`). Paquete `tubedeck-vdj`, versión `3.1.1`, `appId` `com.tubedeck.vdj` — NO cambiar paquete ni appId (la actualización automática depende de ellos). La carpeta de datos sigue siendo `%APPDATA%/TubeDeck VDJ` (`LEGACY_DATA_FOLDER` en `src/main/index.ts`). Instalador: `Proyecta-Setup-<versión>.exe`.
+- **Nombre / Paquete:** `Proyecta` desde v3.1 (antes `TubeDeck VDJ`). Paquete `tubedeck-vdj`, versión `3.1.2`, `appId` `com.tubedeck.vdj` — NO cambiar paquete ni appId (la actualización automática depende de ellos). La carpeta de datos sigue siendo `%APPDATA%/TubeDeck VDJ` (`LEGACY_DATA_FOLDER` en `src/main/index.ts`). Instalador: `Proyecta-Setup-<versión>.exe`.
 - **Objetivo:** Cabina DJ/VDJ de doble pantalla para Windows que mezcla videos de YouTube en streaming en memoria (**sin descargar archivos multimedia al disco** durante la reproducción normal), permite intercalar archivos o carpetas locales, renderiza video compuesto a 60 fps en Pantalla 2 con transiciones WebGL2 y marcos configurables, y ofrece descarga opcional por lotes de sesiones del historial.
 - **Repositorio / Auto-Actualizaciones:** `https://github.com/LuisfNarvaez01/TubeDeckVDJ.git` (`electron-updater` vía GitHub Releases + workflow `.github/workflows/release.yml` activado al hacer push de tags `v*`).
 
@@ -44,7 +44,9 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 - Grabación de mezcla (v3): `audio/MixRecorder.ts` (MediaRecorder del master post-limitador + canvas de Pantalla 2) → `main/services/MixRecordingService.ts` escribe por trozos en `Música/TubeDeck Grabaciones`.
 - Listas inteligentes (v3): `HistoryAndCratesService.getSmartCrate` (combina con lo que suena, Me gusta, Más tocadas, Recientes, Olvidadas).
 - Explorador local (v2.4+): `LocalLibraryService.browseDirectory` / `listDrivePlaces` (unidades, USB, accesos).
-- Distribución v3.1.1: escenario compacto arriba (`VideoPreviewBar`: transición · Previa A · AL AIRE · Previa B · efectos/P2; tamaños según alto de pantalla con `vh`) y debajo Deck A completo · Mixer · Deck B completo. `DeckPanel` aún admite `layout` strip/controls pero la app usa `full`. `DeckFxSamplerModule` ya no se monta (FX con tiempo en beats y sampler en los pads).
+- Distribución v3.1.2: escenario arriba = `RundownColumn` "Anteriores" (2 últimas que sonaron ≥10 s, `useLibraryStore.recentOnAir`) · Previa A · AL AIRE · Previa B · "Siguientes" (2 primeras de la cola). Los controles de video (`VideoPreviewBar part="controls"`) van en `MixerCenter topSlot`. Debajo: Deck A · Mixer · Deck B completos.
+- Vigilante de reproducción (v3.1.2, App RAF): si un deck "sonando" no avanza en 7 s se recarga en el mismo punto (invalida la URL); si se traba de nuevo cuenta como terminada (`stallEndedRef`) y el Automix pasa a la siguiente.
+- Canciones quitadas (v3.1.2): `removeByUser` / expulsar llaman `dismissSong`; la Radio y "Sugerir ahora" (`filterFreshSuggestions`) no las vuelven a poner en la sesión (por id y por `looseSongKey`).
 - Acceso a YouTube (v3.1.1): yt-dlp usa el Node del propio Electron como motor JS (`--js-runtimes node:<exe>` + `ELECTRON_RUN_AS_NODE`). Si YouTube pide "confirmar que no eres un robot", el error lleva `YOUTUBE_BOT_CHECK`; `YouTubeAccessMonitor` prueba al arrancar y la UI ofrece "Conectar YouTube" (ventana aislada, partición `persist:youtube-signin`; cookies exportadas a `userData/youtube-cookies.txt` para `--cookies`).
 - `src/renderer/video/`:
   - `WebGLVideoCompositor.ts` + `transitions.glsl.ts` + `effects.glsl.ts`: 9 transiciones de video, soporte de viewport interno `u_videoRect` para marcos y captura a 60 fps para Pantalla 2.
@@ -98,7 +100,7 @@ npx playwright test tests/e2e/appFlow.spec.ts
 # Pruebas E2E contra ejecutable Windows empaquetado
 $env:TUBEDECK_E2E_EXE="d:\Trabajos\Pantallas\dist\win-unpacked\TubeDeck VDJ.exe"; npx playwright test tests/e2e/appFlow.spec.ts
 
-# Empaquetado NSIS sin firma de código local (genera dist/Proyecta-Setup-3.1.1.exe)
+# Empaquetado NSIS sin firma de código local (genera dist/Proyecta-Setup-3.1.2.exe)
 $env:CSC_IDENTITY_AUTO_DISCOVERY="false"; npx electron-builder --win nsis
 ```
 

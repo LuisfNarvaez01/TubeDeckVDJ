@@ -121,3 +121,35 @@ describe('radio repeats', () => {
     expect(looseSongKey('Canción')).toBe('cancion');
   });
 });
+
+describe('songs the DJ removed', () => {
+  it('never come back from the radio this session, in any upload', async () => {
+    const engine = new QueueAndAutomixEngine();
+    const item = engine.enqueue(makeTrack('rumores0001', 'Rumores (Video Oficial)'), 'youtube-radio');
+    engine.removeByUser(item.queueId);
+    const fetchSuggestedTracks = vi.fn(async (_seed: string, _exclude: string[]) => [
+      makeTrack('rumores0001', 'Rumores (Video Oficial)'),
+      makeTrack('rumores0002', 'Artista - Rumores [Letra]'),
+      makeTrack('otra0000001', 'Otra canción')
+    ]);
+    const loadDeck = vi.fn(async () => {});
+    await engine.tick(
+      playingOnA(),
+      { ...OPTS, autoRadioEnabled: true },
+      { loadDeck, startTransition: vi.fn(), onTrackSkipped: vi.fn(), fetchSuggestedTracks }
+    );
+    expect(loadDeck).toHaveBeenCalledWith('B', expect.objectContaining({ videoId: 'otra0000001' }));
+    expect(fetchSuggestedTracks.mock.calls[0][1]).toContain('rumores0001');
+  });
+
+  it('filters "Sugerir ahora" results the same way', () => {
+    const engine = new QueueAndAutomixEngine();
+    engine.dismissSong(makeTrack('rumores0001', 'Rumores'));
+    const fresh = engine.filterFreshSuggestions([
+      makeTrack('rumores0002', 'Rumores (Audio)'),
+      makeTrack('nueva000001', 'Nueva'),
+      makeTrack('nueva000002', 'Nueva (Video Oficial)')
+    ]);
+    expect(fresh.map((t) => t.videoId)).toEqual(['nueva000001']);
+  });
+});

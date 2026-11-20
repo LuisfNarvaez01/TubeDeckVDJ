@@ -25,6 +25,8 @@ interface MixerCenterProps {
   showHotkeys?: boolean;
   /** Beat-match meter shown above the crossfader. */
   phaseMeter?: ReactNode;
+  /** Controls shown across the top of the mixer card (video transitions, FX, Screen 2). */
+  topSlot?: ReactNode;
 }
 
 const BANDS: Array<{ key: EqBand; label: string }> = [
@@ -50,7 +52,8 @@ export function MixerCenter({
   videoLinked = true,
   onToggleVideoLinked,
   showHotkeys = false,
-  phaseMeter
+  phaseMeter,
+  topSlot
 }: MixerCenterProps): ReactElement {
   const mixer = useMixerStore();
   const nextAutoTarget: DeckId = mixer.crossfader <= 0.5 ? 'B' : 'A';
@@ -155,10 +158,11 @@ export function MixerCenter({
 
   return (
     <section
-      className="flex min-w-0 items-center justify-center rounded-xl border border-white/[0.06] bg-surface p-2"
+      className="flex min-w-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-surface p-2"
       aria-label="Mixer Central"
     >
-      <div className="flex w-full items-center justify-center gap-2">
+      {topSlot}
+      <div className="flex w-full flex-1 items-center justify-center gap-2">
         {renderChannel('A')}
 
         {/* Monochrome Master + Cue + Crossfader Center Console */}
