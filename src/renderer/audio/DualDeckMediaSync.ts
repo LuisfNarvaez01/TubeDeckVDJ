@@ -1,4 +1,4 @@
-import type { DeckId, StreamMode } from '../../shared/types';
+import type { DeckId, StreamMode, VideoQualityPreference, VideoQualityTier } from '../../shared/types';
 
 export interface DeckMediaElements {
   audioSourceEl: HTMLMediaElement;
@@ -10,17 +10,23 @@ export interface LoadDeckStreamParams {
   muxedUrl?: string;
   videoUrl?: string;
   audioUrl?: string;
+  videoQualityUrls?: Partial<Record<VideoQualityTier, string>>;
+  preferredQuality?: VideoQualityPreference;
+  mediaKind?: 'video' | 'audio';
+  onQualityDowngraded?: (quality: VideoQualityTier, reason: string) => void;
 }
 
 const SOFT_DRIFT_DEADBAND_SEC = 0.06;
 const HARD_DRIFT_THRESHOLD_SEC = 0.65;
 const HARD_DRIFT_COOLDOWN_MS = 2500;
+const STALL_DETECTION_MS = 2500;
+const TIER_ORDER_DESC: VideoQualityTier[] = ['1080p', '720p', '480p', '360p'];
 
 function clampRate(rate: number): number {
   return Math.min(2.0, Math.max(0.25, rate));
 }
 
-function waitForCanPlay(el: HTMLMediaElement, timeoutMs = 4000): Promise<void> {
+function waitForCanPlay(el: HTMLMediaElement, timeoutMs = 4500): Promise<void> {
   if (!el.src || el.readyState >= 3) {
     return Promise.resolve();
   }
@@ -52,14 +58,47 @@ function setElementPreservesPitch(el: HTMLMediaElement, enabled: boolean): void 
   target.webkitPreservesPitch = enabled;
 }
 
+function pickInitialVideoVariant(
+  pref: VideoQualityPreference,
+  variants?: Partial<Record<VideoQualityTier, string>>,
+  fallbackUrl?: string
+): { tier: VideoQualityTier | null; url: string } {
+  const candidatesByPref: Record<VideoQualityPreference, VideoQualityTier[]> = {
+    auto: ['720p', '480p', '360p', '1080p'],
+    '1080p': ['1080p', '720p', '480p', '360p'],
+    '720p': ['720p', '480p', '360p', '1080p'],
+    '480p': ['480p', '360p', '720p', '1080p'],
+    '360p': ['360p', '480p', '720p', '1080p']
+  };
+
+  if (variants) {
+    for (const tier of candidatesByPref[pref]) {
+      const url = variants[tier];
+      if (url) return { tier, url };
+    }
+  }
+  return { tier: pref === 'auto' ? '720p' : pref, url: fallbackUrl ?? '' };
+}
+
 export class DualDeckMediaSync {
   readonly deckId: DeckId;
   private readonly audioEl: HTMLAudioElement;
   private readonly videoEl: HTMLVideoElement;
   private mode: StreamMode = 'muxed';
+  private mediaKind: 'video' | 'audio' = 'video';
+  private preferredQuality: VideoQualityPreference = 'auto';
+  private activeQuality: VideoQualityTier | null = null;
+  private videoQualityUrls: Partial<Record<VideoQualityTier, string>> = {};
+  private onQualityDowngraded?: (quality: VideoQualityTier, reason: string) => void;
+
   private basePlaybackRate = 1;
   private tempBendMultiplier = 1;
   private lastDriftCorrectionMs = -Infinity;
+
+  private lastHealthAudioTime = 0;
+  private lastHealthVideoTime = 0;
+  private stallStartedMs: number | null = null;
+  private stallRecoveryCount = 0;
   private disposed = false;
 
   constructor(
@@ -82,8 +121,19 @@ export class DualDeckMediaSync {
     return this.mode;
   }
 
+  getMediaKind(): 'video' | 'audio' {
+    return this.mediaKind;
+  }
+
+  getActiveQuality(): VideoQualityTier | null {
+    return this.activeQuality;
+  }
+
   getAudioElement(): HTMLMediaElement {
-    return this.mode === 'dash-split' ? this.audioEl : this.videoEl;
+    if (this.mediaKind === 'audio' || this.mode === 'dash-split') {
+      return this.audioEl;
+    }
+    return this.videoEl;
   }
 
   getAllMediaElements(): [HTMLAudioElement, HTMLVideoElement] {
@@ -94,24 +144,55 @@ export class DualDeckMediaSync {
     return this.videoEl;
   }
 
+  private resetHealthTracker(): void {
+    this.lastHealthAudioTime = 0;
+    this.lastHealthVideoTime = 0;
+    this.stallStartedMs = null;
+    this.stallRecoveryCount = 0;
+  }
+
   async load(params: LoadDeckStreamParams): Promise<DeckMediaElements> {
     if (this.disposed) {
       throw new Error(`DualDeckMediaSync(${this.deckId}) has been disposed`);
     }
 
     this.pause();
+    this.resetHealthTracker();
     this.mode = params.mode;
+    this.mediaKind = params.mediaKind ?? 'video';
+    this.preferredQuality = params.preferredQuality ?? this.preferredQuality;
+    this.videoQualityUrls = params.videoQualityUrls ? { ...params.videoQualityUrls } : {};
+    this.onQualityDowngraded = params.onQualityDowngraded;
 
-    if (params.mode === 'dash-split') {
+    if (this.mediaKind === 'audio') {
+      const audioSrc = params.audioUrl ?? params.muxedUrl;
+      if (!audioSrc) {
+        throw new Error('audio mediaKind requires audioUrl or muxedUrl');
+      }
+      this.activeQuality = null;
+      this.videoEl.src = '';
+      this.audioEl.crossOrigin = 'anonymous';
+      this.audioEl.muted = false;
+      this.audioEl.src = audioSrc;
+      this.audioEl.currentTime = 0;
+      this.audioEl.load();
+      await waitForCanPlay(this.audioEl);
+    } else if (params.mode === 'dash-split') {
       if (!params.videoUrl || !params.audioUrl) {
         throw new Error('dash-split mode requires both videoUrl and audioUrl');
       }
+      const picked = pickInitialVideoVariant(
+        this.preferredQuality,
+        this.videoQualityUrls,
+        params.videoUrl
+      );
+      this.activeQuality = picked.tier;
       this.audioEl.crossOrigin = 'anonymous';
       this.videoEl.crossOrigin = 'anonymous';
       this.audioEl.muted = false;
       this.videoEl.muted = true;
       this.audioEl.src = params.audioUrl;
-      this.videoEl.src = params.videoUrl;
+      this.videoEl.src = picked.url || params.videoUrl;
       this.audioEl.currentTime = 0;
       this.videoEl.currentTime = 0;
       this.audioEl.load();
@@ -121,6 +202,7 @@ export class DualDeckMediaSync {
       if (!params.muxedUrl) {
         throw new Error('muxed mode requires muxedUrl');
       }
+      this.activeQuality = null;
       this.audioEl.src = '';
       this.videoEl.crossOrigin = 'anonymous';
       this.videoEl.muted = false;
@@ -136,7 +218,37 @@ export class DualDeckMediaSync {
     };
   }
 
+  setPreferredQuality(pref: VideoQualityPreference): VideoQualityTier | null {
+    this.preferredQuality = pref;
+    if (this.mode !== 'dash-split' || this.mediaKind !== 'video') {
+      return this.activeQuality;
+    }
+    const picked = pickInitialVideoVariant(pref, this.videoQualityUrls);
+    if (picked.url && picked.tier && picked.tier !== this.activeQuality) {
+      this.hotSwapVideoQuality(picked.tier, picked.url);
+    }
+    return this.activeQuality;
+  }
+
+  private hotSwapVideoQuality(nextTier: VideoQualityTier, url: string): void {
+    const wasPlaying = !this.audioEl.paused;
+    const syncTime = this.audioEl.currentTime || 0;
+    this.activeQuality = nextTier;
+    this.videoEl.src = url;
+    this.videoEl.currentTime = syncTime;
+    this.videoEl.playbackRate = this.audioEl.playbackRate;
+    this.videoEl.load();
+    this.resetHealthTracker();
+    if (wasPlaying) {
+      void Promise.resolve(this.videoEl.play?.()).catch(() => {});
+    }
+  }
+
   async play(): Promise<void> {
+    if (this.mediaKind === 'audio') {
+      await this.audioEl.play();
+      return;
+    }
     if (this.mode === 'dash-split') {
       if (Math.abs(this.videoEl.currentTime - this.audioEl.currentTime) > 0.15) {
         this.videoEl.currentTime = this.audioEl.currentTime;
@@ -154,6 +266,11 @@ export class DualDeckMediaSync {
 
   async seek(timeSec: number): Promise<void> {
     const safeTime = Math.max(0, timeSec);
+    if (this.mediaKind === 'audio') {
+      this.audioEl.currentTime = safeTime;
+      await waitForCanPlay(this.audioEl, 1500);
+      return;
+    }
     if (this.mode === 'dash-split') {
       const wasPlaying = !this.audioEl.paused;
       if (wasPlaying) {
@@ -161,6 +278,7 @@ export class DualDeckMediaSync {
       }
       this.audioEl.currentTime = safeTime;
       this.videoEl.currentTime = safeTime;
+      this.resetHealthTracker();
       await Promise.all([waitForCanPlay(this.audioEl, 1500), waitForCanPlay(this.videoEl, 1500)]);
       if (wasPlaying) {
         await this.play();
@@ -191,10 +309,10 @@ export class DualDeckMediaSync {
   }
 
   syncDrift(nowMs = Date.now()): boolean {
-    if (this.mode !== 'dash-split') {
+    if (this.mode !== 'dash-split' || this.mediaKind !== 'video') {
       return false;
     }
-    if (this.audioEl.paused || this.videoEl.paused || this.videoEl.readyState < 2) {
+    if (this.audioEl.paused || this.videoEl.paused || this.videoEl.readyState < 3) {
       return false;
     }
 
@@ -225,6 +343,66 @@ export class DualDeckMediaSync {
     return true;
   }
 
+  checkVideoHealth(nowMs = Date.now()): 'ok' | 'resumed' | 'kicked' | 'downgraded' {
+    if (this.mode !== 'dash-split' || this.mediaKind !== 'video' || this.audioEl.paused) {
+      this.stallStartedMs = null;
+      return 'ok';
+    }
+
+    if (this.videoEl.paused && this.videoEl.readyState >= 2) {
+      void Promise.resolve(this.videoEl.play?.()).catch(() => {});
+      return 'resumed';
+    }
+
+    const audioDelta = Math.abs(this.audioEl.currentTime - this.lastHealthAudioTime);
+    const videoDelta = Math.abs(this.videoEl.currentTime - this.lastHealthVideoTime);
+    this.lastHealthAudioTime = this.audioEl.currentTime;
+
+    if (videoDelta >= 0.05) {
+      this.lastHealthVideoTime = this.videoEl.currentTime;
+      this.stallStartedMs = null;
+      return 'ok';
+    }
+
+    if (audioDelta > 0.04) {
+      if (this.stallStartedMs === null) {
+        this.stallStartedMs = nowMs;
+        return 'ok';
+      }
+
+      if (nowMs - this.stallStartedMs >= STALL_DETECTION_MS) {
+        if (this.stallRecoveryCount === 0) {
+          this.stallRecoveryCount = 1;
+          this.stallStartedMs = nowMs;
+          if (this.videoEl.readyState >= 2) {
+            this.videoEl.currentTime = this.audioEl.currentTime + 0.12;
+          }
+          this.lastHealthVideoTime = this.videoEl.currentTime;
+          void Promise.resolve(this.videoEl.play?.()).catch(() => {});
+          return 'kicked';
+        }
+
+        const currentIdx = this.activeQuality ? TIER_ORDER_DESC.indexOf(this.activeQuality) : 1;
+        const lowerTier = TIER_ORDER_DESC.slice(Math.max(0, currentIdx + 1)).find(
+          (t) => Boolean(this.videoQualityUrls[t])
+        );
+        if (lowerTier && this.videoQualityUrls[lowerTier]) {
+          const nextUrl = this.videoQualityUrls[lowerTier]!;
+          this.hotSwapVideoQuality(lowerTier, nextUrl);
+          this.onQualityDowngraded?.(
+            lowerTier,
+            `Video ajustado a ${lowerTier} para mantener fluidez sin cortes`
+          );
+          return 'downgraded';
+        }
+
+        this.stallStartedMs = nowMs;
+      }
+    }
+
+    return 'ok';
+  }
+
   isEnded(): boolean {
     return Boolean(this.getAudioElement().ended);
   }
@@ -250,4 +428,3 @@ export class DualDeckMediaSync {
     this.videoEl.src = '';
   }
 }
-

@@ -54,7 +54,7 @@ describe('StreamResolverService', () => {
     expect(runner).toHaveBeenCalledTimes(2);
   });
 
-  it('falls back to dash-split <=1080p when no muxed format exists', async () => {
+  it('prefers 720p H.264 hardware-friendly default and populates quality variants over AV1', async () => {
     const runner = vi.fn<YtDlpRunner>().mockResolvedValue({
       formats: [
         {
@@ -67,10 +67,37 @@ describe('StreamResolverService', () => {
           fps: 60
         },
         {
+          format_id: '398',
+          ext: 'mp4',
+          height: 720,
+          vcodec: 'av01.0.05M.08',
+          acodec: 'none',
+          url: `https://cdn.example/video720av1?expire=${expireEpochSec}`,
+          fps: 30
+        },
+        {
+          format_id: '136',
+          ext: 'mp4',
+          height: 720,
+          vcodec: 'avc1.4D401F',
+          acodec: 'none',
+          url: `https://cdn.example/video720h264?expire=${expireEpochSec}`,
+          fps: 30
+        },
+        {
+          format_id: '135',
+          ext: 'mp4',
+          height: 480,
+          vcodec: 'avc1.4D401E',
+          acodec: 'none',
+          url: `https://cdn.example/video480h264?expire=${expireEpochSec}`,
+          fps: 30
+        },
+        {
           format_id: '137',
           ext: 'mp4',
           height: 1080,
-          vcodec: 'avc1',
+          vcodec: 'avc1.640028',
           acodec: 'none',
           url: `https://cdn.example/video1080?expire=${expireEpochSec}`,
           fps: 30
@@ -89,8 +116,11 @@ describe('StreamResolverService', () => {
     const service = new StreamResolverService(runner);
     const resolved = await service.resolve('abcDEF_1234');
     expect(resolved.mode).toBe('dash-split');
-    expect(resolved.videoUrl).toContain('video1080');
+    expect(resolved.videoUrl).toContain('video720h264');
     expect(resolved.audioUrl).toContain('audio140');
+    expect(resolved.videoVariants?.['1080p']?.url).toContain('video1080');
+    expect(resolved.videoVariants?.['720p']?.url).toContain('video720h264');
+    expect(resolved.videoVariants?.['480p']?.url).toContain('video480h264');
   });
 
   it('rejects invalid videoId and falls back to Innertube when yt-dlp fails', async () => {

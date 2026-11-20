@@ -1,6 +1,6 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import type { ResolvedStream } from '../../shared/types';
+import type { ResolvedStream, VideoQualityTier } from '../../shared/types';
 import type { YtDlpBinaryManager } from './YtDlpBinaryManager';
 
 const execFileAsync = promisify(execFile);
@@ -68,6 +68,34 @@ function formatMime(fmt: YtDlpFormat, kind: 'muxed' | 'video' | 'audio'): string
   return ext === 'webm' ? 'video/webm' : 'video/mp4';
 }
 
+function codecScore(vcodec?: string): number {
+  const vc = (vcodec ?? '').toLowerCase();
+  if (vc.startsWith('avc1') || vc.includes('h264')) return 3; // hardware-decoded H.264 everywhere
+  if (vc.startsWith('vp9') || vc.includes('vp09')) return 2;
+  return 1; // av01 / others (heavier CPU if no hardware AV1)
+}
+
+function compareVideoFormats(a: YtDlpFormat, b: YtDlpFormat): number {
+  const codecDiff = codecScore(b.vcodec) - codecScore(a.vcodec);
+  if (codecDiff !== 0) return codecDiff;
+  const hDiff = (b.height ?? 0) - (a.height ?? 0);
+  if (hDiff !== 0) return hDiff;
+  const aFps = (a.fps ?? 30) <= 30 ? 1 : 0;
+  const bFps = (b.fps ?? 30) <= 30 ? 1 : 0;
+  if (aFps !== bFps) return bFps - aFps;
+  const aMp4 = a.ext === 'mp4' ? 1 : 0;
+  const bMp4 = b.ext === 'mp4' ? 1 : 0;
+  if (aMp4 !== bMp4) return bMp4 - aMp4;
+  return (b.tbr ?? 0) - (a.tbr ?? 0);
+}
+
+const TIER_RANGES: Array<{ tier: VideoQualityTier; minH: number; maxH: number }> = [
+  { tier: '1080p', minH: 900, maxH: 1080 },
+  { tier: '720p', minH: 600, maxH: 899 },
+  { tier: '480p', minH: 420, maxH: 599 },
+  { tier: '360p', minH: 240, maxH: 419 }
+];
+
 function selectBestFormats(videoId: string, info: YtDlpInfoJson): ResolvedStream {
   if (info.is_live) {
     throw new Error('Livestreams cannot be mixed in TubeDeck VDJ');
@@ -94,17 +122,6 @@ function selectBestFormats(videoId: string, info: YtDlpInfoJson): ResolvedStream
       return (b.tbr ?? 0) - (a.tbr ?? 0);
     });
 
-  if (muxedCandidates.length > 0) {
-    const chosen = muxedCandidates[0];
-    return {
-      videoId,
-      mode: 'muxed',
-      muxedUrl: chosen.url!,
-      expiresAtMs: extractExpireMs([chosen.url]),
-      mimeTypes: { muxed: formatMime(chosen, 'muxed') }
-    };
-  }
-
   const videoCandidates = formats
     .filter(
       (f) =>
@@ -114,14 +131,7 @@ function selectBestFormats(videoId: string, info: YtDlpInfoJson): ResolvedStream
         (f.height ?? 0) <= 1080 &&
         (f.fps ?? 30) <= 60
     )
-    .sort((a, b) => {
-      const hDiff = (b.height ?? 0) - (a.height ?? 0);
-      if (hDiff !== 0) return hDiff;
-      const aMp4 = a.ext === 'mp4' ? 1 : 0;
-      const bMp4 = b.ext === 'mp4' ? 1 : 0;
-      if (aMp4 !== bMp4) return bMp4 - aMp4;
-      return (b.tbr ?? 0) - (a.tbr ?? 0);
-    });
+    .sort(compareVideoFormats);
 
   const audioCandidates = formats
     .filter((f) => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none'))
@@ -132,19 +142,69 @@ function selectBestFormats(videoId: string, info: YtDlpInfoJson): ResolvedStream
       return (b.abr ?? b.tbr ?? 0) - (a.abr ?? a.tbr ?? 0);
     });
 
+  // Prefer high-quality muxed MP4 (>= 480p) only when multi-tier DASH variants aren't present
+  if (
+    muxedCandidates.length > 0 &&
+    (muxedCandidates[0].height ?? 0) >= 480 &&
+    (videoCandidates.length === 0 || audioCandidates.length === 0)
+  ) {
+    const chosen = muxedCandidates[0];
+    return {
+      videoId,
+      mode: 'muxed',
+      muxedUrl: chosen.url!,
+      expiresAtMs: extractExpireMs([chosen.url]),
+      mimeTypes: { muxed: formatMime(chosen, 'muxed') }
+    };
+  }
+
   if (videoCandidates.length > 0 && audioCandidates.length > 0) {
-    const v = videoCandidates[0];
-    const a = audioCandidates[0];
+    const videoVariants: ResolvedStream['videoVariants'] = {};
+    for (const { tier, minH, maxH } of TIER_RANGES) {
+      const match = videoCandidates.find((f) => {
+        const h = f.height ?? 0;
+        return h >= minH && h <= maxH;
+      });
+      if (match?.url) {
+        videoVariants[tier] = { url: match.url, mimeType: formatMime(match, 'video') };
+      }
+    }
+
+    // Default to 720p H.264 for rock-solid smooth playback without buffering stalls
+    const primaryVideo =
+      videoCandidates.find((f) => (f.height ?? 0) >= 600 && (f.height ?? 0) <= 899) ??
+      videoCandidates.find((f) => (f.height ?? 0) >= 420 && (f.height ?? 0) <= 599) ??
+      videoCandidates[0];
+    const primaryAudio = audioCandidates[0];
+
+    const allUrls = [
+      primaryVideo.url,
+      primaryAudio.url,
+      ...Object.values(videoVariants).map((v) => v.url)
+    ];
+
     return {
       videoId,
       mode: 'dash-split',
-      videoUrl: v.url!,
-      audioUrl: a.url!,
-      expiresAtMs: extractExpireMs([v.url, a.url]),
+      videoUrl: primaryVideo.url!,
+      audioUrl: primaryAudio.url!,
+      videoVariants,
+      expiresAtMs: extractExpireMs(allUrls),
       mimeTypes: {
-        video: formatMime(v, 'video'),
-        audio: formatMime(a, 'audio')
+        video: formatMime(primaryVideo, 'video'),
+        audio: formatMime(primaryAudio, 'audio')
       }
+    };
+  }
+
+  if (muxedCandidates.length > 0) {
+    const chosen = muxedCandidates[0];
+    return {
+      videoId,
+      mode: 'muxed',
+      muxedUrl: chosen.url!,
+      expiresAtMs: extractExpireMs([chosen.url]),
+      mimeTypes: { muxed: formatMime(chosen, 'muxed') }
     };
   }
 
@@ -167,7 +227,8 @@ export function createDefaultYtDlpRunner(binaryManager: YtDlpBinaryManager): YtD
 }
 
 export async function defaultInnertubeFallback(videoId: string): Promise<ResolvedStream> {
-  const { Innertube } = await import('youtubei.js');
+  const { Innertube, Log } = await import('youtubei.js');
+  Log.setLevel(Log.Level.NONE);
   const yt = await Innertube.create();
   const info = await yt.getBasicInfo(videoId);
   const streaming = info.streaming_data;
@@ -187,9 +248,13 @@ export async function defaultInnertubeFallback(videoId: string): Promise<Resolve
     };
   }
 
-  const videoFmt = streaming.adaptive_formats?.find(
-    (f) => f.has_video && !f.has_audio && (f.height ?? 0) <= 1080
-  );
+  const videoFmt =
+    streaming.adaptive_formats?.find(
+      (f) => f.has_video && !f.has_audio && (f.height ?? 0) <= 720 && (f.height ?? 0) >= 360
+    ) ??
+    streaming.adaptive_formats?.find(
+      (f) => f.has_video && !f.has_audio && (f.height ?? 0) <= 1080
+    );
   const audioFmt = streaming.adaptive_formats?.find((f) => f.has_audio && !f.has_video);
   if (videoFmt && audioFmt) {
     const [videoUrl, audioUrl] = await Promise.all([
@@ -201,6 +266,7 @@ export async function defaultInnertubeFallback(videoId: string): Promise<Resolve
       mode: 'dash-split',
       videoUrl,
       audioUrl,
+      videoVariants: { '720p': { url: videoUrl, mimeType: 'video/mp4' } },
       expiresAtMs: extractExpireMs([videoUrl, audioUrl]),
       mimeTypes: { video: 'video/mp4', audio: 'audio/mp4' }
     };
@@ -230,7 +296,6 @@ export class StreamResolverService {
 
     const cached = this.cache.get(videoId);
     if (cached && Date.now() < cached.expiresAtMs - EXPIRY_SAFETY_MS) {
-      // refresh LRU order
       this.cache.delete(videoId);
       this.cache.set(videoId, cached);
       return cached;
@@ -294,4 +359,3 @@ export class StreamResolverService {
     this.cache.set(videoId, entry);
   }
 }
-

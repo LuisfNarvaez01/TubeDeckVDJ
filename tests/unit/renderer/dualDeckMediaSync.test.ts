@@ -123,5 +123,55 @@ describe('DualDeckMediaSync', () => {
     expect(audioEl.currentTime).toBe(45.5);
     expect(videoEl.currentTime).toBe(45.5);
   });
+
+  it('detects frozen video while audio progresses and auto-downgrades quality without stopping audio', async () => {
+    const audioEl = createFakeMediaElement('audio') as HTMLAudioElement;
+    const videoEl = createFakeMediaElement('video') as HTMLVideoElement;
+    const onQualityDowngraded = vi.fn();
+    const sync = new DualDeckMediaSync('A', { audioEl, videoEl });
+
+    await sync.load({
+      mode: 'dash-split',
+      videoUrl: 'http://127.0.0.1:9999/stream/abc12345678/video?token=t',
+      audioUrl: 'http://127.0.0.1:9999/stream/abc12345678/audio?token=t',
+      preferredQuality: 'auto',
+      videoQualityUrls: {
+        '720p': 'http://127.0.0.1:9999/stream/abc12345678/video?token=t&quality=720p',
+        '480p': 'http://127.0.0.1:9999/stream/abc12345678/video?token=t&quality=480p'
+      },
+      onQualityDowngraded
+    });
+    expect(sync.getActiveQuality()).toBe('720p');
+    await sync.play();
+
+    // Simulate audio advancing while video stays frozen at 5.0s
+    videoEl.currentTime = 5.0;
+    audioEl.currentTime = 5.1;
+    expect(sync.checkVideoHealth(1000)).toBe('ok');
+
+    audioEl.currentTime = 5.3;
+    expect(sync.checkVideoHealth(2000)).toBe('ok');
+
+    // First stall window >= 2500ms -> kicks video
+    audioEl.currentTime = 7.6;
+    expect(sync.checkVideoHealth(4600)).toBe('kicked');
+
+    // Still frozen 2600ms later -> downgrades 720p -> 480p seamlessly while audio stays unpaused
+    audioEl.currentTime = 10.3;
+    expect(sync.checkVideoHealth(7200)).toBe('downgraded');
+    expect(sync.getActiveQuality()).toBe('480p');
+    expect(videoEl.src).toContain('quality=480p');
+    expect(audioEl.paused).toBe(false);
+    expect(onQualityDowngraded).toHaveBeenCalledWith('480p', expect.any(String));
+
+    // Audio-only local file loads cleanly without video element
+    const localAud = await sync.load({
+      mode: 'muxed',
+      mediaKind: 'audio',
+      muxedUrl: 'http://127.0.0.1:9999/local/track1?token=t'
+    });
+    expect(localAud.audioSourceEl).toBe(audioEl);
+    expect(sync.getMediaKind()).toBe('audio');
+  });
 });
 

@@ -1,8 +1,10 @@
 import crypto from 'crypto';
+import fs from 'fs';
 import http, { type IncomingMessage, type ServerResponse } from 'http';
+import path from 'path';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
-import type { ResolvedStream } from '../../shared/types';
+import type { ResolvedStream, VideoQualityTier } from '../../shared/types';
 
 export type StreamRole = 'muxed' | 'video' | 'audio';
 
@@ -13,6 +15,23 @@ export interface StreamResolverLike {
 
 const VALID_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const VALID_ROLES = new Set<StreamRole>(['muxed', 'video', 'audio']);
+const VALID_QUALITIES = new Set<VideoQualityTier>(['1080p', '720p', '480p', '360p']);
+const VIDEO_CHUNK_BYTES = 2 * 1024 * 1024; // 2 MB bounded chunk prevents YouTube CDN open-range throttling
+const UPSTREAM_TIMEOUT_MS = 12_000;
+
+const LOCAL_MIME_MAP: Record<string, { mimeType: string; mediaKind: 'video' | 'audio' }> = {
+  '.mp4': { mimeType: 'video/mp4', mediaKind: 'video' },
+  '.m4v': { mimeType: 'video/mp4', mediaKind: 'video' },
+  '.webm': { mimeType: 'video/webm', mediaKind: 'video' },
+  '.mkv': { mimeType: 'video/x-matroska', mediaKind: 'video' },
+  '.mov': { mimeType: 'video/quicktime', mediaKind: 'video' },
+  '.mp3': { mimeType: 'audio/mpeg', mediaKind: 'audio' },
+  '.wav': { mimeType: 'audio/wav', mediaKind: 'audio' },
+  '.flac': { mimeType: 'audio/flac', mediaKind: 'audio' },
+  '.m4a': { mimeType: 'audio/mp4', mediaKind: 'audio' },
+  '.aac': { mimeType: 'audio/aac', mediaKind: 'audio' },
+  '.ogg': { mimeType: 'audio/ogg', mediaKind: 'audio' }
+};
 
 function tokensMatch(provided: string | null, expected: string): boolean {
   if (!provided) return false;
@@ -22,13 +41,21 @@ function tokensMatch(provided: string | null, expected: string): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-function selectRoleUrl(resolved: ResolvedStream, role: StreamRole): { url: string; contentType: string } {
+function selectRoleUrl(
+  resolved: ResolvedStream,
+  role: StreamRole,
+  quality?: VideoQualityTier | null
+): { url: string; contentType: string } {
   if (role === 'muxed') {
     const url = resolved.muxedUrl ?? resolved.videoUrl;
     if (!url) throw new Error('No muxed URL resolved');
     return { url, contentType: resolved.mimeTypes.muxed ?? 'video/mp4' };
   }
   if (role === 'video') {
+    const variant = quality ? resolved.videoVariants?.[quality] : undefined;
+    if (variant) {
+      return { url: variant.url, contentType: variant.mimeType };
+    }
     const url = resolved.videoUrl ?? resolved.muxedUrl;
     if (!url) throw new Error('No video URL resolved');
     return { url, contentType: resolved.mimeTypes.video ?? 'video/mp4' };
@@ -38,11 +65,33 @@ function selectRoleUrl(resolved: ResolvedStream, role: StreamRole): { url: strin
   return { url, contentType: resolved.mimeTypes.audio ?? 'audio/mp4' };
 }
 
+export function buildUpstreamRangeHeader(
+  role: StreamRole,
+  method: string,
+  incomingRange: string | undefined
+): string | undefined {
+  if (method === 'GET' && role === 'video') {
+    if (!incomingRange) {
+      return `bytes=0-${VIDEO_CHUNK_BYTES - 1}`;
+    }
+    const openMatch = /^bytes=(\d+)-$/.exec(incomingRange.trim());
+    if (openMatch) {
+      const start = Number(openMatch[1]);
+      if (Number.isFinite(start) && start >= 0) {
+        return `bytes=${start}-${start + VIDEO_CHUNK_BYTES - 1}`;
+      }
+    }
+  }
+  return incomingRange;
+}
+
 export class RamStreamProxy {
   private readonly resolver: StreamResolverLike;
   private readonly token: string;
   private server: http.Server | null = null;
   private port = 0;
+  private localFilesById = new Map<string, string>();
+  private localIdsByPath = new Map<string, string>();
 
   constructor(resolver: StreamResolverLike) {
     this.resolver = resolver;
@@ -72,11 +121,46 @@ export class RamStreamProxy {
     return { port: this.port, token: this.token };
   }
 
-  buildLocalUrl(videoId: string, role: StreamRole): string {
+  buildLocalUrl(videoId: string, role: StreamRole, quality?: VideoQualityTier): string {
     if (!this.server || this.port === 0) {
       throw new Error('RamStreamProxy has not been started');
     }
-    return `http://127.0.0.1:${this.port}/stream/${encodeURIComponent(videoId)}/${role}?token=${this.token}`;
+    const qParam = role === 'video' && quality ? `&quality=${quality}` : '';
+    return `http://127.0.0.1:${this.port}/stream/${encodeURIComponent(videoId)}/${role}?token=${this.token}${qParam}`;
+  }
+
+  registerLocalFile(filePath: string): {
+    id: string;
+    url: string;
+    mimeType: string;
+    mediaKind: 'video' | 'audio';
+  } {
+    if (!this.server || this.port === 0) {
+      throw new Error('RamStreamProxy has not been started');
+    }
+    const resolvedPath = path.resolve(filePath);
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+      throw new Error(`Local media file not found: ${resolvedPath}`);
+    }
+    const ext = path.extname(resolvedPath).toLowerCase();
+    const meta = LOCAL_MIME_MAP[ext];
+    if (!meta) {
+      throw new Error(`Unsupported local media extension: ${ext}`);
+    }
+
+    let id = this.localIdsByPath.get(resolvedPath);
+    if (!id) {
+      id = crypto.randomUUID();
+      this.localIdsByPath.set(resolvedPath, id);
+      this.localFilesById.set(id, resolvedPath);
+    }
+
+    return {
+      id,
+      url: `http://127.0.0.1:${this.port}/local/${encodeURIComponent(id)}?token=${this.token}`,
+      mimeType: meta.mimeType,
+      mediaKind: meta.mediaKind
+    };
   }
 
   async stop(): Promise<void> {
@@ -116,6 +200,12 @@ export class RamStreamProxy {
       return;
     }
 
+    const localMatch = /^\/local\/([^/]+)$/.exec(parsed.pathname);
+    if (localMatch) {
+      await this.handleLocalFileRequest(decodeURIComponent(localMatch[1]), req, res);
+      return;
+    }
+
     const match = /^\/stream\/([^/]+)\/([^/]+)$/.exec(parsed.pathname);
     if (!match) {
       res.statusCode = 404;
@@ -125,6 +215,9 @@ export class RamStreamProxy {
 
     const videoId = decodeURIComponent(match[1]);
     const role = match[2] as StreamRole;
+    const rawQuality = parsed.searchParams.get('quality') as VideoQualityTier | null;
+    const quality = rawQuality && VALID_QUALITIES.has(rawQuality) ? rawQuality : null;
+
     if (!VALID_VIDEO_ID.test(videoId) || !VALID_ROLES.has(role)) {
       res.statusCode = 400;
       res.end('Bad Request');
@@ -137,8 +230,8 @@ export class RamStreamProxy {
 
     try {
       let resolved = await this.resolver.resolve(videoId);
-      let target = selectRoleUrl(resolved, role);
-      let upstream = await this.fetchUpstream(target.url, req, abortController.signal);
+      let target = selectRoleUrl(resolved, role, quality);
+      let upstream = await this.fetchUpstreamWithRetry(target.url, role, req, abortController.signal);
 
       if (upstream.status === 403 || upstream.status === 410) {
         try {
@@ -147,8 +240,8 @@ export class RamStreamProxy {
           // ignore body cancel error
         }
         resolved = await this.resolver.invalidateAndResolve(videoId);
-        target = selectRoleUrl(resolved, role);
-        upstream = await this.fetchUpstream(target.url, req, abortController.signal);
+        target = selectRoleUrl(resolved, role, quality);
+        upstream = await this.fetchUpstreamWithRetry(target.url, role, req, abortController.signal);
       }
 
       if (!upstream.ok && upstream.status !== 206) {
@@ -175,7 +268,9 @@ export class RamStreamProxy {
         return;
       }
 
-      const nodeStream = Readable.fromWeb(upstream.body as unknown as import('stream/web').ReadableStream);
+      const nodeStream = Readable.fromWeb(
+        upstream.body as unknown as import('stream/web').ReadableStream
+      );
       await pipeline(nodeStream, res);
     } catch (err) {
       if (abortController.signal.aborted) {
@@ -190,24 +285,119 @@ export class RamStreamProxy {
     }
   }
 
+  private async handleLocalFileRequest(
+    fileId: string,
+    req: IncomingMessage,
+    res: ServerResponse
+  ): Promise<void> {
+    const filePath = this.localFilesById.get(fileId);
+    if (!filePath || !fs.existsSync(filePath)) {
+      res.statusCode = 404;
+      res.end('Local file not found');
+      return;
+    }
+
+    const stat = fs.statSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeType = LOCAL_MIME_MAP[ext]?.mimeType ?? 'application/octet-stream';
+    const fileSize = stat.size;
+
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Type', mimeType);
+
+    const rangeHeader = typeof req.headers.range === 'string' ? req.headers.range : '';
+    const rangeMatch = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+
+    if (rangeMatch && (rangeMatch[1] || rangeMatch[2])) {
+      const start = rangeMatch[1] ? Number(rangeMatch[1]) : 0;
+      const requestedEnd = rangeMatch[2]
+        ? Number(rangeMatch[2])
+        : Math.min(fileSize - 1, start + VIDEO_CHUNK_BYTES - 1);
+      const end = Math.min(fileSize - 1, Math.max(start, requestedEnd));
+
+      if (start >= fileSize || start < 0) {
+        res.statusCode = 416;
+        res.setHeader('Content-Range', `bytes */${fileSize}`);
+        res.end();
+        return;
+      }
+
+      const chunkSize = end - start + 1;
+      res.statusCode = 206;
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+      res.setHeader('Content-Length', String(chunkSize));
+
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+
+      const stream = fs.createReadStream(filePath, { start, end });
+      try {
+        await pipeline(stream, res);
+      } catch {
+        // ignore client abort during local seek
+      }
+      return;
+    }
+
+    res.statusCode = 200;
+    res.setHeader('Content-Length', String(fileSize));
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+    const stream = fs.createReadStream(filePath);
+    try {
+      await pipeline(stream, res);
+    } catch {
+      // ignore client abort
+    }
+  }
+
+  private async fetchUpstreamWithRetry(
+    url: string,
+    role: StreamRole,
+    req: IncomingMessage,
+    requestAbortSignal: AbortSignal
+  ): Promise<Response> {
+    try {
+      return await this.fetchUpstream(url, role, req, requestAbortSignal);
+    } catch (err) {
+      if (requestAbortSignal.aborted) {
+        throw err;
+      }
+      return this.fetchUpstream(url, role, req, requestAbortSignal);
+    }
+  }
+
   private async fetchUpstream(
     url: string,
+    role: StreamRole,
     req: IncomingMessage,
-    signal: AbortSignal
+    requestAbortSignal: AbortSignal
   ): Promise<Response> {
+    const method = req.method === 'HEAD' ? 'HEAD' : 'GET';
     const headers: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       Referer: 'https://www.youtube.com/'
     };
-    if (typeof req.headers.range === 'string') {
-      headers.Range = req.headers.range;
+    const rangeVal = buildUpstreamRangeHeader(
+      role,
+      method,
+      typeof req.headers.range === 'string' ? req.headers.range : undefined
+    );
+    if (rangeVal) {
+      headers.Range = rangeVal;
     }
 
+    const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+    const signal = AbortSignal.any([requestAbortSignal, timeoutSignal]);
+
     return fetch(url, {
-      method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+      method,
       headers,
       signal
     });
   }
 }
-

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import fs from 'fs';
 import http from 'http';
+import os from 'os';
+import path from 'path';
 import { RamStreamProxy } from '../../../src/main/services/RamStreamProxy';
 import type { ResolvedStream } from '../../../src/shared/types';
 
@@ -92,6 +95,67 @@ describe('RamStreamProxy', () => {
     expect(body.toString('utf8')).toBe('0123456789');
     expect(expiredHits).toBe(1);
     expect(resolver.invalidateAndResolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps open-ended video ranges to 2MB, selects quality variants, and streams local files with 206', async () => {
+    const seenRanges: string[] = [];
+    const seenPaths: string[] = [];
+
+    upstream = http.createServer((req, res) => {
+      seenPaths.push(req.url ?? '');
+      seenRanges.push(String(req.headers.range ?? ''));
+      const chunk = Buffer.from('QUALITY_OK_CHUNK');
+      res.statusCode = 206;
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Content-Range', `bytes 0-${chunk.length - 1}/4000000`);
+      res.setHeader('Content-Length', String(chunk.length));
+      res.end(chunk);
+    });
+
+    await new Promise<void>((resolve) => upstream!.listen(0, '127.0.0.1', resolve));
+    const addr = upstream.address() as { port: number };
+    const base = `http://127.0.0.1:${addr.port}`;
+
+    const resolver = {
+      resolve: vi.fn(async (): Promise<ResolvedStream> => ({
+        videoId: 'dQw4w9WgXcQ',
+        mode: 'dash-split',
+        videoUrl: `${base}/v720`,
+        audioUrl: `${base}/a140`,
+        videoVariants: {
+          '720p': { url: `${base}/v720`, mimeType: 'video/mp4' },
+          '480p': { url: `${base}/v480`, mimeType: 'video/mp4' }
+        },
+        expiresAtMs: Date.now() + 60_000,
+        mimeTypes: { video: 'video/mp4', audio: 'audio/mp4' }
+      })),
+      invalidateAndResolve: vi.fn()
+    };
+
+    proxy = new RamStreamProxy(resolver);
+    await proxy.start();
+
+    const url480 = proxy.buildLocalUrl('dQw4w9WgXcQ', 'video', '480p');
+    const vidRes = await fetch(url480, { headers: { Range: 'bytes=0-' } });
+    expect(vidRes.status).toBe(206);
+    expect(seenPaths[0]).toBe('/v480');
+    expect(seenRanges[0]).toBe('bytes=0-2097151');
+
+    // Local file Range streaming
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tubedeck-proxy-local-'));
+    const localVideo = path.join(tmpDir, 'test-karaoke.mp4');
+    fs.writeFileSync(localVideo, 'LOCAL_MEDIA_BYTES_PAYLOAD');
+
+    try {
+      const reg = proxy.registerLocalFile(localVideo);
+      expect(reg.mediaKind).toBe('video');
+      const localRes = await fetch(reg.url, { headers: { Range: 'bytes=6-10' } });
+      expect(localRes.status).toBe(206);
+      expect(localRes.headers.get('content-range')).toBe('bytes 6-10/25');
+      expect(Buffer.from(await localRes.arrayBuffer()).toString('utf8')).toBe('MEDIA');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

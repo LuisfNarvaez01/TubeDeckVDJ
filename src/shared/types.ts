@@ -3,6 +3,8 @@ export type Result<T> =
   | { success: false; error: string };
 
 export type DeckId = 'A' | 'B';
+export type VideoQualityTier = '1080p' | '720p' | '480p' | '360p';
+export type VideoQualityPreference = 'auto' | VideoQualityTier;
 
 export interface YouTubeTrack {
   videoId: string;
@@ -11,6 +13,11 @@ export interface YouTubeTrack {
   durationSec: number;
   thumbnailUrl: string;
   isLive: boolean;
+  source?: 'youtube' | 'local';
+  localFilePath?: string;
+  mediaKind?: 'video' | 'audio';
+  viewsText?: string;
+  publishedText?: string;
 }
 
 export type StreamMode = 'muxed' | 'dash-split';
@@ -21,6 +28,7 @@ export interface ResolvedStream {
   muxedUrl?: string;
   videoUrl?: string;
   audioUrl?: string;
+  videoVariants?: Partial<Record<VideoQualityTier, { url: string; mimeType: string }>>;
   expiresAtMs: number;
   mimeTypes: {
     muxed?: string;
@@ -35,6 +43,9 @@ export interface DeckStreamEndpoints {
   muxedUrl?: string;
   videoUrl?: string;
   audioUrl?: string;
+  videoQualityUrls?: Partial<Record<VideoQualityTier, string>>;
+  sourceType?: 'youtube' | 'local';
+  mediaKind?: 'video' | 'audio';
   expiresAtMs: number;
 }
 
@@ -152,4 +163,23 @@ export interface UpdateStatus {
   progressPercent: number;
   releaseNotes: string | null;
   error: string | null;
+}
+
+export interface HistoryTasteProfile {
+  totalPlays: number;
+  topChannels: Array<{ name: string; count: number }>;
+  topKeywords: Array<{ word: string; weight: number }>;
+  avgDurationSec: number;
+  recentVideoIds: string[];
+}
+
+export interface BatchDownloadProgress {
+  jobId: string;
+  status: 'idle' | 'running' | 'done' | 'cancelled' | 'error';
+  total: number;
+  completed: number;
+  failed: number;
+  currentTitle: string;
+  outputDir: string | null;
+  errors: string[];
 }
