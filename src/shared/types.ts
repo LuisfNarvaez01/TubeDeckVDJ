@@ -251,3 +251,12 @@ export interface SmartCrateTrack extends YouTubeTrack {
   musicalKey?: string | null;
   bpm?: number | null;
 }
+
+export type YouTubeAccessState = 'unknown' | 'checking' | 'ok' | 'blocked' | 'offline';
+
+export interface YouTubeAccessStatus {
+  state: YouTubeAccessState;
+  connected: boolean;
+  checkedAtMs: number | null;
+  detail: string | null;
+}

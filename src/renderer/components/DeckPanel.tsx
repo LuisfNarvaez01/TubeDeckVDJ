@@ -16,6 +16,7 @@ import type { DeckId, VideoQualityTier } from '../../shared/types';
 import type { AudioFxId, FxBeatDivision, SamplerPadId } from '../audio/AudioDspEngine';
 import { HARMONIC_LABEL, harmonicMatch, shiftCamelot } from '../dj/HarmonicKey';
 import { useDeckStore } from '../store/useDeckStore';
+import { isBotCheckMessage } from './YouTubeAccess';
 import { cleanTrackTitleForOsd } from '../video/OverlayCompositor';
 import { JogWheel } from './ui/JogWheel';
 import { RgbWaveformStrip, type RgbWaveSample } from './ui/RgbWaveformStrip';
@@ -95,6 +96,8 @@ interface DeckPanelProps {
    * broadcast "camera" row under the program monitor). controls: platter, transport, pads.
    */
   layout?: 'full' | 'strip' | 'controls';
+  /** Opens the YouTube sign-in when playback is blocked by the bot check. */
+  onConnectYouTube?: () => void;
 }
 
 function formatTime(sec: number): string {
@@ -140,7 +143,8 @@ export function DeckPanel({
   offAirDimmed = false,
   onRetryLoad,
   onEject,
-  layout = 'full'
+  layout = 'full',
+  onConnectYouTube
 }: DeckPanelProps): ReactElement {
   const isStrip = layout === 'strip';
   const showIdentity = layout !== 'controls';
@@ -460,9 +464,15 @@ export function DeckPanel({
             className="absolute inset-0 flex items-center justify-between gap-3 rounded-md border border-danger/40 bg-ground/95 px-3"
           >
             <div className="min-w-0">
-              <p className="text-xs font-semibold text-danger-soft">No se pudo cargar este video</p>
+              <p className="text-xs font-semibold text-danger-soft">
+                {isBotCheckMessage(deck.error)
+                  ? 'YouTube pidió confirmar que no eres un robot'
+                  : 'No se pudo cargar este video'}
+              </p>
               <p className="truncate text-[11px] text-muted">
-                YouTube no entregó el stream. Prueba de nuevo o carga otra canción.
+                {isBotCheckMessage(deck.error)
+                  ? 'Está bloqueando esta conexión. Conecta tu cuenta de YouTube o espera un rato y reintenta.'
+                  : 'YouTube no entregó el stream. Prueba de nuevo o carga otra canción.'}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -474,6 +484,15 @@ export function DeckPanel({
                   {deck.error}
                 </p>
               </details>
+              {isBotCheckMessage(deck.error) && onConnectYouTube ? (
+                <button
+                  type="button"
+                  onClick={onConnectYouTube}
+                  className="rounded-md bg-ink px-2.5 py-1 text-[11px] font-semibold text-ground hover:bg-ink-2 cursor-pointer"
+                >
+                  Conectar YouTube
+                </button>
+              ) : null}
               {onRetryLoad && deck.track ? (
                 <button
                   type="button"

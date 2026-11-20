@@ -12,6 +12,7 @@ import {
 import type { MidiMapping, VideoQualityPreference } from '../../shared/types';
 import type { MidiLearnMode } from '../controllers/MidiLearnEngine';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { YouTubeAccountCard } from './YouTubeAccess';
 
 interface SettingsTabProps {
   onRefreshAudioDevices: () => void;
@@ -245,6 +246,8 @@ export function SettingsTab({
           </div>
         ) : null}
       </div>
+
+      <YouTubeAccountCard />
 
       {/* Auto-Updater (GitHub Releases) */}
       <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-ground p-3">

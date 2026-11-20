@@ -17,6 +17,7 @@ import type { DisplayWindowManager } from '../services/DisplayWindowManager';
 import type { HistoryAndCratesService } from '../services/HistoryAndCratesService';
 import { browseDirectory, listDrivePlaces, type LocalLibraryService } from '../services/LocalLibraryService';
 import type { MixRecordingService } from '../services/MixRecordingService';
+import type { YouTubeAccessMonitor, YouTubeAccessStatus } from '../services/YouTubeAccessMonitor';
 import type { RecommendationEngine } from '../services/RecommendationEngine';
 import type { TasteFeedbackService } from '../services/TasteFeedbackService';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
@@ -83,6 +84,11 @@ export interface MainServices {
   updater?: AutoUpdaterService;
   localLibrary?: LocalLibraryService;
   recordings?: MixRecordingService;
+  youtubeAccess?: {
+    monitor: YouTubeAccessMonitor;
+    connect: () => Promise<YouTubeAccessStatus>;
+    disconnect: () => Promise<YouTubeAccessStatus>;
+  };
   batchDownloader?: BatchDownloadService;
   taste?: TasteFeedbackService;
   recommender?: RecommendationEngine;
@@ -214,8 +220,14 @@ export function registerIpcHandlers(services: MainServices): void {
   ipcMain.handle(IPC_CHANNELS.STREAM_RESOLVE, (_event, rawVideoId: unknown) =>
     wrapResult(async () => {
       const videoId = VideoIdSchema.parse(rawVideoId);
-      const resolved = await services.resolver.resolve(videoId);
-      return buildEndpoints(services.proxy, resolved);
+      try {
+        const resolved = await services.resolver.resolve(videoId);
+        services.youtubeAccess?.monitor.reportPlaybackOk();
+        return buildEndpoints(services.proxy, resolved);
+      } catch (err) {
+        services.youtubeAccess?.monitor.reportPlaybackError(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
     })
   );
 
@@ -570,6 +582,31 @@ export function registerIpcHandlers(services: MainServices): void {
       const folderPath = NonEmptyStringSchema.parse(rawFolder);
       services.localLibrary.removeFolder(folderPath);
       return services.localLibrary.listLibrary();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.YT_ACCESS_STATUS, () =>
+    wrapResult(() => {
+      if (!services.youtubeAccess) throw new Error('No disponible');
+      return services.youtubeAccess.monitor.getStatus();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.YT_ACCESS_CHECK, () =>
+    wrapResult(() => {
+      if (!services.youtubeAccess) throw new Error('No disponible');
+      return services.youtubeAccess.monitor.check();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.YT_ACCESS_CONNECT, () =>
+    wrapResult(() => {
+      if (!services.youtubeAccess) throw new Error('No disponible');
+      return services.youtubeAccess.connect();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.YT_ACCESS_DISCONNECT, () =>
+    wrapResult(() => {
+      if (!services.youtubeAccess) throw new Error('No disponible');
+      return services.youtubeAccess.disconnect();
     })
   );
 

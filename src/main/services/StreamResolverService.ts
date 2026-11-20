@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { ResolvedStream, VideoQualityTier } from '../../shared/types';
 import type { YtDlpBinaryManager } from './YtDlpBinaryManager';
+import { BOT_CHECK_CODE, isBotCheckError } from './YouTubeAuthService';
 
 const execFileAsync = promisify(execFile);
 
@@ -211,15 +212,40 @@ function selectBestFormats(videoId: string, info: YtDlpInfoJson): ResolvedStream
   throw new Error(`No compatible streaming formats found for ${videoId}`);
 }
 
-export function createDefaultYtDlpRunner(binaryManager: YtDlpBinaryManager): YtDlpRunner {
+export interface YtDlpRunnerOptions {
+  /** cookies.txt from the optional YouTube sign-in, used only when present. */
+  getCookieFile?: () => string | null;
+  /**
+   * Executable that can run as Node (Electron with ELECTRON_RUN_AS_NODE=1). yt-dlp needs a
+   * JavaScript runtime to solve YouTube's player challenges; this avoids shipping Deno.
+   */
+  nodeRuntimePath?: string;
+}
+
+export function buildYtDlpArgs(videoId: string, opts: { cookieFile?: string | null; nodeRuntimePath?: string } = {}): string[] {
+  const args = ['-J', '--no-playlist', '--no-warnings'];
+  if (opts.nodeRuntimePath) args.push('--js-runtimes', `node:${opts.nodeRuntimePath}`);
+  if (opts.cookieFile) args.push('--cookies', opts.cookieFile);
+  args.push(`https://www.youtube.com/watch?v=${videoId}`);
+  return args;
+}
+
+export function createDefaultYtDlpRunner(
+  binaryManager: YtDlpBinaryManager,
+  options: YtDlpRunnerOptions = {}
+): YtDlpRunner {
   return async (videoId: string): Promise<YtDlpInfoJson> => {
     const binPath = await binaryManager.ensureInstalled();
     const { stdout } = await execFileAsync(
       binPath,
-      ['-J', '--no-playlist', '--no-warnings', `https://www.youtube.com/watch?v=${videoId}`],
+      buildYtDlpArgs(videoId, {
+        cookieFile: options.getCookieFile?.() ?? null,
+        nodeRuntimePath: options.nodeRuntimePath
+      }),
       {
-        timeout: 15_000,
-        maxBuffer: 12 * 1024 * 1024
+        timeout: 25_000,
+        maxBuffer: 12 * 1024 * 1024,
+        env: options.nodeRuntimePath ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env
       }
     );
     return JSON.parse(stdout) as YtDlpInfoJson;
@@ -336,6 +362,11 @@ export class StreamResolverService {
         } catch (fallbackErr) {
           const msgA = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
           const msgB = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+          if (isBotCheckError(msgA) || isBotCheckError(msgB)) {
+            throw new Error(
+              `${BOT_CHECK_CODE}: YouTube pidió confirmar que no eres un robot y bloqueó la reproducción desde esta conexión.`
+            );
+          }
           throw new Error(`Failed to resolve stream for ${videoId}: ${msgA}; fallback: ${msgB}`);
         }
       }

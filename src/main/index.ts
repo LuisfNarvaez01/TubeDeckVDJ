@@ -18,12 +18,56 @@ import {
   createDefaultYtDlpRunner,
   StreamResolverService
 } from './services/StreamResolverService';
+import { YouTubeAccessMonitor } from './services/YouTubeAccessMonitor';
+import { YouTubeAuthService } from './services/YouTubeAuthService';
 import { YouTubeSearchService } from './services/YouTubeSearchService';
 import { YtDlpBinaryManager } from './services/YtDlpBinaryManager';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 const LEGACY_DATA_FOLDER = 'TubeDeck VDJ';
+/** Isolated cookie jar for the optional YouTube sign-in window. */
+const YOUTUBE_SIGNIN_PARTITION = 'persist:youtube-signin';
+
+/** Lets the DJ sign in to YouTube in an isolated window; resolves when it is closed. */
+function openYouTubeSignIn(parent: BrowserWindow | null): Promise<void> {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 520,
+      height: 720,
+      parent: parent ?? undefined,
+      modal: false,
+      title: 'Conectar YouTube — Proyecta',
+      autoHideMenuBar: true,
+      backgroundColor: '#000000',
+      webPreferences: {
+        partition: YOUTUBE_SIGNIN_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true
+      }
+    });
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      void win.loadURL(url);
+      return { action: 'deny' };
+    });
+    // Once signed in and back on YouTube, close by itself.
+    win.webContents.on('did-navigate', (_e, url) => {
+      void session
+        .fromPartition(YOUTUBE_SIGNIN_PARTITION)
+        .cookies.get({ domain: 'youtube.com', name: 'LOGIN_INFO' })
+        .then((c) => {
+          if (c.length > 0 && /^https:\/\/(www|m)\.youtube\.com\//.test(url) && !win.isDestroyed()) {
+            setTimeout(() => !win.isDestroyed() && win.close(), 1200);
+          }
+        });
+    });
+    win.on('closed', () => resolve());
+    void win.loadURL(
+      'https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F'
+    );
+  });
+}
 
 let mainWindow: BrowserWindow | null = null;
 let dbService: DatabaseService | null = null;
@@ -120,7 +164,20 @@ app.whenReady().then(async () => {
     path.join(userDataDir, 'bin'),
     app.isPackaged ? process.resourcesPath : ''
   );
-  const resolver = new StreamResolverService(createDefaultYtDlpRunner(ytDlp));
+  const ytAuth = new YouTubeAuthService(
+    path.join(userDataDir, 'youtube-cookies.txt'),
+    () => session.fromPartition(YOUTUBE_SIGNIN_PARTITION).cookies
+  );
+  const ytRunner = createDefaultYtDlpRunner(ytDlp, {
+    getCookieFile: () => ytAuth.getCookieFilePath(),
+    nodeRuntimePath: process.execPath
+  });
+  const ytAccess = new YouTubeAccessMonitor(ytRunner, () => ytAuth.isConnected(), (status) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.YT_ACCESS_EVENT, status);
+    }
+  });
+  const resolver = new StreamResolverService(ytRunner);
   const proxy = new RamStreamProxy(resolver);
   await proxy.start();
   ramProxy = proxy;
@@ -173,11 +230,34 @@ app.whenReady().then(async () => {
     batchDownloader,
     taste,
     recommender,
-    recordings
+    recordings,
+    youtubeAccess: {
+      monitor: ytAccess,
+      connect: async () => {
+        await openYouTubeSignIn(mainWindow);
+        const connected = await ytAuth.syncCookies();
+        resolver.clearCache();
+        if (connected) await ytAccess.check();
+        return ytAccess.getStatus();
+      },
+      disconnect: async () => {
+        await session.fromPartition(YOUTUBE_SIGNIN_PARTITION).clearStorageData();
+        ytAuth.disconnectFile();
+        resolver.clearCache();
+        return ytAccess.getStatus();
+      }
+    }
   });
 
   mainWindow = createMainWindow();
   updater.scheduleStartupCheck(8000);
+  // Re-export cookies (Google rotates them) and find out early if YouTube is blocking us.
+  setTimeout(() => {
+    void ytAuth
+      .syncCookies()
+      .catch(() => false)
+      .then(() => ytAccess.check());
+  }, 4000);
   displays.attachMainWindow(
     mainWindow,
     (list) => {

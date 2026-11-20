@@ -55,6 +55,7 @@ import { type RgbWaveSample } from './components/ui/RgbWaveformStrip';
 import { VideoPreviewBar } from './components/VideoPreviewBar';
 import { PhaseMeter } from './components/ui/PhaseMeter';
 import { RecordButton } from './components/RecordButton';
+import { useYouTubeAccess, YouTubeBlockedBanner } from './components/YouTubeAccess';
 import { MixRecorder, type MixRecordingKind } from './audio/MixRecorder';
 import { HotkeyManager, type HotkeyAction } from './controllers/HotkeyManager';
 import { MidiLearnEngine, type MidiLearnMode } from './controllers/MidiLearnEngine';
@@ -1195,6 +1196,7 @@ export function App(): ReactElement {
     [ensureAudioInitialized, setDeckPatch]
   );
 
+  const ytAccess = useYouTubeAccess();
   const mixRecorderRef = useRef<MixRecorder | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordingSavedPath, setRecordingSavedPath] = useState<string | null>(null);
@@ -1581,6 +1583,17 @@ export function App(): ReactElement {
         void loadTrackOntoDeck(d, t).catch(() => {});
       }}
       onEject={handleEjectDeck}
+      onConnectYouTube={() =>
+        void ytAccess.connect().then(() => {
+          for (const d of ['A', 'B'] as DeckId[]) {
+            const st = useDeckStore.getState().decks[d];
+            if (st.track && st.error) {
+              queueEngineRef.current.claimDeckForManualLoad(d, st.track);
+              void loadTrackOntoDeck(d, st.track).catch(() => {});
+            }
+          }
+        })
+      }
       onTrackFeedback={handleDeckTrackFeedback}
       key={`${deckId}-${layout}`}
       deckId={deckId}
@@ -1922,6 +1935,13 @@ export function App(): ReactElement {
         </div>
       </header>
 
+      <YouTubeBlockedBanner
+        status={ytAccess.status}
+        busy={ytAccess.busy}
+        onConnect={() => void ytAccess.connect()}
+        onRecheck={() => void ytAccess.recheck()}
+      />
+
       {/* Cabin (decks, video, FX, mixer). Scrolls only when the browser dock is enlarged. */}
       <div
         className={`flex min-h-0 flex-col gap-2 overflow-y-auto ${dockHeight === null ? '' : 'flex-1'}`}
@@ -1985,15 +2005,9 @@ export function App(): ReactElement {
           }}
         />
 
-      {/* Camera rows: one line per deck, identity + waveform + key/tempo/clock */}
-      <div className="flex flex-col gap-1.5">
-        {renderDeck('A', 'strip')}
-        {renderDeck('B', 'strip')}
-      </div>
-
-      {/* Hands: Deck A controls | Mixer | Deck B controls */}
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(560px,32%)_minmax(0,1fr)] gap-2">
-        {renderDeck('A', 'controls')}
+      {/* Decks with their platters either side of the mixer */}
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(540px,31%)_minmax(0,1fr)] gap-2">
+        {renderDeck('A')}
         <MixerCenter
           phaseMeter={<PhaseMeter getTrackTime={getDeckTrackTime} />}
           showHotkeys={settings.showHotkeys}
@@ -2071,7 +2085,7 @@ export function App(): ReactElement {
           }
         />
 
-        {renderDeck('B', 'controls')}
+        {renderDeck('B')}
       </div>
 
       </div>
@@ -2105,7 +2119,7 @@ export function App(): ReactElement {
         ref={dockSectionRef}
         style={dockHeight === null ? undefined : { height: dockHeight }}
         className={`flex min-h-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-surface p-2.5 ${
-          dockHeight === null ? 'min-h-[220px] flex-1' : 'shrink-0'
+          dockHeight === null ? 'min-h-[150px] flex-1 [@media(min-height:900px)]:min-h-[220px]' : 'shrink-0'
         }`}
       >
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(300px,340px)] gap-2.5 2xl:grid-cols-[minmax(0,1fr)_380px]">

@@ -98,7 +98,7 @@ export function VideoPreviewBar({
     const quality = deck === 'A' ? activeQualityA : activeQualityB;
     const visibleShare = deck === 'A' ? 1 - videoMix : videoMix;
     return (
-      <div className="flex w-[42%] min-w-0 shrink-0 flex-col gap-1">
+      <div className="flex w-[clamp(140px,min(40%,28vh),300px)] min-w-0 shrink-0 flex-col gap-1 self-center">
         <div className="flex items-center justify-between text-[10px]">
           <span className={`font-bold tracking-[0.14em] ${deck === 'A' ? 'text-deck-a' : 'text-deck-b'}`}>
             PREVIA {deck}
@@ -123,12 +123,12 @@ export function VideoPreviewBar({
 
   return (
     <section
-      className="grid grid-cols-[minmax(0,1fr)_minmax(420px,540px)_minmax(0,1fr)] items-stretch gap-3 rounded-xl border border-white/[0.06] bg-surface p-2.5"
+      className="grid grid-cols-[minmax(0,1fr)_clamp(220px,min(21vw,32vh),370px)_minmax(0,1fr)] items-stretch gap-3 rounded-xl border border-white/[0.06] bg-surface p-2.5"
       aria-label="Cabina de Video Master"
     >
       {/* Left wing: video transition controls, then Preview A beside the program */}
-      <div className="flex min-w-0 items-end gap-3">
-        <div className="flex min-w-0 flex-1 flex-col gap-2 self-stretch">
+      <div className="flex min-w-0 gap-3">
+        <div className="flex min-w-0 flex-1 flex-col justify-between gap-1.5">
           <span className={wingLabel}>Transición</span>
           <div className="flex flex-wrap items-center gap-1">
             <select
@@ -158,7 +158,7 @@ export function VideoPreviewBar({
           <button
             type="button"
             onClick={onTriggerAutoTransition}
-            className="relative inline-flex items-center justify-center gap-1.5 rounded-md border border-live/50 bg-live/15 px-2 py-1.5 text-[11px] font-semibold text-live hover:bg-live/25 cursor-pointer"
+            className="relative inline-flex items-center justify-center gap-1.5 rounded-md border border-live/50 bg-live/15 px-2 py-1 text-[11px] font-semibold text-live hover:bg-live/25 cursor-pointer"
           >
             <ArrowLeftRight className="h-3.5 w-3.5" />
             Pasar al otro video · {autoDurationSec}s
@@ -166,7 +166,7 @@ export function VideoPreviewBar({
               <span className="hardware-keycap pointer-events-none ml-0.5 rounded px-1 text-[10px]">V</span>
             ) : null}
           </button>
-          <div className="mt-auto flex items-center gap-1.5 text-[10px]">
+          <div className="flex items-center gap-1.5 text-[10px]">
             <button
               type="button"
               onClick={() => onVideoModeChange(videoMode === 'linked' ? 'independent' : 'linked')}
@@ -236,9 +236,9 @@ export function VideoPreviewBar({
       </div>
 
       {/* Right wing: Preview B beside the program, then video FX and Screen 2 output */}
-      <div className="flex min-w-0 items-end gap-3">
+      <div className="flex min-w-0 gap-3">
         {previewMonitor('B')}
-        <div className="flex min-w-0 flex-1 flex-col gap-2 self-stretch">
+        <div className="flex min-w-0 flex-1 flex-col justify-between gap-1.5">
           <span className={wingLabel}>Efectos de video</span>
           <div className="grid grid-cols-4 gap-1">
             {FX_BUTTONS.map((fx) => (
@@ -285,7 +285,7 @@ export function VideoPreviewBar({
               {Math.round(fxIntensity * 100)}%
             </span>
           </div>
-          <div className="mt-auto flex items-center gap-1">
+          <div className="flex items-center gap-1">
             {displays.length > 0 ? (
               <select
                 value={selectedDisplayId ?? displays[0].id}
