@@ -32,6 +32,8 @@ interface SettingsStore {
   autoDurationSec: number;
   transition: VideoTransitionId;
   masterFx: DeckFxState;
+  videoFxIntensity: number;
+  showHotkeys: boolean;
   updaterStatus: UpdateStatus | null;
   setAudioOutputs: (devices: AudioOutputDevice[]) => void;
   setMasterDeviceId: (id: string) => void;
@@ -52,6 +54,8 @@ interface SettingsStore {
   setAutoDurationSec: (sec: number) => void;
   setTransition: (id: VideoTransitionId) => void;
   setMasterFx: (fx: DeckFxState) => void;
+  setVideoFxIntensity: (intensity: number) => void;
+  setShowHotkeys: (show: boolean) => void;
   setUpdaterStatus: (status: UpdateStatus | null) => void;
 }
 
@@ -75,6 +79,8 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   autoDurationSec: 2,
   transition: 'dissolve',
   masterFx: createDefaultDeckFxState(),
+  videoFxIntensity: 0.7,
+  showHotkeys: false,
   updaterStatus: null,
   setAudioOutputs: (audioOutputs) => set({ audioOutputs }),
   setMasterDeviceId: (masterDeviceId) => set({ masterDeviceId }),
@@ -98,5 +104,8 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setAutoDurationSec: (autoDurationSec) => set({ autoDurationSec }),
   setTransition: (transition) => set({ transition }),
   setMasterFx: (masterFx) => set({ masterFx }),
+  setVideoFxIntensity: (videoFxIntensity) =>
+    set({ videoFxIntensity: Math.min(1, Math.max(0, videoFxIntensity)) }),
+  setShowHotkeys: (showHotkeys) => set({ showHotkeys }),
   setUpdaterStatus: (updaterStatus) => set({ updaterStatus })
 }));

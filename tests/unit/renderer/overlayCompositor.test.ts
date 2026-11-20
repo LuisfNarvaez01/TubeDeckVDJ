@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   OverlayCompositor,
+  cleanTrackTitleForOsd,
   createDefaultOverlayConfig
 } from '../../../src/renderer/video/OverlayCompositor';
 
@@ -91,6 +92,33 @@ describe('OverlayCompositor', () => {
     expect(ctx.fillRect).toHaveBeenCalledTimes(4);
     expect(ctx.strokeRect).toHaveBeenCalled();
     expect(ctx.fillText).toHaveBeenCalledWith('Viernes Karaoke', expect.any(Number), expect.any(Number));
+  });
+
+  it('strips YouTube boilerplate tags from OSD titles while rendering audio-only reactive visualizer', () => {
+    expect(cleanTrackTitleForOsd('Karol G - Provenza (Official Video) [4K]')).toBe(
+      'Karol G - Provenza'
+    );
+    expect(cleanTrackTitleForOsd('Queen - Don\'t Stop Me Now (Club Remix) [Official Audio]')).toBe(
+      'Queen - Don\'t Stop Me Now (Club Remix)'
+    );
+
+    const compositor = new OverlayCompositor(1280, 720);
+    const ctx = createMockCtx2d();
+    const drew = compositor.render(ctx, 2000, null, {
+      active: true,
+      bands: { low: 0.8, mid: 0.5, high: 0.3 },
+      spectrum: new Uint8Array([200, 160, 120, 80]),
+      accentColor: '#0EA5E9',
+      title: 'Daft Punk - Instant Crush (Lyrics) [HD]',
+      channel: 'Daft Punk'
+    });
+    expect(drew).toBe(true);
+    expect(ctx.clip).toHaveBeenCalled();
+    expect(ctx.fillText).toHaveBeenCalledWith(
+      'Daft Punk - Instant Crush',
+      expect.any(Number),
+      expect.any(Number)
+    );
   });
 });
 

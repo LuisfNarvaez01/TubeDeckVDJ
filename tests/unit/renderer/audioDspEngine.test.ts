@@ -109,9 +109,20 @@ describe('AudioDspEngine', () => {
     dsp.setDeckAutoGain('A', 0.1);
     expect(dsp.getDeckAutoGain('A')).toBe(0.35);
 
-    // Audio FX rack state + sample trigger safe even on mock contexts
-    dsp.setDeckFx('A', 'echo', true, 0.6, 125);
+    // Audio FX rack beat division + key shift + stereo VU + cue preview bus
+    dsp.setDeckFx('A', 'echo', true, 0.6, 125, '1/2');
     expect(dsp.getDeckFx('A', 'echo')).toEqual({ enabled: true, wet: 0.6 });
+    expect(dsp.getDeckFxBeatDiv('A', 'echo')).toBe('1/2');
+
+    dsp.setKeyShift('A', 3);
+    expect(dsp.getKeyShift('A')).toBe(3);
+
+    const cueEl = { id: 'cue-preview' } as unknown as HTMLMediaElement;
+    dsp.attachCuePreviewElement(cueEl);
+    dsp.attachCuePreviewElement(cueEl);
+    expect(mockCtx.createMediaElementSource).toHaveBeenCalledTimes(3);
+
+    expect(dsp.readStereoVuLevels('MASTER')).toEqual([0, 0]);
     expect(() => dsp.triggerSample('airhorn', 0.8)).not.toThrow();
     expect(dsp.readDeckFrequencyBands('A')).toEqual({ low: 0, mid: 0, high: 0 });
 

@@ -1,8 +1,11 @@
 import { create } from 'zustand';
 import type { DeckId, HotCue, LoopState, YouTubeTrack } from '../../shared/types';
-import type { AudioFxId } from '../audio/AudioDspEngine';
+import type { AudioFxId, FxBeatDivision } from '../audio/AudioDspEngine';
 
-export type DeckAudioFxState = Record<AudioFxId, { enabled: boolean; wet: number }>;
+export type DeckAudioFxState = Record<
+  AudioFxId,
+  { enabled: boolean; wet: number; beatDiv: FxBeatDivision }
+>;
 
 export interface DeckRuntimeState {
   track: YouTubeTrack | null;
@@ -14,7 +17,11 @@ export interface DeckRuntimeState {
   pitchPercent: number;
   pitchRange: 8 | 16 | 50;
   keyLock: boolean;
+  keyShiftSemitones: number;
   cueEnabled: boolean;
+  synced: boolean;
+  bufferRatio: number;
+  customOsdTitle: string | null;
   bpm: number | null;
   hotCues: HotCue[];
   loop: LoopState | null;
@@ -26,9 +33,9 @@ export interface DeckRuntimeState {
 
 function createInitialAudioFx(): DeckAudioFxState {
   return {
-    echo: { enabled: false, wet: 0.45 },
-    reverb: { enabled: false, wet: 0.45 },
-    flanger: { enabled: false, wet: 0.45 }
+    echo: { enabled: false, wet: 0.45, beatDiv: '3/4' },
+    reverb: { enabled: false, wet: 0.45, beatDiv: '3/4' },
+    flanger: { enabled: false, wet: 0.45, beatDiv: '3/4' }
   };
 }
 
@@ -43,7 +50,11 @@ function createInitialDeckState(): DeckRuntimeState {
     pitchPercent: 0,
     pitchRange: 16,
     keyLock: true,
+    keyShiftSemitones: 0,
     cueEnabled: false,
+    synced: false,
+    bufferRatio: 0,
+    customOsdTitle: null,
     bpm: null,
     hotCues: [],
     loop: null,

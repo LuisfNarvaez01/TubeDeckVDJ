@@ -416,6 +416,35 @@ export class DualDeckMediaSync {
     return Number.isFinite(d) ? d : 0;
   }
 
+  getBufferedRatio(): number {
+    const el = this.getAudioElement();
+    const duration = this.getDuration();
+    if (duration <= 0) return 0;
+
+    const computeRatio = (media: HTMLMediaElement): number => {
+      const ranges = media.buffered;
+      if (!ranges || ranges.length === 0) return 0;
+      const now = media.currentTime || 0;
+      let maxEnd = 0;
+      for (let i = 0; i < ranges.length; i += 1) {
+        const start = ranges.start(i);
+        const end = ranges.end(i);
+        if (now >= start - 0.5 && now <= end + 0.5) {
+          return Math.min(1, Math.max(0, end / duration));
+        }
+        if (end > maxEnd) maxEnd = end;
+      }
+      return Math.min(1, Math.max(0, maxEnd / duration));
+    };
+
+    const audioRatio = computeRatio(el);
+    if (this.mode === 'dash-split' && this.mediaKind === 'video') {
+      const videoRatio = computeRatio(this.videoEl);
+      return videoRatio > 0 ? Math.min(audioRatio || videoRatio, videoRatio) : audioRatio;
+    }
+    return audioRatio;
+  }
+
   isPaused(): boolean {
     return this.getAudioElement().paused;
   }

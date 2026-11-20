@@ -19,24 +19,24 @@ const CATEGORIES: Array<{ id: GuideCategory; label: string; icon: typeof Disc3 }
 const GUIDE_ITEMS: Record<GuideCategory, Array<{ control: string; detail: string }>> = {
   decks: [
     {
-      control: 'Play / Pausa & CUE Real',
+      control: 'Play / Pausa, CUE Real y Edición OSD',
       detail:
-        'Play alterna reproducción. Con la canción en pausa, clic en CUE guarda el punto CUE actual; mantener CUE preescucha y regresa al soltar. En Play, CUE vuelve y pausa en ese punto.'
+        'Play alterna reproducción. Con la canción en pausa, clic en CUE guarda el punto CUE actual; mantener CUE preescucha y regresa al soltar. Haz doble clic sobre el título del Deck para editar manualmente cómo sale en Pantalla 2.'
     },
     {
-      control: 'Jog Wheel & Brake (BRK)',
+      control: 'Jog Wheel, Nudge -/+ y Key Shift',
       detail:
-        'En reproducción, arrastrar el plato o usar -/+ hace pitch bend momentáneo para empatar ritmos. En pausa, arrastrar busca punto exacto (scrub). BRK simula parada lenta de vinilo.'
+        'En reproducción, arrastrar el plato o usar N-/N+ hace pitch bend momentáneo; en pausa busca punto exacto (scrub). Junto a Key (Master Tempo) puedes ajustar Key Shift de -6 a +6 semitonos para karaoke.'
     },
     {
-      control: 'Pads 5 Modos (HOT CUE / ROLL / JUMP / SAMPLER / FX)',
+      control: 'Módulo FX & Sampler y Pads (44px)',
       detail:
-        'HOT CUE guarda y salta a 8 marcadores. ROLL repite un loop temporal que avanza el tiempo real al soltar. JUMP salta ±1..16 beats. SAMPLER dispara 8 efectos de audio en tiempo real. FX aplica Echo, Reverb o Flanger por canal.'
+        'Cada Deck cuenta con rack dedicado a los costados del Mixer (ECHO, REVERB, FLANGER con división 1/4–1/1 y Sampler directo), además de pads HOT CUE, ROLL, JUMP, SAMPLER y FX.'
     },
     {
-      control: 'Onda RGB, TAP, SYNC y Key Lock',
+      control: 'Onda RGB, Buffer RAM, TAP y SYNC',
       detail:
-        'La banda superior muestra espectro en vivo (naranja=bajos, esmeralda=medios, azul=agudos). La barra inferior deja saltar a cualquier segundo. SYNC ajusta el BPM al otro deck; Key mantiene el tono vocal al cambiar velocidad.'
+        'La cabecera indica la resolución activa y barra de buffer RAM precargado. SYNC ajusta el BPM al otro deck; TAP permite marcar el tempo manualmente.'
     }
   ],
   mixer: [
@@ -107,9 +107,14 @@ const GUIDE_ITEMS: Record<GuideCategory, Array<{ control: string; detail: string
   ],
   shortcuts: [
     {
-      control: 'Teclado de Cabina',
+      control: 'Teclado de Cabina & Botón KEYS',
       detail:
-        'Space / Shift+Space: Play/Pausa A y B • Q / W: Cue A y B • S / Shift+S: Sync A y B • 1..8: Hot Cues Deck activo • Flechas Izq/Der y C: Crossfader • V: Auto Transición.'
+        'Activa KEYS en la barra superior para ver las teclas superpuestas sobre cada control. Space/Shift+Space: Play A/B • Q/W: Cue A/B • S/Shift+S: Sync A/B • 1..8: Hot Cues • Flechas y C: Crossfader • V: Auto Transición.'
+    },
+    {
+      control: 'Pre-escucha CUE desde Navegador',
+      detail:
+        'Haz clic en el botón de audífonos sobre cualquier canción en Buscador o Biblioteca Local para preescucharla solo por tus audífonos sin detener ni cargar los Decks en vivo.'
     },
     {
       control: 'Controladores MIDI USB (MIDI Learn)',
@@ -147,10 +152,10 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
       onClick={onClose}
     >
       <div
-        className="animate-modal-in flex max-h-[84vh] w-full max-w-3xl flex-col gap-3 rounded-xl border border-[#262F3F] bg-[#141820] p-4 shadow-2xl"
+        className="animate-modal-in flex max-h-[84vh] w-full max-w-3xl flex-col gap-3 rounded-xl border border-white/[0.08] bg-[#0F1117] p-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-[#262F3F] pb-3">
+        <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
           <div>
             <h2 className="text-base font-bold text-[#F8FAFC]">Guía Rápida de Cabina — TubeDeck VDJ</h2>
             <p className="text-xs text-[#94A3B8]">
@@ -161,7 +166,7 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
             type="button"
             onClick={onClose}
             aria-label="Cerrar Guía"
-            className="rounded-lg border border-[#262F3F] bg-[#0B0D11] p-1.5 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+            className="rounded-lg border border-white/[0.06] bg-[#151821] p-1.5 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -175,8 +180,8 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
               onClick={() => setCategory(id)}
               className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer ${
                 category === id
-                  ? 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9]'
-                  : 'border-[#262F3F] bg-[#0B0D11] text-[#94A3B8] hover:text-[#F8FAFC]'
+                  ? 'border-white/25 bg-[#1C202B] text-[#F8FAFC]'
+                  : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -189,7 +194,7 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
           {GUIDE_ITEMS[category].map((item) => (
             <div
               key={item.control}
-              className="flex flex-col gap-1 rounded-lg border border-[#262F3F] bg-[#0B0D11] p-3"
+              className="flex flex-col gap-1 rounded-lg border border-white/[0.06] bg-[#08090C] p-3"
             >
               <h3 className="text-xs font-bold text-[#F8FAFC]">{item.control}</h3>
               <p className="text-xs leading-relaxed text-[#94A3B8]">{item.detail}</p>

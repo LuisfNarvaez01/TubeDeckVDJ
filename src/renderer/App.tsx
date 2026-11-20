@@ -6,6 +6,8 @@ import {
   CloudDownload,
   Disc3,
   Frame,
+  Headphones,
+  Keyboard,
   Monitor,
   Radio,
   Sliders,
@@ -24,10 +26,12 @@ import {
   type AudioFxId,
   type CrossfaderCurve,
   type EqBand,
+  type FxBeatDivision,
   type SamplerPadId
 } from './audio/AudioDspEngine';
 import { AudioOutputRouter } from './audio/AudioOutputRouter';
 import { DualDeckMediaSync } from './audio/DualDeckMediaSync';
+import { DeckFxSamplerModule } from './components/DeckFxSamplerModule';
 import { DeckPanel } from './components/DeckPanel';
 import { HistoryAndCratesTab } from './components/HistoryAndCratesTab';
 import { InteractiveGuideModal } from './components/InteractiveGuideModal';
@@ -48,7 +52,11 @@ import { useDeckStore } from './store/useDeckStore';
 import { useLibraryStore } from './store/useLibraryStore';
 import { useMixerStore } from './store/useMixerStore';
 import { useSettingsStore } from './store/useSettingsStore';
-import { OverlayCompositor, type OverlayConfig } from './video/OverlayCompositor';
+import {
+  OverlayCompositor,
+  cleanTrackTitleForOsd,
+  type OverlayConfig
+} from './video/OverlayCompositor';
 import { startOutputRtcSender } from './video/outputRtcBridge';
 import { VideoFxPipeline, type VideoFxId } from './video/VideoFxPipeline';
 import {
@@ -58,6 +66,13 @@ import {
 } from './video/WebGLVideoCompositor';
 
 type BrowserTab = 'search' | 'local' | 'queue' | 'history';
+
+const BROWSER_TABS: Array<{ id: BrowserTab; getLabel: (localCount: number, qCount: number) => string }> = [
+  { id: 'search', getLabel: () => 'Buscador YouTube' },
+  { id: 'local', getLabel: (localCount) => `Biblioteca Local (${localCount})` },
+  { id: 'queue', getLabel: (_l, qCount) => `Cola (${qCount})` },
+  { id: 'history', getLabel: () => 'Historial & Crates' }
+];
 
 interface CrossfadeAnimationState {
   active: boolean;
@@ -120,6 +135,7 @@ export function App(): ReactElement {
 
   const masterSinkAudioRef = useRef<HTMLAudioElement | null>(null);
   const cueSinkAudioRef = useRef<HTMLAudioElement | null>(null);
+  const cuePreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const previewContainersRef = useRef<Record<DeckId, HTMLDivElement | null>>({ A: null, B: null });
   const activeDominantDeckRef = useRef<DeckId>('A');
 
@@ -150,6 +166,9 @@ export function App(): ReactElement {
     if (cueSinkAudioRef.current && cueSinkAudioRef.current.srcObject !== cueDest.stream) {
       cueSinkAudioRef.current.srcObject = cueDest.stream;
       void Promise.resolve(cueSinkAudioRef.current.play?.()).catch(() => {});
+    }
+    if (cuePreviewAudioRef.current) {
+      dsp.attachCuePreviewElement(cuePreviewAudioRef.current);
     }
 
     if (!routerRef.current && masterSinkAudioRef.current && cueSinkAudioRef.current) {
@@ -212,6 +231,60 @@ export function App(): ReactElement {
       }
     }
   }, []);
+
+  const stopCuePreview = useCallback(() => {
+    const el = cuePreviewAudioRef.current;
+    if (el) {
+      el.pause();
+      el.src = '';
+    }
+    useLibraryStore.getState().setPreviewState(null, false);
+  }, []);
+
+  const handleCuePreview = useCallback(
+    async (track: YouTubeTrack) => {
+      const curPreview = useLibraryStore.getState().previewingVideoId;
+      if (curPreview === track.videoId) {
+        stopCuePreview();
+        return;
+      }
+
+      stopCuePreview();
+      useLibraryStore.getState().setPreviewState(track.videoId, true);
+
+      try {
+        await ensureAudioInitialized();
+        const streamRes =
+          track.source === 'local' && track.localFilePath && window.tubedeckAPI.resolveLocalFile
+            ? await window.tubedeckAPI.resolveLocalFile(track.localFilePath)
+            : await window.tubedeckAPI.resolveStream(track.videoId);
+
+        if (useLibraryStore.getState().previewingVideoId !== track.videoId) {
+          return;
+        }
+        if (!streamRes.success) {
+          stopCuePreview();
+          return;
+        }
+
+        const url = streamRes.data.audioUrl ?? streamRes.data.muxedUrl;
+        const audioEl = cuePreviewAudioRef.current;
+        if (!url || !audioEl) {
+          stopCuePreview();
+          return;
+        }
+
+        audioEl.crossOrigin = 'anonymous';
+        audioEl.src = url;
+        audioEl.currentTime = 0;
+        await audioEl.play();
+        useLibraryStore.getState().setPreviewState(track.videoId, false);
+      } catch {
+        stopCuePreview();
+      }
+    },
+    [ensureAudioInitialized, stopCuePreview]
+  );
 
   const cancelAutoCrossfade = useCallback(() => {
     if (crossfadeAnimRef.current?.active) {
@@ -365,6 +438,7 @@ export function App(): ReactElement {
       autoGainEmaRef.current[deck] = 0.42;
       queueEngineRef.current.markDeckChanged(deck);
       queueEngineRef.current.recordPlayed(track.videoId);
+      useLibraryStore.getState().markTrackPlayed(track.videoId);
 
       setDeckPatch(deck, {
         track,
@@ -377,11 +451,16 @@ export function App(): ReactElement {
         bpm: null,
         waveformPeaks: null,
         mainCueSec: 0,
-        autoGainDb: 0
+        autoGainDb: 0,
+        synced: false,
+        bufferRatio: 0,
+        customOsdTitle: null,
+        keyShiftSemitones: 0
       });
 
       const { dsp, decks, cueCtrls } = await ensureAudioInitialized();
       dsp.setDeckAutoGain(deck, 1);
+      dsp.setKeyShift(deck, 0);
 
       const resolvePromise =
         track.source === 'local' && track.localFilePath && window.tubedeckAPI.resolveLocalFile
@@ -424,6 +503,7 @@ export function App(): ReactElement {
         loading: false,
         durationSec: decks[deck].getDuration() || track.durationSec,
         currentTimeSec: 0,
+        bufferRatio: decks[deck].getBufferedRatio(),
         hotCues: cues,
         loop,
         bpm: savedMeta?.bpm ?? null,
@@ -434,7 +514,7 @@ export function App(): ReactElement {
     [ensureAudioInitialized, setDeckPatch]
   );
 
-  // Main 60fps engine: Audio+Video fade, anti-freeze watchdog, waveforms, Automix, WebGL master + Frames
+  // Main 60fps engine: Audio+Video fade, anti-freeze watchdog, waveforms, buffer health, Automix, WebGL master & Audio Visualizer
   useEffect(() => {
     let rafId = 0;
     let lastUiUpdate = 0;
@@ -503,9 +583,14 @@ export function App(): ReactElement {
       const nextDom: DeckId = effectiveVideoMix < 0.5 ? 'A' : 'B';
       if (nextDom !== activeDominantDeckRef.current) {
         activeDominantDeckRef.current = nextDom;
-        const domTrack = stDecks[nextDom].track;
-        if (domTrack) {
-          overlayCompRef.current.triggerTrackOsd(domTrack.title, domTrack.channel, now);
+        const domDeckState = stDecks[nextDom];
+        if (domDeckState.track) {
+          overlayCompRef.current.triggerTrackOsd(
+            domDeckState.customOsdTitle ?? domDeckState.track.title,
+            domDeckState.track.channel,
+            now,
+            Boolean(domDeckState.customOsdTitle)
+          );
         }
       }
 
@@ -575,13 +660,15 @@ export function App(): ReactElement {
             const currentTimeSec = s.getCurrentTime();
             const durationSec = s.getDuration();
             const playing = !s.isPaused();
+            const bufferRatio = s.getBufferedRatio();
             const prev = useDeckStore.getState().decks[id];
             if (
               Math.abs(prev.currentTimeSec - currentTimeSec) > 0.08 ||
               Math.abs(prev.durationSec - durationSec) > 0.2 ||
+              Math.abs(prev.bufferRatio - bufferRatio) > 0.03 ||
               prev.playing !== playing
             ) {
-              setDeckPatch(id, { currentTimeSec, durationSec, playing });
+              setDeckPatch(id, { currentTimeSec, durationSec, playing, bufferRatio });
             }
 
             const chFader = stMixer.channels[id].fader;
@@ -595,6 +682,7 @@ export function App(): ReactElement {
                 activeSessionIdRef.current
               ) {
                 lastLoggedTrackRef.current[id] = playKey;
+                useLibraryStore.getState().markTrackPlayed(prev.track.videoId);
                 void window.tubedeckAPI
                   ?.logTrackPlay({
                     sessionId: activeSessionIdRef.current,
@@ -698,20 +786,50 @@ export function App(): ReactElement {
       }
 
       if (compositorRef.current) {
+        const domDeck: DeckId = effectiveVideoMix < 0.5 ? 'A' : 'B';
+        const domSt = stDecks[domDeck];
+        const domBpm = domSt.bpm ?? 120;
+        const bands = fxPipelineRef.current.extractAudioBands(dsp?.getMasterAnalyser() ?? null);
+        const domVideoEl = syncs?.[domDeck].getVideoElement() ?? null;
+        const isAudioOnlyActive = Boolean(
+          domSt.track &&
+            (domSt.track.mediaKind === 'audio' ||
+              (domSt.playing && (!domVideoEl || domVideoEl.videoWidth === 0)))
+        );
+
+        const audioVis =
+          isAudioOnlyActive && domSt.track
+            ? {
+                active: true,
+                bands,
+                spectrum: dsp?.readMasterSpectrum() ?? null,
+                accentColor: domDeck === 'A' ? '#0EA5E9' : '#F59E0B',
+                title: domSt.customOsdTitle ?? domSt.track.title,
+                channel: domSt.track.channel
+              }
+            : null;
+
         const ovCanvas = overlayCompRef.current.getCanvas();
         const ovCtx = ovCanvas.getContext('2d');
         if (ovCtx) {
-          overlayCompRef.current.render(ovCtx, now, webcamVideoRef.current);
+          overlayCompRef.current.render(ovCtx, now, webcamVideoRef.current, audioVis);
         }
-        const domDeck = effectiveVideoMix < 0.5 ? 'A' : 'B';
-        const domBpm = stDecks[domDeck].bpm ?? 120;
-        const bands = fxPipelineRef.current.extractAudioBands(dsp?.getMasterAnalyser() ?? null);
-        const fxUniforms = fxPipelineRef.current.getFxUniforms(
+
+        const rawUniforms = fxPipelineRef.current.getFxUniforms(
           stSettings.masterFx,
           bands,
           now / 1000,
           domBpm
         );
+        const fxScale = Math.max(0.1, Math.min(1, stSettings.videoFxIntensity ?? 0.7));
+        const scaledUniforms = {
+          ...rawUniforms,
+          u_fxBlur: (rawUniforms.u_fxBlur ?? 0) * fxScale,
+          u_fxHue: (rawUniforms.u_fxHue ?? 0) * fxScale,
+          u_fxBw: (rawUniforms.u_fxBw ?? 0) * fxScale,
+          u_fxPixelate: (rawUniforms.u_fxPixelate ?? 0) * fxScale,
+          u_fxAudioShader: (rawUniforms.u_fxAudioShader ?? 0) * fxScale
+        };
 
         compositorRef.current.renderFrame({
           mix: effectiveVideoMix,
@@ -722,7 +840,7 @@ export function App(): ReactElement {
           videoRect: overlayCompRef.current.getVideoInsetRect(),
           timeSec: now / 1000,
           audioBands: bands,
-          fxUniforms
+          fxUniforms: scaledUniforms
         });
       }
 
@@ -787,7 +905,32 @@ export function App(): ReactElement {
     async (deck: DeckId, pitchPercent: number, keyLock: boolean) => {
       const { cueCtrls } = await ensureAudioInitialized();
       cueCtrls[deck].setPitchPercent(pitchPercent, keyLock);
-      setDeckPatch(deck, { pitchPercent, keyLock });
+      setDeckPatch(deck, { pitchPercent, keyLock, synced: false });
+    },
+    [ensureAudioInitialized, setDeckPatch]
+  );
+
+  const handleKeyShiftChange = useCallback(
+    async (deck: DeckId, semitones: number) => {
+      const { dsp } = await ensureAudioInitialized();
+      dsp.setKeyShift(deck, semitones);
+      setDeckPatch(deck, { keyShiftSemitones: semitones });
+    },
+    [ensureAudioInitialized, setDeckPatch]
+  );
+
+  const handleSync = useCallback(
+    async (deck: DeckId) => {
+      const other: DeckId = deck === 'A' ? 'B' : 'A';
+      const selfSt = useDeckStore.getState().decks[deck];
+      const otherSt = useDeckStore.getState().decks[other];
+      if (!selfSt.bpm || !otherSt.bpm) return;
+      const targetBpm = otherSt.bpm * (1 + otherSt.pitchPercent / 100);
+      const rate = bpmEnginesRef.current[deck].computeSyncPlaybackRate(selfSt.bpm, targetBpm);
+      const pitchPercent = Number(((rate - 1) * 100).toFixed(1));
+      const { cueCtrls } = await ensureAudioInitialized();
+      cueCtrls[deck].setPitchPercent(pitchPercent, selfSt.keyLock);
+      setDeckPatch(deck, { pitchPercent, keyLock: selfSt.keyLock, synced: true });
     },
     [ensureAudioInitialized, setDeckPatch]
   );
@@ -842,6 +985,36 @@ export function App(): ReactElement {
       brakeTimersRef.current[deck] = timerId;
     },
     [setDeckPatch]
+  );
+
+  const handleDeckFxChange = useCallback(
+    async (
+      d: DeckId,
+      fx: AudioFxId,
+      enabled: boolean,
+      wet: number,
+      beatDiv?: FxBeatDivision
+    ) => {
+      const { dsp } = await ensureAudioInitialized();
+      const st = useDeckStore.getState().decks[d];
+      const resolvedDiv = beatDiv ?? st.audioFx[fx].beatDiv;
+      dsp.setDeckFx(d, fx, enabled, wet, st.bpm, resolvedDiv);
+      setDeckPatch(d, {
+        audioFx: {
+          ...st.audioFx,
+          [fx]: { enabled, wet, beatDiv: resolvedDiv }
+        }
+      });
+    },
+    [ensureAudioInitialized, setDeckPatch]
+  );
+
+  const handleTriggerSample = useCallback(
+    async (pad: SamplerPadId) => {
+      const { dsp } = await ensureAudioInitialized();
+      dsp.triggerSample(pad, 0.85);
+    },
+    [ensureAudioInitialized]
   );
 
   const handleTriggerAutoVideo = useCallback(() => {
@@ -900,6 +1073,8 @@ export function App(): ReactElement {
       else if (action === 'deckB.playPause') void handleTogglePlay('B');
       else if (action === 'deckA.cue') void handleCueDown('A');
       else if (action === 'deckB.cue') void handleCueDown('B');
+      else if (action === 'deckA.sync') void handleSync('A');
+      else if (action === 'deckB.sync') void handleSync('B');
       else if (action === 'video.autoTransition') handleTriggerAutoVideo();
       else if (
         action === 'crossfader.left' ||
@@ -954,6 +1129,7 @@ export function App(): ReactElement {
     cancelAutoCrossfade,
     handleCueDown,
     handleMidiControl,
+    handleSync,
     handleTogglePlay,
     handleTriggerAutoVideo,
     setDeckPatch
@@ -1000,22 +1176,62 @@ export function App(): ReactElement {
     }
   };
 
+  const handleToggleOsdNow = () => {
+    const nextEnabled = !settings.overlayConfig.osd.enabled;
+    const nextCfg: OverlayConfig = {
+      ...settings.overlayConfig,
+      osd: { ...settings.overlayConfig.osd, enabled: nextEnabled }
+    };
+    void handleOverlayConfigChange(nextCfg);
+    if (nextEnabled) {
+      const domDeck = activeDominantDeckRef.current;
+      const st = useDeckStore.getState().decks[domDeck];
+      if (st.track) {
+        overlayCompRef.current.triggerTrackOsd(
+          st.customOsdTitle ?? st.track.title,
+          st.track.channel,
+          performance.now(),
+          Boolean(st.customOsdTitle)
+        );
+      }
+    } else {
+      overlayCompRef.current.hideTrackOsd();
+    }
+  };
+
   const renderDeck = (deckId: DeckId) => (
     <DeckPanel
       key={deckId}
       deckId={deckId}
+      activeQuality={settings.activeDeckQuality[deckId]}
+      showHotkeys={settings.showHotkeys}
       liveRgbRef={liveRgbRef}
       onTogglePlay={handleTogglePlay}
       onSeek={handleSeek}
       onToggleCueMonitor={handleToggleCueMonitor}
       onPitchChange={handlePitchChange}
+      onKeyShiftChange={handleKeyShiftChange}
+      onCustomOsdTitleChange={(d, customTitle) => {
+        const st = useDeckStore.getState().decks[d];
+        if (d === activeDominantDeckRef.current && st.track) {
+          overlayCompRef.current.triggerTrackOsd(
+            customTitle ?? st.track.title,
+            st.track.channel,
+            performance.now(),
+            Boolean(customTitle)
+          );
+        }
+      }}
       onCueDown={handleCueDown}
       onCueUp={handleCueUp}
       onJogNudge={(d, mult) => decksSyncRef.current?.[d].setTemporaryBend(mult)}
       onJogScrub={(d, deltaSec) => {
         const sync = decksSyncRef.current?.[d];
         if (!sync) return;
-        const target = Math.max(0, Math.min(sync.getDuration() || 9999, sync.getCurrentTime() + deltaSec));
+        const target = Math.max(
+          0,
+          Math.min(sync.getDuration() || 9999, sync.getCurrentTime() + deltaSec)
+        );
         void handleSeek(d, target);
       }}
       onBrake={handleBrake}
@@ -1073,21 +1289,8 @@ export function App(): ReactElement {
         const restored = await cueCtrl.endLoopRoll();
         setDeckPatch(d, { loop: restored });
       }}
-      onTriggerSample={async (pad: SamplerPadId) => {
-        const { dsp } = await ensureAudioInitialized();
-        dsp.triggerSample(pad, 0.85);
-      }}
-      onDeckFxChange={async (d, fx: AudioFxId, enabled, wet) => {
-        const { dsp } = await ensureAudioInitialized();
-        const st = useDeckStore.getState().decks[d];
-        dsp.setDeckFx(d, fx, enabled, wet, st.bpm);
-        setDeckPatch(d, {
-          audioFx: {
-            ...st.audioFx,
-            [fx]: { enabled, wet }
-          }
-        });
-      }}
+      onTriggerSample={handleTriggerSample}
+      onDeckFxChange={handleDeckFxChange}
       onTapBpm={(d) => {
         const tapped = bpmEnginesRef.current[d].recordTap(performance.now());
         if (tapped) {
@@ -1101,16 +1304,7 @@ export function App(): ReactElement {
         if (!cur) return;
         setDeckPatch(d, { bpm: bpmEnginesRef.current[d].adjustHalfDouble(cur, factor) });
       }}
-      onSync={async (d) => {
-        const other: DeckId = d === 'A' ? 'B' : 'A';
-        const selfSt = useDeckStore.getState().decks[d];
-        const otherSt = useDeckStore.getState().decks[other];
-        if (!selfSt.bpm || !otherSt.bpm) return;
-        const targetBpm = otherSt.bpm * (1 + otherSt.pitchPercent / 100);
-        const rate = bpmEnginesRef.current[d].computeSyncPlaybackRate(selfSt.bpm, targetBpm);
-        const pitchPercent = Number(((rate - 1) * 100).toFixed(1));
-        await handlePitchChange(d, pitchPercent, selfSt.keyLock);
-      }}
+      onSync={handleSync}
     />
   );
 
@@ -1119,19 +1313,28 @@ export function App(): ReactElement {
   const frameEnabled = Boolean(
     settings.overlayConfig.frame?.enabled && settings.overlayConfig.frame.preset !== 'none'
   );
+  const activeTabIndex = Math.max(
+    0,
+    BROWSER_TABS.findIndex((t) => t.id === activeTab)
+  );
 
   return (
-    <div className="flex h-screen w-screen flex-col gap-2 bg-[#0B0D11] p-2 text-[#F1F5F9]">
+    <div className="flex h-screen w-screen flex-col gap-2 bg-[#08090C] p-2 text-[#F8FAFC]">
       <audio ref={masterSinkAudioRef} className="hidden" />
       <audio ref={cueSinkAudioRef} className="hidden" />
+      <audio
+        ref={cuePreviewAudioRef}
+        onEnded={() => stopCuePreview()}
+        className="hidden"
+      />
 
-      {/* Top Studio Header Bar (60-30-10) */}
-      <header className="flex h-10 shrink-0 items-center justify-between gap-2 rounded-lg border border-[#262F3F] bg-[#141820] px-3 text-xs">
-        <div className="flex items-center gap-2 shrink-0">
+      {/* Top Pro Hardware Obsidian Header Bar */}
+      <header className="flex h-10 shrink-0 items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-[#0F1117] px-3 text-xs">
+        <div className="flex shrink-0 items-center gap-2">
           <Disc3 className="h-4 w-4 text-[#0EA5E9]" />
-          <span className="font-bold tracking-wide text-[#F1F5F9]">TubeDeck VDJ</span>
-          <span className="rounded border border-[#262F3F] bg-[#0B0D11] px-1.5 py-0.5 font-mono-tabular text-[10px] text-[#94A3B8]">
-            v{upd?.currentVersion ?? '2.1.0'}
+          <span className="font-bold tracking-wide text-[#F8FAFC]">TubeDeck VDJ</span>
+          <span className="rounded border border-white/[0.06] bg-[#08090C] px-1.5 py-0.5 font-mono-tabular text-[10px] text-[#94A3B8]">
+            v{upd?.currentVersion ?? '2.2.0'}
           </span>
 
           <select
@@ -1139,7 +1342,7 @@ export function App(): ReactElement {
             value={settings.videoQuality}
             onChange={(e) => handleVideoQualityChange(e.target.value as VideoQualityPreference)}
             title="Calidad de video YouTube global (Auto evita congelamientos)"
-            className="rounded border border-[#262F3F] bg-[#0B0D11] px-2 py-1 text-[10px] text-[#F1F5F9] focus:border-[#0EA5E9] focus:outline-none cursor-pointer"
+            className="rounded border border-white/[0.06] bg-[#08090C] px-2 py-1 text-[10px] text-[#F8FAFC] focus:border-white/25 focus:outline-none cursor-pointer"
           >
             <option value="auto">Video Auto (Fluido 720p)</option>
             <option value="720p">720p HD</option>
@@ -1149,28 +1352,26 @@ export function App(): ReactElement {
           </select>
         </div>
 
-        {/* Center: Always-visible YouTube-style Up Next banner + optional quality notice */}
+        {/* Center: Up Next banner + CUE preview stop + quality downgrade notice */}
         <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
           <button
             type="button"
             onClick={() => setActiveTab('queue')}
             title="Ir a Cola de Reproducción"
-            className="flex min-w-0 max-w-md items-center gap-1.5 rounded-md border border-[#262F3F] bg-[#0B0D11] px-2.5 py-1 text-[11px] hover:border-[#0EA5E9]/50 cursor-pointer"
+            className="flex min-w-0 max-w-md items-center gap-1.5 rounded-md border border-white/[0.06] bg-[#08090C] px-2.5 py-1 text-[11px] hover:border-white/20 cursor-pointer"
           >
             <ArrowRight className="h-3 w-3 shrink-0 text-[#10B981]" />
             <span className="shrink-0 font-semibold text-[#64748B]">Siguiente:</span>
             {nextQueuedItem ? (
               <>
-                <span className="truncate font-semibold text-[#F1F5F9]">
-                  {nextQueuedItem.track.title}
+                <span className="truncate font-semibold text-[#F8FAFC]">
+                  {cleanTrackTitleForOsd(nextQueuedItem.track.title)}
                 </span>
                 <span
-                  className={`shrink-0 rounded px-1 text-[9px] font-bold ${
+                  className={`shrink-0 rounded border px-1 text-[9px] font-bold ${
                     nextQueuedItem.track.source === 'local'
-                      ? 'bg-[#F59E0B]/15 text-[#F59E0B]'
-                      : nextQueuedItem.source === 'youtube-radio'
-                        ? 'bg-[#0EA5E9]/15 text-[#0EA5E9]'
-                        : 'bg-[#1B212D] text-[#94A3B8]'
+                      ? 'border-white/[0.1] bg-[#151821] text-[#CBD5E1]'
+                      : 'border-white/[0.08] bg-[#151821] text-[#94A3B8]'
                   }`}
                 >
                   {nextQueuedItem.track.source === 'local'
@@ -1182,20 +1383,33 @@ export function App(): ReactElement {
               </>
             ) : (
               <span className="truncate text-[#64748B]">
-                {libraryStore.autoRadioEnabled ? 'Radio YT seleccionará automáticamente' : 'Cola vacía'}
+                {libraryStore.autoRadioEnabled ? 'Radio YT lista' : 'Cola vacía'}
               </span>
             )}
           </button>
 
+          {libraryStore.previewingVideoId ? (
+            <button
+              type="button"
+              onClick={stopCuePreview}
+              className="inline-flex items-center gap-1 rounded border border-[#10B981]/50 bg-[#10B981]/15 px-2 py-0.5 text-[10px] font-semibold text-[#10B981] cursor-pointer"
+              title="Detener pre-escucha por audífonos"
+            >
+              <Headphones className="h-3 w-3" />
+              Detener CUE
+              <X className="h-3 w-3" />
+            </button>
+          ) : null}
+
           {settings.qualityNotice ? (
-            <div className="flex items-center gap-1 rounded border border-[#F59E0B]/50 bg-[#F59E0B]/10 px-2 py-0.5 text-[10px] text-[#F59E0B]">
+            <div className="flex items-center gap-1 rounded border border-white/[0.12] bg-[#151821] px-2 py-0.5 text-[10px] text-[#F59E0B]">
               <AlertTriangle className="h-3 w-3 shrink-0" />
               <span className="max-w-44 truncate">{settings.qualityNotice}</span>
               <button
                 type="button"
                 aria-label="Cerrar aviso de calidad"
                 onClick={() => settings.setQualityNotice(null)}
-                className="hover:text-[#F1F5F9] cursor-pointer"
+                className="text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
               >
                 <X className="h-3 w-3" />
               </button>
@@ -1203,13 +1417,13 @@ export function App(): ReactElement {
           ) : null}
         </div>
 
-        {/* Right: Status badges & Top Navigation Buttons */}
-        <div className="flex items-center gap-1.5 shrink-0 text-[11px]">
+        {/* Right: Live Badges + KEYS Overlay Toggle + Drawers */}
+        <div className="flex shrink-0 items-center gap-1.5 text-[11px]">
           <span
-            className={`hidden xl:inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
+            className={`hidden xl:inline-flex items-center gap-1 rounded border border-white/[0.06] px-2 py-0.5 font-semibold ${
               libraryStore.automixEnabled
                 ? 'bg-[#10B981]/15 text-[#10B981]'
-                : 'bg-[#0B0D11] text-[#64748B]'
+                : 'bg-[#08090C] text-[#64748B]'
             }`}
           >
             <Sparkles className="h-3 w-3" />
@@ -1217,10 +1431,10 @@ export function App(): ReactElement {
           </span>
 
           <span
-            className={`hidden xl:inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
+            className={`hidden xl:inline-flex items-center gap-1 rounded border border-white/[0.06] px-2 py-0.5 font-semibold ${
               libraryStore.autoRadioEnabled
-                ? 'bg-[#0EA5E9]/15 text-[#0EA5E9]'
-                : 'bg-[#0B0D11] text-[#64748B]'
+                ? 'bg-[#151821] text-[#CBD5E1]'
+                : 'bg-[#08090C] text-[#64748B]'
             }`}
           >
             <Radio className="h-3 w-3" />
@@ -1228,14 +1442,14 @@ export function App(): ReactElement {
           </span>
 
           <span
-            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
+            className={`inline-flex items-center gap-1 rounded border border-white/[0.06] px-2 py-0.5 font-semibold ${
               settings.outputOpen
-                ? 'bg-[#EF4444]/15 text-[#EF4444]'
-                : 'bg-[#0B0D11] text-[#64748B]'
+                ? 'bg-[#10B981]/15 text-[#10B981]'
+                : 'bg-[#08090C] text-[#64748B]'
             }`}
           >
             <Monitor className="h-3 w-3" />
-            {settings.outputOpen ? 'P2 ON AIR' : 'P2 OFF'}
+            {settings.outputOpen ? 'P2 LIVE' : 'P2 OFF'}
           </span>
 
           {upd?.state === 'available' || upd?.state === 'downloaded' ? (
@@ -1256,14 +1470,30 @@ export function App(): ReactElement {
 
           <button
             type="button"
+            aria-label="Mostrar Atajos"
+            aria-pressed={settings.showHotkeys}
+            onClick={() => settings.setShowHotkeys(!settings.showHotkeys)}
+            className={`inline-flex items-center gap-1 rounded border px-2 py-1 font-semibold cursor-pointer ${
+              settings.showHotkeys
+                ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
+                : 'border-white/[0.06] bg-[#08090C] text-[#94A3B8] hover:text-[#F8FAFC]'
+            }`}
+            title="Mostrar/ocultar teclas rápidas sobre los controles"
+          >
+            <Keyboard className="h-3.5 w-3.5" />
+            KEYS
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               setSettingsDrawerOpen(false);
               setFramesDrawerOpen((v) => !v);
             }}
             className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 font-semibold cursor-pointer ${
               framesDrawerOpen || frameEnabled
-                ? 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9]'
-                : 'border-[#262F3F] bg-[#0B0D11] text-[#94A3B8] hover:text-[#F1F5F9]'
+                ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
+                : 'border-white/[0.06] bg-[#08090C] text-[#94A3B8] hover:text-[#F8FAFC]'
             }`}
           >
             <Frame className="h-3.5 w-3.5" />
@@ -1273,9 +1503,9 @@ export function App(): ReactElement {
           <button
             type="button"
             onClick={() => setGuideOpen(true)}
-            className="inline-flex items-center gap-1 rounded border border-[#262F3F] bg-[#0B0D11] px-2.5 py-1 font-semibold text-[#94A3B8] hover:border-[#0EA5E9]/50 hover:text-[#F1F5F9] cursor-pointer"
+            className="inline-flex items-center gap-1 rounded border border-white/[0.06] bg-[#08090C] px-2.5 py-1 font-semibold text-[#94A3B8] hover:border-white/20 hover:text-[#F8FAFC] cursor-pointer"
           >
-            <BookOpen className="h-3.5 w-3.5 text-[#0EA5E9]" />
+            <BookOpen className="h-3.5 w-3.5" />
             Guía
           </button>
 
@@ -1287,8 +1517,8 @@ export function App(): ReactElement {
             }}
             className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 font-semibold cursor-pointer ${
               settingsDrawerOpen
-                ? 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9]'
-                : 'border-[#262F3F] bg-[#0B0D11] text-[#94A3B8] hover:text-[#F1F5F9]'
+                ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
+                : 'border-white/[0.06] bg-[#08090C] text-[#94A3B8] hover:text-[#F8FAFC]'
             }`}
           >
             <Sliders className="h-3.5 w-3.5" />
@@ -1297,8 +1527,8 @@ export function App(): ReactElement {
         </div>
       </header>
 
-      {/* Top Row: Deck A | Spacious Video Master & Previews | Deck B */}
-      <div className="grid grid-cols-[1fr_470px_1fr] gap-2">
+      {/* Top Row: Deck A | Compact Video Master + Stacked Previews | Deck B */}
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(390px,450px)_minmax(0,1fr)] gap-2">
         {renderDeck('A')}
 
         <VideoPreviewBar
@@ -1309,12 +1539,15 @@ export function App(): ReactElement {
           autoDurationSec={settings.autoDurationSec}
           transition={settings.transition}
           activeFx={settings.masterFx.enabled}
+          fxIntensity={settings.videoFxIntensity}
+          osdEnabled={settings.overlayConfig.osd.enabled}
           displays={settings.displays}
           selectedDisplayId={settings.selectedDisplayId}
           outputOpen={settings.outputOpen}
           frameEnabled={frameEnabled}
           activeQualityA={settings.activeDeckQuality.A}
           activeQualityB={settings.activeDeckQuality.B}
+          showHotkeys={settings.showHotkeys}
           onVideoMixChange={(m) => settings.setVideoMix(m)}
           onVideoModeChange={(mode: VideoCrossfaderMode) => settings.setVideoMode(mode)}
           onAutoDurationChange={(sec) => settings.setAutoDurationSec(sec)}
@@ -1327,6 +1560,8 @@ export function App(): ReactElement {
               enabled: { ...cur.enabled, [fxId]: !cur.enabled[fxId] }
             });
           }}
+          onFxIntensityChange={(val) => settings.setVideoFxIntensity(val)}
+          onToggleOsdNow={handleToggleOsdNow}
           onSelectDisplay={(id) => {
             settings.setSelectedDisplayId(id);
             if (settings.outputOpen) {
@@ -1357,103 +1592,118 @@ export function App(): ReactElement {
         {renderDeck('B')}
       </div>
 
-      {/* Middle Row: Mixer Center */}
-      <MixerCenter
-        onTrimChange={async (d, v) => {
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setTrim(d, v);
-          mixerStore.setChannelPatch(d, { trim: v });
-        }}
-        onEqChange={async (d, b: EqBand, db) => {
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setEq(d, b, db);
-          mixerStore.setEqValue(d, b, db);
-        }}
-        onEqKillToggle={async (d, b: EqBand, kill) => {
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setEqKill(d, b, kill);
-          mixerStore.setEqKill(d, b, kill);
-        }}
-        onColorFilterChange={async (d, a) => {
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setColorFilter(d, a);
-          mixerStore.setChannelPatch(d, { colorFilter: a });
-        }}
-        onFaderChange={async (d, level) => {
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setChannelFader(d, level);
-          mixerStore.setChannelPatch(d, { fader: level });
-        }}
-        onCrossfaderChange={async (pos, curve: CrossfaderCurve) => {
-          cancelAutoCrossfade();
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setCrossfader(pos, curve);
-          mixerStore.setCrossfader(pos);
-          mixerStore.setCrossfaderCurve(curve);
-        }}
-        onMasterGainChange={async (level) => {
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setMasterGain(level);
-          mixerStore.setMasterGain(level);
-        }}
-        onCueMixChange={async (blend) => {
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setCueMix(blend);
-          mixerStore.setCueMix(blend);
-        }}
-        onCueGainChange={async (level) => {
-          const { dsp } = await ensureAudioInitialized();
-          dsp.setCueGain(level);
-          mixerStore.setCueGain(level);
-        }}
-        getVuLevel={(target) => dspRef.current?.readVuLevel(target) ?? 0}
-        onAutoMixSwitch={() => {
-          const target: DeckId = useMixerStore.getState().crossfader <= 0.5 ? 'B' : 'A';
-          const lib = useLibraryStore.getState();
-          void startUnifiedCrossfade(
-            target,
-            lib.automixFadeDurationSec,
-            lib.automixFadeType,
-            true
-          );
-        }}
-        onToggleAutoGain={(enabled) => {
-          mixerStore.setAutoGainEnabled(enabled);
-          if (!enabled) {
-            dspRef.current?.setDeckAutoGain('A', 1);
-            dspRef.current?.setDeckAutoGain('B', 1);
-            setDeckPatch('A', { autoGainDb: 0 });
-            setDeckPatch('B', { autoGainDb: 0 });
-          }
-        }}
-        videoLinked={settings.videoMode === 'linked'}
-        onToggleVideoLinked={(linked) =>
-          settings.setVideoMode(linked ? 'linked' : 'independent')
-        }
-      />
+      {/* Middle Row (100% full width, 3 symmetrical modules): Deck A FX & Sampler | Mixer Central | Deck B FX & Sampler */}
+      <div className="grid grid-cols-[minmax(0,33%)_minmax(420px,34%)_minmax(0,33%)] xl:grid-cols-[minmax(0,34%)_minmax(0,32%)_minmax(0,34%)] gap-2">
+        <DeckFxSamplerModule
+          deckId="A"
+          onDeckFxChange={handleDeckFxChange}
+          onTriggerSample={handleTriggerSample}
+        />
 
-      {/* Bottom Row: Clean 4-Tab Library & Queue Workspace */}
-      <section className="flex flex-1 min-h-0 flex-col gap-2 rounded-xl border border-[#262F3F] bg-[#141820] p-2.5">
-        <nav className="flex items-center gap-1.5 text-xs">
-          {(
-            [
-              ['search', 'Buscador YouTube'],
-              ['local', `Biblioteca Local (${libraryStore.localTracks.length})`],
-              ['queue', `Cola (${libraryStore.queue.length})`],
-              ['history', 'Historial & Crates']
-            ] as const
-          ).map(([id, label]) => (
+        <MixerCenter
+          showHotkeys={settings.showHotkeys}
+          onTrimChange={async (d, v) => {
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setTrim(d, v);
+            mixerStore.setChannelPatch(d, { trim: v });
+          }}
+          onEqChange={async (d, b: EqBand, db) => {
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setEq(d, b, db);
+            mixerStore.setEqValue(d, b, db);
+          }}
+          onEqKillToggle={async (d, b: EqBand, kill) => {
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setEqKill(d, b, kill);
+            mixerStore.setEqKill(d, b, kill);
+          }}
+          onColorFilterChange={async (d, a) => {
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setColorFilter(d, a);
+            mixerStore.setChannelPatch(d, { colorFilter: a });
+          }}
+          onFaderChange={async (d, level) => {
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setChannelFader(d, level);
+            mixerStore.setChannelPatch(d, { fader: level });
+          }}
+          onCrossfaderChange={async (pos, curve: CrossfaderCurve) => {
+            cancelAutoCrossfade();
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setCrossfader(pos, curve);
+            mixerStore.setCrossfader(pos);
+            mixerStore.setCrossfaderCurve(curve);
+          }}
+          onMasterGainChange={async (level) => {
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setMasterGain(level);
+            mixerStore.setMasterGain(level);
+          }}
+          onCueMixChange={async (blend) => {
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setCueMix(blend);
+            mixerStore.setCueMix(blend);
+          }}
+          onCueGainChange={async (level) => {
+            const { dsp } = await ensureAudioInitialized();
+            dsp.setCueGain(level);
+            mixerStore.setCueGain(level);
+          }}
+          getVuLevel={(target) => dspRef.current?.readVuLevel(target) ?? 0}
+          getStereoVuLevels={(target) => dspRef.current?.readStereoVuLevels(target) ?? [0, 0]}
+          onAutoMixSwitch={() => {
+            const target: DeckId = useMixerStore.getState().crossfader <= 0.5 ? 'B' : 'A';
+            const lib = useLibraryStore.getState();
+            void startUnifiedCrossfade(
+              target,
+              lib.automixFadeDurationSec,
+              lib.automixFadeType,
+              true
+            );
+          }}
+          onToggleAutoGain={(enabled) => {
+            mixerStore.setAutoGainEnabled(enabled);
+            if (!enabled) {
+              dspRef.current?.setDeckAutoGain('A', 1);
+              dspRef.current?.setDeckAutoGain('B', 1);
+              setDeckPatch('A', { autoGainDb: 0 });
+              setDeckPatch('B', { autoGainDb: 0 });
+            }
+          }}
+          videoLinked={settings.videoMode === 'linked'}
+          onToggleVideoLinked={(linked) =>
+            settings.setVideoMode(linked ? 'linked' : 'independent')
+          }
+        />
+
+        <DeckFxSamplerModule
+          deckId="B"
+          onDeckFxChange={handleDeckFxChange}
+          onTriggerSample={handleTriggerSample}
+        />
+      </div>
+
+      {/* Bottom Row: 4-Tab Workspace with Sliding Pill */}
+      <section className="flex flex-1 min-h-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-[#0F1117] p-2.5">
+        <nav className="relative grid w-fit grid-cols-4 rounded-lg border border-white/[0.06] bg-[#08090C] p-0.5 text-xs">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded-md bg-[#1C202B] ring-1 ring-white/[0.12] transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            style={{
+              width: 'calc(25% - 2px)',
+              transform: `translateX(${activeTabIndex * 100}%)`
+            }}
+          />
+          {BROWSER_TABS.map(({ id, getLabel }) => (
             <button
               key={id}
               type="button"
               onClick={() => setActiveTab(id)}
-              className={`rounded-lg border px-3 py-1 font-semibold cursor-pointer ${
-                activeTab === id
-                  ? 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9]'
-                  : 'border-[#262F3F] bg-[#0B0D11] text-[#94A3B8] hover:text-[#F1F5F9]'
+              className={`relative z-10 whitespace-nowrap rounded-md px-3 py-1 font-semibold cursor-pointer ${
+                activeTab === id ? 'text-[#F8FAFC]' : 'text-[#94A3B8] hover:text-[#CBD5E1]'
               }`}
             >
-              {label}
+              {getLabel(libraryStore.localTracks.length, libraryStore.queue.length)}
             </button>
           ))}
         </nav>
@@ -1467,6 +1717,7 @@ export function App(): ReactElement {
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
               onPlayNextInQueue={handlePlayNextInQueue}
+              onCuePreview={handleCuePreview}
               crates={crates}
               onAddToCrate={async (crateId, track) => {
                 await window.tubedeckAPI?.addTrackToCrate(crateId, track);
@@ -1502,6 +1753,7 @@ export function App(): ReactElement {
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
               onPlayNextInQueue={handlePlayNextInQueue}
+              onCuePreview={handleCuePreview}
             />
           ) : null}
 
@@ -1617,7 +1869,7 @@ export function App(): ReactElement {
 
       {/* Slide-over Drawer: Marcos y Visuales */}
       {framesDrawerOpen ? (
-        <div className="fixed inset-0 z-40 flex justify-end bg-black/60 backdrop-blur-[1px]">
+        <div className="fixed inset-0 z-40 flex justify-end bg-black/65 backdrop-blur-[2px]">
           <div
             className="flex-1"
             onClick={() => setFramesDrawerOpen(false)}
@@ -1626,18 +1878,18 @@ export function App(): ReactElement {
           <aside
             role="dialog"
             aria-label="Marcos y Visuales"
-            className="animate-drawer-in flex h-full w-[440px] max-w-[95vw] flex-col border-l border-[#262F3F] bg-[#141820] shadow-2xl"
+            className="animate-drawer-in flex h-full w-[440px] max-w-[95vw] flex-col border-l border-white/[0.08] bg-[#0F1117]/95 backdrop-blur-md shadow-2xl"
           >
-            <div className="flex items-center justify-between border-b border-[#262F3F] px-4 py-3">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
               <div className="flex items-center gap-2">
-                <Frame className="h-4 w-4 text-[#0EA5E9]" />
-                <h2 className="text-sm font-bold text-[#F1F5F9]">Marcos y Overlays en Vivo</h2>
+                <Frame className="h-4 w-4 text-[#94A3B8]" />
+                <h2 className="text-sm font-bold text-[#F8FAFC]">Marcos y Overlays en Vivo</h2>
               </div>
               <button
                 type="button"
                 aria-label="Cerrar Marcos"
                 onClick={() => setFramesDrawerOpen(false)}
-                className="rounded-lg border border-[#262F3F] bg-[#0B0D11] p-1 text-[#94A3B8] hover:text-[#F1F5F9] cursor-pointer"
+                className="rounded-lg border border-white/[0.06] bg-[#151821] p-1 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -1654,7 +1906,7 @@ export function App(): ReactElement {
 
       {/* Slide-over Drawer: Ajustes del Sistema */}
       {settingsDrawerOpen ? (
-        <div className="fixed inset-0 z-40 flex justify-end bg-black/60 backdrop-blur-[1px]">
+        <div className="fixed inset-0 z-40 flex justify-end bg-black/65 backdrop-blur-[2px]">
           <div
             className="flex-1"
             onClick={() => setSettingsDrawerOpen(false)}
@@ -1663,12 +1915,12 @@ export function App(): ReactElement {
           <aside
             role="dialog"
             aria-label="Ajustes del Sistema"
-            className="animate-drawer-in flex h-full w-[540px] max-w-[95vw] flex-col border-l border-[#262F3F] bg-[#141820] shadow-2xl"
+            className="animate-drawer-in flex h-full w-[540px] max-w-[95vw] flex-col border-l border-white/[0.08] bg-[#0F1117]/95 backdrop-blur-md shadow-2xl"
           >
-            <div className="flex items-center justify-between border-b border-[#262F3F] px-4 py-3">
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
               <div className="flex items-center gap-2">
-                <Sliders className="h-4 w-4 text-[#0EA5E9]" />
-                <h2 className="text-sm font-bold text-[#F1F5F9]">
+                <Sliders className="h-4 w-4 text-[#94A3B8]" />
+                <h2 className="text-sm font-bold text-[#F8FAFC]">
                   Ajustes (Audio / Pantalla / MIDI / Actualizaciones)
                 </h2>
               </div>
@@ -1676,7 +1928,7 @@ export function App(): ReactElement {
                 type="button"
                 aria-label="Cerrar Ajustes"
                 onClick={() => setSettingsDrawerOpen(false)}
-                className="rounded-lg border border-[#262F3F] bg-[#0B0D11] p-1 text-[#94A3B8] hover:text-[#F1F5F9] cursor-pointer"
+                className="rounded-lg border border-white/[0.06] bg-[#151821] p-1 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
               >
                 <X className="h-4 w-4" />
               </button>

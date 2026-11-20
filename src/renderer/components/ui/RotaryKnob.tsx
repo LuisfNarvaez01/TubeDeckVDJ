@@ -1,4 +1,4 @@
-import { useRef, type PointerEvent, type ReactElement, type WheelEvent } from 'react';
+import { useRef, useState, type PointerEvent, type ReactElement, type WheelEvent } from 'react';
 
 interface RotaryKnobProps {
   label: string;
@@ -39,13 +39,15 @@ export function RotaryKnob({
   min,
   max,
   defaultValue = 0,
-  accentColor = '#00D4FF',
+  accentColor = '#E2E8F0',
   bipolar = false,
-  size = 42,
+  size = 40,
   onChange,
   formatValue
 }: RotaryKnobProps): ReactElement {
   const dragStartRef = useRef<{ y: number; val: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+
   const ratio = max > min ? (clamp(value, min, max) - min) / (max - min) : 0;
   const angle = -135 + ratio * 270;
 
@@ -60,10 +62,12 @@ export function RotaryKnob({
     : describeArc(center, center, radius, -135, angle);
 
   const pointerEnd = polarToCartesian(center, center, radius - 4, angle);
+  const formattedText = formatValue ? formatValue(value) : value.toFixed(1);
 
   const handlePointerDown = (e: PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture?.(e.pointerId);
     dragStartRef.current = { y: e.clientY, val: value };
+    setDragging(true);
   };
 
   const handlePointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -78,6 +82,7 @@ export function RotaryKnob({
     if (dragStartRef.current) {
       e.currentTarget.releasePointerCapture?.(e.pointerId);
       dragStartRef.current = null;
+      setDragging(false);
     }
   };
 
@@ -89,7 +94,16 @@ export function RotaryKnob({
   };
 
   return (
-    <div className="flex flex-col items-center gap-0.5 select-none">
+    <div className="relative flex flex-col items-center gap-0.5 select-none">
+      {dragging ? (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute -top-6 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded border border-white/[0.14] bg-[#08090C]/95 px-1.5 py-0.5 font-mono-tabular text-[10px] font-semibold text-[#F8FAFC] shadow-lg"
+        >
+          {formattedText}
+        </div>
+      ) : null}
+
       <div
         role="slider"
         tabIndex={0}
@@ -103,27 +117,33 @@ export function RotaryKnob({
         onPointerCancel={handlePointerUp}
         onDoubleClick={() => onChange(defaultValue)}
         onWheel={handleWheel}
-        title={`${label}: ${formatValue ? formatValue(value) : value.toFixed(1)} (doble clic para reset)`}
-        className="relative cursor-ns-resize rounded-full focus:outline-none focus:ring-1 focus:ring-[#00D4FF]"
+        title={`${label}: ${formattedText} (doble clic para reset)`}
+        className="relative cursor-ns-resize rounded-full focus:outline-none focus:ring-1 focus:ring-white/30"
         style={{ width: size, height: size }}
       >
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-          <path d={trackArc} fill="none" stroke="#1F2735" strokeWidth={3.5} strokeLinecap="round" />
-          <path d={valueArc} fill="none" stroke={accentColor} strokeWidth={3.5} strokeLinecap="round" />
+          <path
+            d={trackArc}
+            fill="none"
+            stroke="rgba(255,255,255,0.09)"
+            strokeWidth={3}
+            strokeLinecap="round"
+          />
+          <path d={valueArc} fill="none" stroke={accentColor} strokeWidth={3} strokeLinecap="round" />
           <circle
             cx={center}
             cy={center}
             r={radius - 5}
-            fill="#131822"
-            stroke="#2D3748"
-            strokeWidth={1.2}
+            fill="#151821"
+            stroke={dragging ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.1)'}
+            strokeWidth={1.1}
           />
           <line
             x1={center}
             y1={center}
             x2={pointerEnd.x}
             y2={pointerEnd.y}
-            stroke="#F1F5F9"
+            stroke="#F8FAFC"
             strokeWidth={2}
             strokeLinecap="round"
           />
@@ -133,4 +153,3 @@ export function RotaryKnob({
     </div>
   );
 }
-

@@ -2,13 +2,13 @@ import type { DeckId, HotCue, LoopState } from '../../shared/types';
 import type { DualDeckMediaSync } from '../audio/DualDeckMediaSync';
 
 const HOT_CUE_COLORS = [
-  '#00D4FF',
+  '#0EA5E9',
   '#10B981',
-  '#FF8A00',
-  '#8B5CF6',
+  '#F59E0B',
+  '#E2E8F0',
   '#EF4444',
-  '#EAB308',
-  '#EC4899',
+  '#CBD5E1',
+  '#94A3B8',
   '#38BDF8'
 ];
 

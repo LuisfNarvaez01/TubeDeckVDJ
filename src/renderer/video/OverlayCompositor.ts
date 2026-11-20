@@ -7,6 +7,35 @@ export type VideoFramePreset =
   | 'club-led'
   | 'custom';
 
+export interface AudioVisualizerState {
+  active: boolean;
+  bands: { low: number; mid: number; high: number };
+  spectrum?: Uint8Array | null;
+  accentColor?: string;
+  title?: string;
+  channel?: string;
+}
+
+const TITLE_NOISE_PATTERNS: RegExp[] = [
+  /[\[(]\s*(?:official\s*(?:music\s*)?(?:video|audio|visualizer|hd|4k)|video\s*oficial|audio\s*oficial|lyric(?:s)?\s*video|letra(?:\s*oficial)?|lyrics|letra|hd|full\s*hd|hq|4k(?:\s*remastered)?|8k|1080p|60\s*fps)\s*[\])]/gi,
+  /\s*\|\s*(?:official\s*(?:video|audio|music\s*video)|video\s*oficial|lyrics|letra|hd|4k).*$/gi,
+  /\s+(?:official\s*(?:music\s*)?(?:video|audio)|4k\s*remastered|4k|8k|1080p|60\s*fps)\s*$/gi
+];
+
+/** Strips common YouTube upload tags while keeping mix/version identifiers intact. */
+export function cleanTrackTitleForOsd(rawTitle: string): string {
+  let cleaned = rawTitle.trim();
+  if (!cleaned) return '';
+  for (const re of TITLE_NOISE_PATTERNS) {
+    cleaned = cleaned.replace(re, ' ');
+  }
+  cleaned = cleaned
+    .replace(/\s{2,}/g, ' ')
+    .replace(/[\s\-|/]+$/g, '')
+    .trim();
+  return cleaned || rawTitle.trim();
+}
+
 export interface OverlayConfig {
   frame: {
     enabled: boolean;
@@ -246,19 +275,119 @@ export class OverlayCompositor {
     return true;
   }
 
-  triggerTrackOsd(title: string, channel: string, nowMs = Date.now()): void {
-    this.osdTitle = title;
+  triggerTrackOsd(title: string, channel: string, nowMs = Date.now(), useRawTitle = false): void {
+    this.osdTitle = useRawTitle ? title.trim() : cleanTrackTitleForOsd(title);
     this.osdChannel = channel;
     this.osdTriggeredAtMs = nowMs;
+  }
+
+  hideTrackOsd(): void {
+    this.osdTriggeredAtMs = -Infinity;
+  }
+
+  private renderAudioVisualizer(
+    ctx2d: CanvasRenderingContext2D,
+    nowMs: number,
+    vis: AudioVisualizerState
+  ): void {
+    const rect = this.getVideoInsetRect();
+    const ix = Math.round(rect.x * this.width);
+    const iy = Math.round(rect.y * this.height);
+    const iw = Math.round(rect.w * this.width);
+    const ih = Math.round(rect.h * this.height);
+    const accent = vis.accentColor || '#0EA5E9';
+
+    ctx2d.save();
+    ctx2d.beginPath();
+    ctx2d.roundRect(ix, iy, iw, ih, 0);
+    ctx2d.clip();
+
+    // Deep obsidian stage fill
+    ctx2d.fillStyle = '#08090C';
+    ctx2d.fillRect(ix, iy, iw, ih);
+
+    // Bass-reactive radial backdrop glow when CanvasGradient is available
+    if (typeof ctx2d.createRadialGradient === 'function') {
+      const cx = ix + iw * 0.5;
+      const cy = iy + ih * 0.52;
+      const pulseR = Math.max(120, iw * (0.28 + vis.bands.low * 0.24));
+      const grad = ctx2d.createRadialGradient(cx, cy, 8, cx, cy, pulseR);
+      grad.addColorStop(0, `${accent}33`);
+      grad.addColorStop(0.55, 'rgba(15, 17, 23, 0.35)');
+      grad.addColorStop(1, 'rgba(8, 9, 12, 0)');
+      ctx2d.fillStyle = grad;
+      ctx2d.fillRect(ix, iy, iw, ih);
+    }
+
+    // Center horizon hairline
+    const centerY = iy + Math.round(ih * 0.54);
+    ctx2d.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx2d.fillRect(ix + 48, centerY, iw - 96, 1);
+
+    // 48 mirrored reactive spectrum bars
+    const barCount = 48;
+    const usableW = Math.max(200, iw - 120);
+    const gap = 4;
+    const barW = Math.max(4, (usableW - gap * (barCount - 1)) / barCount);
+    const startX = ix + Math.round((iw - (barCount * barW + (barCount - 1) * gap)) / 2);
+    const maxBarH = Math.round(ih * 0.26);
+    const spectrum = vis.spectrum;
+
+    for (let i = 0; i < barCount; i += 1) {
+      const binIdx = spectrum && spectrum.length > 0
+        ? Math.min(spectrum.length - 1, Math.floor((i / barCount) * Math.min(180, spectrum.length)))
+        : 0;
+      const specVal = spectrum && spectrum.length > 0 ? spectrum[binIdx] / 255 : 0;
+      const waveFallback =
+        0.12 +
+        Math.abs(Math.sin(nowMs * 0.004 + i * 0.28)) *
+          (0.25 + vis.bands.low * 0.45 + vis.bands.mid * 0.3);
+      const energy = Math.min(1, Math.max(0.06, specVal > 0.01 ? specVal : waveFallback));
+      const bh = Math.max(4, Math.round(energy * maxBarH));
+      const bx = startX + i * (barW + gap);
+
+      ctx2d.fillStyle = i % 3 === 0 ? accent : 'rgba(226, 232, 240, 0.78)';
+      ctx2d.fillRect(bx, centerY - bh, barW, bh);
+      ctx2d.fillStyle = i % 3 === 0 ? `${accent}55` : 'rgba(148, 163, 184, 0.28)';
+      ctx2d.fillRect(bx, centerY + 2, barW, Math.max(2, Math.round(bh * 0.55)));
+    }
+
+    // Track caption above center line
+    const caption = cleanTrackTitleForOsd(vis.title || '');
+    if (caption) {
+      ctx2d.fillStyle = '#F8FAFC';
+      ctx2d.font = '700 22px Inter, sans-serif';
+      ctx2d.textBaseline = 'bottom';
+      const sliced = caption.slice(0, 62);
+      const tw = ctx2d.measureText(sliced).width;
+      ctx2d.fillText(sliced, ix + Math.max(24, (iw - tw) / 2), iy + Math.round(ih * 0.22));
+    }
+    if (vis.channel) {
+      ctx2d.fillStyle = '#94A3B8';
+      ctx2d.font = '500 14px Inter, sans-serif';
+      ctx2d.textBaseline = 'top';
+      const cw = ctx2d.measureText(vis.channel).width;
+      ctx2d.fillText(vis.channel, ix + Math.max(24, (iw - cw) / 2), iy + Math.round(ih * 0.23) + 6);
+    }
+
+    ctx2d.restore();
   }
 
   render(
     ctx2d: CanvasRenderingContext2D,
     nowMs: number,
-    webcamVideo?: HTMLVideoElement | null
+    webcamVideo?: HTMLVideoElement | null,
+    audioVisualizer?: AudioVisualizerState | null
   ): boolean {
     ctx2d.clearRect(0, 0, this.width, this.height);
-    let drewAnything = this.renderVideoFrame(ctx2d);
+    let drewAnything = false;
+    if (audioVisualizer?.active) {
+      this.renderAudioVisualizer(ctx2d, nowMs, audioVisualizer);
+      drewAnything = true;
+    }
+    if (this.renderVideoFrame(ctx2d)) {
+      drewAnything = true;
+    }
 
     // 1. Webcam PiP
     if (
@@ -335,17 +464,17 @@ export class OverlayCompositor {
       const boxH = 74;
       const x = 32;
       const y = this.height - boxH - 58;
-      ctx2d.fillStyle = 'rgba(11, 14, 20, 0.85)';
+      ctx2d.fillStyle = 'rgba(8, 9, 12, 0.88)';
       ctx2d.beginPath();
       ctx2d.roundRect(x, y, boxW, boxH, 10);
       ctx2d.fill();
 
-      ctx2d.fillStyle = '#00D4FF';
+      ctx2d.fillStyle = '#0EA5E9';
       ctx2d.font = '700 13px Inter, sans-serif';
       ctx2d.textBaseline = 'top';
       ctx2d.fillText('AHORA SUENA', x + 16, y + 12);
 
-      ctx2d.fillStyle = '#F1F5F9';
+      ctx2d.fillStyle = '#F8FAFC';
       ctx2d.font = '600 18px Inter, sans-serif';
       ctx2d.fillText(this.osdTitle.slice(0, 56), x + 16, y + 30);
 

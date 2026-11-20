@@ -63,18 +63,18 @@ export function SettingsTab({
   const upd = settings.updaterStatus;
 
   return (
-    <div className="grid h-full grid-cols-2 gap-3 overflow-y-auto text-xs">
+    <div className="grid h-full grid-cols-1 gap-3 overflow-y-auto text-xs sm:grid-cols-2">
       {/* Audio Routing */}
-      <div className="flex flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
+      <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-[#08090C] p-3">
         <div className="flex items-center justify-between">
-          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
+          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F8FAFC]">
             <Volume2 className="h-4 w-4 text-[#10B981]" />
             Salidas de Audio (Master / Audífonos)
           </h3>
           <button
             type="button"
             onClick={onRefreshAudioDevices}
-            className="rounded border border-[#1F2735] p-1 text-[#94A3B8] hover:text-white cursor-pointer"
+            className="rounded border border-white/[0.06] bg-[#151821] p-1 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
             title="Actualizar dispositivos"
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -87,7 +87,7 @@ export function SettingsTab({
             <select
               value={settings.masterDeviceId}
               onChange={(e) => onSelectMasterDevice(e.target.value)}
-              className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-[#F1F5F9]"
+              className="rounded border border-white/[0.06] bg-[#151821] px-2 py-1 text-[#F8FAFC]"
             >
               {settings.audioOutputs.map((d) => (
                 <option key={`m-${d.deviceId}`} value={d.deviceId}>
@@ -103,7 +103,7 @@ export function SettingsTab({
               value={settings.cueDeviceId}
               disabled={settings.monoSplit}
               onChange={(e) => onSelectCueDevice(e.target.value)}
-              className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-[#F1F5F9] disabled:opacity-50"
+              className="rounded border border-white/[0.06] bg-[#151821] px-2 py-1 text-[#F8FAFC] disabled:opacity-50"
             >
               {settings.audioOutputs.map((d) => (
                 <option key={`c-${d.deviceId}`} value={d.deviceId}>
@@ -114,35 +114,35 @@ export function SettingsTab({
           </label>
         </div>
 
-        <label className="flex items-center gap-2 text-[#F1F5F9] cursor-pointer">
+        <label className="flex items-center gap-2 text-[#CBD5E1] cursor-pointer">
           <input
             type="checkbox"
             checked={settings.monoSplit}
             onChange={(e) => onToggleMonoSplit(e.target.checked)}
-            className="accent-[#8B5CF6]"
+            className="accent-[#E2E8F0]"
           />
           Modo Mono Split (Izq = Master, Der = Audífonos)
         </label>
 
         {settings.audioNotice ? (
-          <p className="rounded bg-[#FF8A00]/15 px-2 py-1 text-[11px] text-[#FDBA74]">
+          <p className="rounded border border-[#F59E0B]/30 bg-[#F59E0B]/10 px-2 py-1 text-[11px] text-[#F59E0B]">
             {settings.audioNotice}
           </p>
         ) : null}
       </div>
 
       {/* Video, Display & yt-dlp */}
-      <div className="flex flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
+      <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-[#08090C] p-3">
         <div className="flex items-center justify-between">
-          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
-            <Monitor className="h-4 w-4 text-[#00D4FF]" />
+          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F8FAFC]">
+            <Monitor className="h-4 w-4 text-[#94A3B8]" />
             Video Master, Monitores y yt-dlp
           </h3>
           <button
             type="button"
             disabled={settings.ytDlpStatus.downloading}
             onClick={onEnsureYtDlp}
-            className="inline-flex items-center gap-1 rounded border border-[#00D4FF]/50 bg-[#00D4FF]/15 px-2 py-0.5 text-[11px] font-semibold text-[#00D4FF] disabled:opacity-50 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded border border-white/[0.12] bg-[#151821] px-2 py-0.5 text-[11px] font-semibold text-[#F8FAFC] disabled:opacity-50 cursor-pointer"
           >
             <Download className="h-3 w-3" />
             {settings.ytDlpStatus.available ? 'yt-dlp OK' : 'Instalar yt-dlp'}
@@ -154,7 +154,7 @@ export function SettingsTab({
           <select
             value={settings.outputResolution}
             onChange={(e) => onResolutionChange(e.target.value as '720p' | '1080p')}
-            className="rounded border border-[#262F3F] bg-[#141820] px-2 py-1 text-[#F8FAFC]"
+            className="rounded border border-white/[0.06] bg-[#151821] px-2 py-1 text-[#F8FAFC]"
           >
             <option value="1080p">1920 × 1080 (Full HD 60 fps)</option>
             <option value="720p">1280 × 720 (HD 60 fps)</option>
@@ -167,7 +167,7 @@ export function SettingsTab({
             <select
               value={settings.videoQuality}
               onChange={(e) => onVideoQualityChange(e.target.value as VideoQualityPreference)}
-              className="rounded border border-[#262F3F] bg-[#141820] px-2 py-1 text-[#F8FAFC]"
+              className="rounded border border-white/[0.06] bg-[#151821] px-2 py-1 text-[#F8FAFC]"
             >
               <option value="auto">Automática (720p H.264 → baja si hay lentitud)</option>
               <option value="720p">720p HD fluido</option>
@@ -179,22 +179,25 @@ export function SettingsTab({
         ) : null}
 
         <div className="text-[11px] text-[#94A3B8]">
-          Monitores: {settings.displays.map((d) => `${d.label} (${d.bounds.width}×${d.bounds.height})`).join(' | ') || 'Detectando...'}
+          Monitores:{' '}
+          {settings.displays
+            .map((d) => `${d.label} (${d.bounds.width}×${d.bounds.height})`)
+            .join(' | ') || 'Detectando...'}
         </div>
       </div>
 
       {/* MIDI USB & MIDI Learn */}
-      <div className="flex flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-3">
+      <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-[#08090C] p-3">
         <div className="flex items-center justify-between">
-          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
-            <Sliders className="h-4 w-4 text-[#8B5CF6]" />
+          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F8FAFC]">
+            <Sliders className="h-4 w-4 text-[#94A3B8]" />
             Controladores MIDI USB (MIDI Learn)
           </h3>
           {onInitMidi ? (
             <button
               type="button"
               onClick={onInitMidi}
-              className="rounded border border-[#1F2735] px-2 py-0.5 text-[11px] text-[#94A3B8] hover:text-white cursor-pointer"
+              className="rounded border border-white/[0.06] bg-[#151821] px-2 py-0.5 text-[11px] text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
             >
               Escanear MIDI
             </button>
@@ -202,7 +205,8 @@ export function SettingsTab({
         </div>
 
         <div className="text-[11px] text-[#94A3B8]">
-          Detectados: {midiDevices.length > 0 ? midiDevices.join(', ') : 'Ningún controlador USB conectado'}
+          Detectados:{' '}
+          {midiDevices.length > 0 ? midiDevices.join(', ') : 'Ningún controlador USB conectado'}
         </div>
 
         <div className="flex flex-wrap gap-1.5">
@@ -213,8 +217,8 @@ export function SettingsTab({
               onClick={() => onStartMidiLearn?.(c.key, c.mode)}
               className={`rounded border px-2 py-1 text-[11px] cursor-pointer ${
                 learningControlKey === c.key
-                  ? 'border-[#FF8A00] bg-[#FF8A00]/20 text-[#FDBA74]'
-                  : 'border-[#1F2735] bg-[#131822] text-[#94A3B8] hover:text-white'
+                  ? 'border-[#10B981]/60 bg-[#10B981]/15 text-[#10B981]'
+                  : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
               }`}
             >
               {learningControlKey === c.key ? `Mueve control para ${c.label}...` : `Learn: ${c.label}`}
@@ -223,7 +227,7 @@ export function SettingsTab({
         </div>
 
         {midiMappings.length > 0 ? (
-          <div className="max-h-20 overflow-y-auto divide-y divide-[#1F2735] rounded border border-[#1F2735]">
+          <div className="max-h-20 overflow-y-auto divide-y divide-white/[0.06] rounded border border-white/[0.06]">
             {midiMappings.map((m) => (
               <div key={m.id} className="flex items-center justify-between px-2 py-1 text-[11px]">
                 <span className="truncate">
@@ -243,14 +247,14 @@ export function SettingsTab({
       </div>
 
       {/* Auto-Updater (GitHub Releases) */}
-      <div className="flex flex-col gap-2 rounded-lg border border-[#1F2937] bg-[#07090E] p-3">
+      <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-[#08090C] p-3">
         <div className="flex items-center justify-between">
           <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F8FAFC]">
-            <CloudDownload className="h-4 w-4 text-[#00D4FF]" />
+            <CloudDownload className="h-4 w-4 text-[#94A3B8]" />
             Actualizaciones (GitHub Releases)
           </h3>
-          <span className="rounded bg-[#0F141D] px-2 py-0.5 font-mono-tabular text-[11px] text-[#94A3B8]">
-            v{upd?.currentVersion ?? '2.0.0'}
+          <span className="rounded border border-white/[0.06] bg-[#151821] px-2 py-0.5 font-mono-tabular text-[11px] text-[#CBD5E1]">
+            v{upd?.currentVersion ?? '2.2.0'}
           </span>
         </div>
 
@@ -276,9 +280,9 @@ export function SettingsTab({
         </div>
 
         {upd?.state === 'downloading' ? (
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#0F141D]">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#151821]">
             <div
-              className="h-full bg-[#00D4FF]"
+              className="h-full bg-[#10B981]"
               style={{ width: `${Math.min(100, upd.progressPercent)}%` }}
             />
           </div>
@@ -289,7 +293,7 @@ export function SettingsTab({
             type="button"
             disabled={upd?.state === 'checking' || upd?.state === 'downloading'}
             onClick={() => onCheckForUpdates?.()}
-            className="inline-flex items-center gap-1 rounded border border-[#00D4FF]/50 bg-[#00D4FF]/15 px-2.5 py-1 text-[11px] font-semibold text-[#00D4FF] disabled:opacity-50 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded border border-white/[0.1] bg-[#151821] px-2.5 py-1 text-[11px] font-semibold text-[#F8FAFC] hover:bg-[#1C202B] disabled:opacity-50 cursor-pointer"
           >
             <RefreshCw className="h-3 w-3" />
             Buscar actualizaciones
@@ -299,7 +303,7 @@ export function SettingsTab({
             <button
               type="button"
               onClick={() => onDownloadUpdate?.()}
-              className="inline-flex items-center gap-1 rounded border border-[#10B981]/50 bg-[#10B981]/20 px-2.5 py-1 text-[11px] font-semibold text-[#6EE7B7] cursor-pointer"
+              className="inline-flex items-center gap-1 rounded border border-[#10B981]/50 bg-[#10B981]/15 px-2.5 py-1 text-[11px] font-semibold text-[#10B981] cursor-pointer"
             >
               <Download className="h-3 w-3" />
               Descargar v{upd.availableVersion}
@@ -310,7 +314,7 @@ export function SettingsTab({
             <button
               type="button"
               onClick={() => onInstallUpdate?.()}
-              className="inline-flex items-center gap-1 rounded border border-[#10B981] bg-[#10B981] px-2.5 py-1 text-[11px] font-bold text-[#07090E] cursor-pointer"
+              className="inline-flex items-center gap-1 rounded border border-[#10B981] bg-[#10B981] px-2.5 py-1 text-[11px] font-bold text-[#08090C] cursor-pointer"
             >
               <RotateCw className="h-3 w-3" />
               Reiniciar e instalar
@@ -320,9 +324,9 @@ export function SettingsTab({
       </div>
 
       {/* Keyboard shortcuts summary */}
-      <div className="flex flex-col gap-1.5 rounded-lg border border-[#1F2937] bg-[#07090E] p-3 text-[11px] text-[#94A3B8]">
+      <div className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-[#08090C] p-3 text-[11px] text-[#94A3B8] sm:col-span-2">
         <h3 className="font-semibold text-[#F8FAFC]">Atajos de Teclado DJ Activos</h3>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono-tabular">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono-tabular sm:grid-cols-3">
           <span>Space / Shift+Space: Play A / B</span>
           <span>Q / W: Cue Deck A / B</span>
           <span>S / Shift+S: Sync A / B</span>

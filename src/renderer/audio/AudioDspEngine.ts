@@ -3,6 +3,7 @@ import type { DeckId } from '../../shared/types';
 export type CrossfaderCurve = 'equal-power' | 'linear' | 'scratch';
 export type EqBand = 'low' | 'mid' | 'high';
 export type AudioFxId = 'echo' | 'reverb' | 'flanger';
+export type FxBeatDivision = '1/4' | '1/2' | '3/4' | '1/1';
 export type SamplerPadId =
   | 'airhorn'
   | 'riser'
@@ -13,6 +14,13 @@ export type SamplerPadId =
   | 'kick'
   | 'hihat';
 
+const FX_BEAT_DIV_MULT: Record<FxBeatDivision, number> = {
+  '1/4': 0.25,
+  '1/2': 0.5,
+  '3/4': 0.75,
+  '1/1': 1
+};
+
 interface DeckChannelNodes {
   trimGain: GainNode;
   autoGain: GainNode;
@@ -21,7 +29,11 @@ interface DeckChannelNodes {
   eqMid: BiquadFilterNode;
   eqHigh: BiquadFilterNode;
   colorFilter: BiquadFilterNode;
+  keyShiftFilter: BiquadFilterNode;
+  keyShiftSemitones: number;
   analyser: AnalyserNode;
+  analyserL: AnalyserNode | null;
+  analyserR: AnalyserNode | null;
   channelFader: GainNode;
   crossfaderGain: GainNode;
   cueToggleGain: GainNode;
@@ -31,10 +43,13 @@ interface DeckChannelNodes {
   flangerSendGain: GainNode | null;
   flangerLfo: OscillatorNode | null;
   fxState: Record<AudioFxId, { enabled: boolean; wet: number }>;
+  fxBeatDiv: Record<AudioFxId, FxBeatDivision>;
   eqValuesDb: Record<EqBand, number>;
   eqKilled: Record<EqBand, boolean>;
   colorFilterMode: 'allpass' | 'lowpass' | 'highpass';
   timeDomainBuf: Uint8Array<ArrayBuffer>;
+  timeDomainBufL: Uint8Array<ArrayBuffer>;
+  timeDomainBufR: Uint8Array<ArrayBuffer>;
   freqBuf: Uint8Array<ArrayBuffer>;
 }
 
@@ -79,7 +94,12 @@ export class AudioDspEngine {
   private masterGainNode: GainNode | null = null;
   private masterLimiter: DynamicsCompressorNode | null = null;
   private masterAnalyser: AnalyserNode | null = null;
+  private masterAnalyserL: AnalyserNode | null = null;
+  private masterAnalyserR: AnalyserNode | null = null;
   private masterTimeDomainBuf: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(2048));
+  private masterBufL: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(1024));
+  private masterBufR: Uint8Array<ArrayBuffer> = new Uint8Array(new ArrayBuffer(1024));
+  private masterSpectrumBuf: Uint8Array<ArrayBuffer> | null = null;
   private masterDest: MediaStreamAudioDestinationNode | null = null;
 
   private cuePflSum: GainNode | null = null;
@@ -121,6 +141,25 @@ export class AudioDspEngine {
       this.masterAnalyser = ctx.createAnalyser();
       this.masterAnalyser.fftSize = 2048;
       this.masterTimeDomainBuf = new Uint8Array(new ArrayBuffer(this.masterAnalyser.fftSize));
+      this.masterSpectrumBuf = new Uint8Array(
+        new ArrayBuffer(this.masterAnalyser.frequencyBinCount || 1024)
+      );
+
+      if (typeof ctx.createChannelSplitter === 'function') {
+        const masterSplitter = ctx.createChannelSplitter(2);
+        const mL = ctx.createAnalyser();
+        mL.fftSize = 1024;
+        const mR = ctx.createAnalyser();
+        mR.fftSize = 1024;
+        this.masterAnalyser.connect(masterSplitter);
+        masterSplitter.connect(mL, 0);
+        masterSplitter.connect(mR, 1);
+        this.masterAnalyserL = mL;
+        this.masterAnalyserR = mR;
+        this.masterBufL = new Uint8Array(new ArrayBuffer(mL.fftSize));
+        this.masterBufR = new Uint8Array(new ArrayBuffer(mR.fftSize));
+      }
+
       this.masterDest = ctx.createMediaStreamDestination();
 
       this.normalMasterRouteGain = ctx.createGain();
@@ -210,8 +249,26 @@ export class AudioDspEngine {
     colorFilter.frequency.value = 1000;
     colorFilter.Q.value = 1.5;
 
+    const keyShiftFilter = ctx.createBiquadFilter();
+    keyShiftFilter.type = 'allpass';
+    keyShiftFilter.frequency.value = 1200;
+    keyShiftFilter.Q.value = 0.7;
+
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
+
+    let analyserL: AnalyserNode | null = null;
+    let analyserR: AnalyserNode | null = null;
+    if (typeof ctx.createChannelSplitter === 'function') {
+      const chSplitter = ctx.createChannelSplitter(2);
+      analyserL = ctx.createAnalyser();
+      analyserL.fftSize = 1024;
+      analyserR = ctx.createAnalyser();
+      analyserR.fftSize = 1024;
+      analyser.connect(chSplitter);
+      chSplitter.connect(analyserL, 0);
+      chSplitter.connect(analyserR, 1);
+    }
 
     const channelFader = ctx.createGain();
     channelFader.gain.value = 1;
@@ -227,7 +284,8 @@ export class AudioDspEngine {
     eqLow.connect(eqMid);
     eqMid.connect(eqHigh);
     eqHigh.connect(colorFilter);
-    colorFilter.connect(analyser);
+    colorFilter.connect(keyShiftFilter);
+    keyShiftFilter.connect(analyser);
 
     let echoSendGain: GainNode | null = null;
     let echoDelay: DelayNode | null = null;
@@ -305,7 +363,11 @@ export class AudioDspEngine {
       eqMid,
       eqHigh,
       colorFilter,
+      keyShiftFilter,
+      keyShiftSemitones: 0,
       analyser,
+      analyserL,
+      analyserR,
       channelFader,
       crossfaderGain,
       cueToggleGain,
@@ -319,10 +381,17 @@ export class AudioDspEngine {
         reverb: { enabled: false, wet: 0.45 },
         flanger: { enabled: false, wet: 0.45 }
       },
+      fxBeatDiv: {
+        echo: '3/4',
+        reverb: '3/4',
+        flanger: '3/4'
+      },
       eqValuesDb: { low: 0, mid: 0, high: 0 },
       eqKilled: { low: false, mid: false, high: false },
       colorFilterMode: 'allpass',
       timeDomainBuf: new Uint8Array(new ArrayBuffer(analyser.fftSize)),
+      timeDomainBufL: new Uint8Array(new ArrayBuffer(analyserL?.fftSize ?? 1024)),
+      timeDomainBufR: new Uint8Array(new ArrayBuffer(analyserR?.fftSize ?? 1024)),
       freqBuf: new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount || 1024))
     };
   }
@@ -344,6 +413,37 @@ export class AudioDspEngine {
     const source = this.ctx.createMediaElementSource(el);
     source.connect(this.decks[deck].trimGain);
     this.attachedSources.set(el, source);
+  }
+
+  attachCuePreviewElement(el: HTMLMediaElement): void {
+    if (!this.ctx || !this.cuePflSum) {
+      throw new Error('AudioDspEngine must be initialized before attaching cue preview');
+    }
+    if (this.attachedSources.has(el)) {
+      return;
+    }
+    const source = this.ctx.createMediaElementSource(el);
+    source.connect(this.cuePflSum);
+    this.attachedSources.set(el, source);
+  }
+
+  setKeyShift(deck: DeckId, semitones: number): void {
+    const d = this.getDeckOrThrow(deck);
+    const clamped = Math.max(-6, Math.min(6, Math.round(semitones)));
+    d.keyShiftSemitones = clamped;
+    if (clamped === 0) {
+      d.keyShiftFilter.type = 'allpass';
+      d.keyShiftFilter.gain.value = 0;
+      return;
+    }
+    d.keyShiftFilter.type = 'peaking';
+    d.keyShiftFilter.frequency.value = clamped > 0 ? 2200 + clamped * 220 : 420 + clamped * 30;
+    d.keyShiftFilter.Q.value = 0.85;
+    d.keyShiftFilter.gain.value = clamp(clamped * 0.65, -4, 4);
+  }
+
+  getKeyShift(deck: DeckId): number {
+    return this.getDeckOrThrow(deck).keyShiftSemitones;
   }
 
   setTrim(deck: DeckId, value: number): void {
@@ -371,16 +471,22 @@ export class AudioDspEngine {
     fx: AudioFxId,
     enabled: boolean,
     wet01: number,
-    bpm?: number | null
+    bpm?: number | null,
+    beatDiv?: FxBeatDivision
   ): void {
     const d = this.getDeckOrThrow(deck);
     const clampedWet = clamp(wet01, 0, 1);
     d.fxState[fx] = { enabled, wet: clampedWet };
+    if (beatDiv) {
+      d.fxBeatDiv[fx] = beatDiv;
+    }
+    const divMult = FX_BEAT_DIV_MULT[d.fxBeatDiv[fx]];
     const activeLevel = enabled ? clampedWet : 0;
 
     if (fx === 'echo') {
-      if (d.echoDelay && bpm && bpm > 40) {
-        d.echoDelay.delayTime.value = clamp((60 / bpm) * 0.75, 0.12, 0.9);
+      if (d.echoDelay) {
+        const effBpm = bpm && bpm > 40 ? bpm : 120;
+        d.echoDelay.delayTime.value = clamp((60 / effBpm) * divMult, 0.06, 1.5);
       }
       if (d.echoSendGain) {
         d.echoSendGain.gain.value = activeLevel * 0.65;
@@ -390,11 +496,14 @@ export class AudioDspEngine {
 
     if (fx === 'reverb') {
       if (d.reverbSendGain) {
-        d.reverbSendGain.gain.value = activeLevel * 0.7;
+        d.reverbSendGain.gain.value = activeLevel * Math.min(0.85, 0.45 + divMult * 0.35);
       }
       return;
     }
 
+    if (d.flangerLfo) {
+      d.flangerLfo.frequency.value = clamp(0.45 / divMult, 0.15, 2.5);
+    }
     if (d.flangerSendGain) {
       d.flangerSendGain.gain.value = activeLevel * 0.6;
     }
@@ -402,6 +511,10 @@ export class AudioDspEngine {
 
   getDeckFx(deck: DeckId, fx: AudioFxId): { enabled: boolean; wet: number } {
     return { ...this.getDeckOrThrow(deck).fxState[fx] };
+  }
+
+  getDeckFxBeatDiv(deck: DeckId, fx: AudioFxId): FxBeatDivision {
+    return this.getDeckOrThrow(deck).fxBeatDiv[fx];
   }
 
   readDeckFrequencyBands(deck: DeckId): { low: number; mid: number; high: number } {
@@ -614,20 +727,52 @@ export class AudioDspEngine {
     return this.monoSplitActive;
   }
 
-  readVuLevel(target: DeckId | 'MASTER'): number {
-    if (!this.decks || !this.masterAnalyser) return 0;
-    const analyser = target === 'MASTER' ? this.masterAnalyser : this.decks[target].analyser;
-    const buf =
-      target === 'MASTER' ? this.masterTimeDomainBuf : this.decks[target].timeDomainBuf;
-
+  private readAnalyserRms(analyser: AnalyserNode, buf: Uint8Array<ArrayBuffer>): number {
     analyser.getByteTimeDomainData(buf);
     let sumSq = 0;
     for (let i = 0; i < buf.length; i += 1) {
       const normalized = (buf[i] - 128) / 128;
       sumSq += normalized * normalized;
     }
-    const rms = Math.sqrt(sumSq / buf.length);
+    const rms = Math.sqrt(sumSq / Math.max(1, buf.length));
     return clamp(rms * 2.4, 0, 1);
+  }
+
+  readVuLevel(target: DeckId | 'MASTER'): number {
+    if (!this.decks || !this.masterAnalyser) return 0;
+    const analyser = target === 'MASTER' ? this.masterAnalyser : this.decks[target].analyser;
+    const buf =
+      target === 'MASTER' ? this.masterTimeDomainBuf : this.decks[target].timeDomainBuf;
+    return this.readAnalyserRms(analyser, buf);
+  }
+
+  readStereoVuLevels(target: DeckId | 'MASTER'): [number, number] {
+    if (!this.decks || !this.masterAnalyser) return [0, 0];
+    if (target === 'MASTER') {
+      if (this.masterAnalyserL && this.masterAnalyserR) {
+        return [
+          this.readAnalyserRms(this.masterAnalyserL, this.masterBufL),
+          this.readAnalyserRms(this.masterAnalyserR, this.masterBufR)
+        ];
+      }
+      const mono = this.readVuLevel('MASTER');
+      return [mono, mono];
+    }
+    const d = this.decks[target];
+    if (d.analyserL && d.analyserR) {
+      return [
+        this.readAnalyserRms(d.analyserL, d.timeDomainBufL),
+        this.readAnalyserRms(d.analyserR, d.timeDomainBufR)
+      ];
+    }
+    const mono = this.readVuLevel(target);
+    return [mono, mono];
+  }
+
+  readMasterSpectrum(): Uint8Array | null {
+    if (!this.masterAnalyser || !this.masterSpectrumBuf) return null;
+    this.masterAnalyser.getByteFrequencyData(this.masterSpectrumBuf);
+    return this.masterSpectrumBuf;
   }
 
   getDeckAnalyser(deck: DeckId): AnalyserNode | null {

@@ -1,5 +1,5 @@
 import { useCallback, type ReactElement } from 'react';
-import { Monitor, ArrowLeftRight, Sparkles, Frame, Link2 } from 'lucide-react';
+import { Monitor, ArrowLeftRight, Sparkles, Frame, Link2, Tv } from 'lucide-react';
 import type { DeckId, DisplayInfo, VideoQualityTier } from '../../shared/types';
 import type { VideoFxId } from '../video/VideoFxPipeline';
 import type { VideoCrossfaderMode, VideoTransitionId } from '../video/WebGLVideoCompositor';
@@ -12,18 +12,23 @@ interface VideoPreviewBarProps {
   autoDurationSec: number;
   transition: VideoTransitionId;
   activeFx: Record<VideoFxId, boolean>;
+  fxIntensity?: number;
+  osdEnabled?: boolean;
   displays: DisplayInfo[];
   selectedDisplayId: number | null;
   outputOpen: boolean;
   frameEnabled?: boolean;
   activeQualityA?: VideoQualityTier | null;
   activeQualityB?: VideoQualityTier | null;
+  showHotkeys?: boolean;
   onVideoMixChange: (mix: number) => void;
   onVideoModeChange: (mode: VideoCrossfaderMode) => void;
   onAutoDurationChange: (sec: number) => void;
   onTriggerAutoTransition: () => void;
   onTransitionChange: (id: VideoTransitionId) => void;
   onToggleFx: (fx: VideoFxId) => void;
+  onFxIntensityChange?: (intensity: number) => void;
+  onToggleOsdNow?: () => void;
   onSelectDisplay: (displayId: number) => void;
   onToggleOutputWindow: () => void;
   onOpenFramesDrawer?: () => void;
@@ -59,18 +64,23 @@ export function VideoPreviewBar({
   autoDurationSec,
   transition,
   activeFx,
+  fxIntensity = 0.7,
+  osdEnabled = true,
   displays,
   selectedDisplayId,
   outputOpen,
   frameEnabled = false,
   activeQualityA = null,
   activeQualityB = null,
+  showHotkeys = false,
   onVideoMixChange,
   onVideoModeChange,
   onAutoDurationChange,
   onTriggerAutoTransition,
   onTransitionChange,
   onToggleFx,
+  onFxIntensityChange,
+  onToggleOsdNow,
   onSelectDisplay,
   onToggleOutputWindow,
   onOpenFramesDrawer
@@ -86,71 +96,77 @@ export function VideoPreviewBar({
 
   return (
     <section
-      className="flex flex-col gap-2 rounded-xl border border-[#262F3F] bg-[#141820] p-2.5"
+      className="flex flex-col justify-between gap-2 rounded-xl border border-white/[0.06] bg-[#0F1117] p-2.5"
       aria-label="Cabina de Video Master"
     >
-      {/* Large 16:9 Master Live Stage */}
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center justify-between text-[10px]">
-          <div className="flex items-center gap-2">
-            <span className="font-bold tracking-wider text-[#10B981]">MASTER LIVE</span>
-            {frameEnabled ? (
-              <span className="rounded border border-[#0EA5E9]/40 bg-[#0EA5E9]/15 px-1.5 py-0.2 font-semibold text-[#0EA5E9]">
-                MARCO ACTIVO
+      {/* Compact Side-by-Side Monitors: Master Live (66%) + Stacked Previews A/B (34%) */}
+      <div className="grid grid-cols-[1.85fr_1fr] gap-2">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between text-[10px]">
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 font-bold tracking-wider text-[#10B981]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#10B981]" />
+                MASTER LIVE
               </span>
-            ) : null}
+              {frameEnabled ? (
+                <span className="rounded border border-white/[0.12] bg-[#151821] px-1 py-0.2 text-[9px] font-semibold text-[#CBD5E1]">
+                  MARCO
+                </span>
+              ) : null}
+            </div>
+            <span
+              className={`rounded px-1.5 py-0.2 text-[9px] font-bold ${
+                outputOpen
+                  ? 'bg-[#10B981]/15 text-[#10B981]'
+                  : 'bg-[#151821] text-[#64748B]'
+              }`}
+            >
+              {outputOpen ? 'P2 LIVE' : 'P2 OFF'}
+            </span>
           </div>
-          <span
-            className={`rounded px-1.5 py-0.5 font-bold ${
-              outputOpen ? 'bg-[#EF4444]/20 text-[#FCA5A5]' : 'bg-[#1B212D] text-[#94A3B8]'
-            }`}
-          >
-            {outputOpen ? 'PANTALLA 2 ON AIR' : 'PANTALLA 2 OFF'}
-          </span>
+
+          <div className="aspect-video w-full overflow-hidden rounded-lg border border-white/[0.08] bg-black">
+            <canvas ref={masterCanvasRef} className="h-full w-full object-contain" />
+          </div>
         </div>
 
-        <div className="aspect-video w-full overflow-hidden rounded-lg border border-[#262F3F] bg-black">
-          <canvas ref={masterCanvasRef} className="h-full w-full object-contain" />
+        <div className="flex flex-col justify-between gap-1.5">
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center justify-between text-[9px]">
+              <span className="font-semibold tracking-wider text-[#0EA5E9]">DECK A</span>
+              {activeQualityA ? (
+                <span className="font-mono-tabular text-[#64748B]">{activeQualityA}</span>
+              ) : null}
+            </div>
+            <div
+              ref={refA}
+              className="aspect-video w-full overflow-hidden rounded border border-[#0EA5E9]/45 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
+            />
+          </div>
+
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center justify-between text-[9px]">
+              <span className="font-semibold tracking-wider text-[#F59E0B]">DECK B</span>
+              {activeQualityB ? (
+                <span className="font-mono-tabular text-[#64748B]">{activeQualityB}</span>
+              ) : null}
+            </div>
+            <div
+              ref={refB}
+              className="aspect-video w-full overflow-hidden rounded border border-[#F59E0B]/45 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
+            />
+          </div>
         </div>
       </div>
 
-      {/* Symmetrical Spacious Previews A & B */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between text-[10px]">
-            <span className="font-semibold tracking-wider text-[#0EA5E9]">DECK A PREVIEW</span>
-            {activeQualityA ? (
-              <span className="font-mono-tabular text-[#94A3B8]">{activeQualityA}</span>
-            ) : null}
-          </div>
-          <div
-            ref={refA}
-            className="aspect-video w-full overflow-hidden rounded-md border border-[#0EA5E9]/40 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between text-[10px]">
-            <span className="font-semibold tracking-wider text-[#F59E0B]">DECK B PREVIEW</span>
-            {activeQualityB ? (
-              <span className="font-mono-tabular text-[#94A3B8]">{activeQualityB}</span>
-            ) : null}
-          </div>
-          <div
-            ref={refB}
-            className="aspect-video w-full overflow-hidden rounded-md border border-[#F59E0B]/40 bg-black [&>video]:h-full [&>video]:w-full [&>video]:object-contain"
-          />
-        </div>
-      </div>
-
-      {/* Organized Broadcast Control Bar */}
-      <div className="flex flex-col gap-1.5 rounded-lg border border-[#262F3F] bg-[#0B0D11] p-2 text-[11px]">
-        <div className="flex flex-wrap items-center justify-between gap-1.5">
-          <div className="flex items-center gap-1.5">
+      {/* Broadcast Strip & Compact 2-Row 4x2 FX Matrix */}
+      <div className="flex flex-col gap-1.5 rounded-lg border border-white/[0.06] bg-[#08090C] p-2 text-[11px]">
+        <div className="flex flex-wrap items-center justify-between gap-1">
+          <div className="flex items-center gap-1">
             <select
               value={transition}
               onChange={(e) => onTransitionChange(e.target.value as VideoTransitionId)}
-              className="rounded border border-[#262F3F] bg-[#141820] px-1.5 py-0.5 text-[11px] text-[#F8FAFC]"
+              className="rounded border border-white/[0.06] bg-[#151821] px-1.5 py-0.5 text-[10px] text-[#F8FAFC]"
               aria-label="Transición Video"
             >
               {TRANSITIONS.map((t) => (
@@ -163,16 +179,21 @@ export function VideoPreviewBar({
             <button
               type="button"
               onClick={onTriggerAutoTransition}
-              className="inline-flex items-center gap-1 rounded border border-[#10B981]/50 bg-[#10B981]/15 px-2 py-0.5 font-semibold text-[#10B981] hover:bg-[#10B981]/25 cursor-pointer"
+              className="relative inline-flex items-center gap-1 rounded border border-[#10B981]/50 bg-[#10B981]/15 px-2 py-0.5 text-[10px] font-semibold text-[#10B981] hover:bg-[#10B981]/25 cursor-pointer"
             >
               <ArrowLeftRight className="h-3 w-3" />
               Auto {autoDurationSec}s
+              {showHotkeys ? (
+                <span className="hardware-keycap pointer-events-none ml-0.5 rounded px-1 text-[8px]">
+                  V
+                </span>
+              ) : null}
             </button>
 
             <select
               value={autoDurationSec}
               onChange={(e) => onAutoDurationChange(Number(e.target.value))}
-              className="rounded border border-[#262F3F] bg-[#141820] px-1 py-0.5 text-[11px] text-[#F8FAFC]"
+              className="rounded border border-white/[0.06] bg-[#151821] px-1 py-0.5 font-mono-tabular text-[10px] text-[#F8FAFC]"
               aria-label="Duración Auto Transición"
             >
               <option value={1}>1s</option>
@@ -185,10 +206,10 @@ export function VideoPreviewBar({
               <button
                 type="button"
                 onClick={onOpenFramesDrawer}
-                className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-semibold cursor-pointer ${
+                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${
                   frameEnabled
-                    ? 'border-[#0EA5E9] bg-[#0EA5E9]/20 text-[#0EA5E9]'
-                    : 'border-[#262F3F] bg-[#141820] text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'border-white/30 bg-[#1C202B] text-[#F8FAFC]'
+                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
                 }`}
               >
                 <Frame className="h-3 w-3" />
@@ -197,12 +218,12 @@ export function VideoPreviewBar({
             ) : null}
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             {displays.length > 0 ? (
               <select
                 value={selectedDisplayId ?? displays[0].id}
                 onChange={(e) => onSelectDisplay(Number(e.target.value))}
-                className="max-w-36 rounded border border-[#262F3F] bg-[#141820] px-1.5 py-0.5 text-[11px] text-[#F8FAFC]"
+                className="max-w-32 rounded border border-white/[0.06] bg-[#151821] px-1.5 py-0.5 text-[10px] text-[#F8FAFC]"
                 aria-label="Monitor Salida"
               >
                 {displays.map((d) => (
@@ -216,10 +237,10 @@ export function VideoPreviewBar({
             <button
               type="button"
               onClick={onToggleOutputWindow}
-              className={`inline-flex items-center gap-1 rounded border px-2.5 py-0.5 font-bold cursor-pointer ${
+              className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-bold cursor-pointer ${
                 outputOpen
-                  ? 'border-[#EF4444] bg-[#EF4444]/20 text-[#FCA5A5]'
-                  : 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9] hover:bg-[#0EA5E9]/25'
+                  ? 'border-[#EF4444]/60 bg-[#EF4444]/20 text-[#FCA5A5]'
+                  : 'border-[#10B981]/60 bg-[#10B981]/15 text-[#10B981] hover:bg-[#10B981]/25'
               }`}
             >
               <Monitor className="h-3 w-3" />
@@ -228,55 +249,86 @@ export function VideoPreviewBar({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-1.5 pt-0.5 border-t border-[#1E2634]">
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="inline-flex items-center gap-1 font-semibold text-[#64748B] mr-0.5">
-              <Sparkles className="h-3 w-3 text-[#6366F1]" />
-              FX
-            </span>
+        {/* 2-Row Compact Video FX Pad Matrix + Intensity & Video Crossfade */}
+        <div className="flex flex-col gap-1.5 border-t border-white/[0.06] pt-1.5">
+          <div className="grid grid-cols-4 gap-1">
             {FX_BUTTONS.map((fx) => (
               <button
                 key={fx.id}
                 type="button"
                 onClick={() => onToggleFx(fx.id)}
-                className={`rounded border px-1.5 py-0.5 text-[10px] font-medium cursor-pointer ${
+                className={`rounded border py-0.5 text-[10px] font-semibold cursor-pointer ${
                   activeFx[fx.id]
-                    ? 'border-[#6366F1] bg-[#6366F1]/25 text-[#C7D2FE]'
-                    : 'border-[#262F3F] bg-[#141820] text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'border-white/35 bg-[#1C202B] text-[#F8FAFC]'
+                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
                 }`}
               >
                 {fx.label}
               </button>
             ))}
-          </div>
-
-          <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() =>
-                onVideoModeChange(videoMode === 'linked' ? 'independent' : 'linked')
-              }
-              className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${
-                videoMode === 'linked'
+              aria-label="Mostrar OSD Pista"
+              onClick={() => onToggleOsdNow?.()}
+              className={`inline-flex items-center justify-center gap-1 rounded border py-0.5 text-[10px] font-semibold cursor-pointer ${
+                osdEnabled
                   ? 'border-[#10B981]/50 bg-[#10B981]/15 text-[#10B981]'
-                  : 'border-[#262F3F] bg-[#141820] text-[#94A3B8]'
+                  : 'border-white/[0.06] bg-[#151821] text-[#64748B]'
               }`}
-              title="Enlazar transición de video al crossfader de audio"
+              title="Mostrar u ocultar rótulo de pista (OSD) en Pantalla 2"
             >
-              <Link2 className="h-2.5 w-2.5" />
-              {videoMode === 'linked' ? 'A+V' : 'Indep'}
+              <Tv className="h-2.5 w-2.5" />
+              OSD
             </button>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={videoMix}
-              disabled={videoMode === 'linked'}
-              onChange={(e) => onVideoMixChange(Number(e.target.value))}
-              className="w-16 accent-[#10B981] disabled:opacity-40 cursor-pointer"
-              aria-label="Video Crossfader"
-            />
+          </div>
+
+          <div className="flex items-center justify-between gap-2 text-[10px]">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-[#94A3B8]" />
+              <span className="text-[#64748B]">FX Mix</span>
+              <input
+                type="range"
+                min={0.1}
+                max={1}
+                step={0.05}
+                value={fxIntensity}
+                onChange={(e) => onFxIntensityChange?.(Number(e.target.value))}
+                className="w-16 accent-[#E2E8F0] cursor-pointer"
+                aria-label="Intensidad Video FX"
+              />
+              <span className="w-7 font-mono-tabular text-[#94A3B8]">
+                {Math.round(fxIntensity * 100)}%
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() =>
+                  onVideoModeChange(videoMode === 'linked' ? 'independent' : 'linked')
+                }
+                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold cursor-pointer ${
+                  videoMode === 'linked'
+                    ? 'border-[#10B981]/50 bg-[#10B981]/15 text-[#10B981]'
+                    : 'border-white/[0.06] bg-[#151821] text-[#94A3B8]'
+                }`}
+                title="Enlazar transición de video al crossfader de audio"
+              >
+                <Link2 className="h-2.5 w-2.5" />
+                {videoMode === 'linked' ? 'A+V' : 'Indep'}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={videoMix}
+                disabled={videoMode === 'linked'}
+                onChange={(e) => onVideoMixChange(Number(e.target.value))}
+                className="w-16 accent-[#10B981] disabled:opacity-40 cursor-pointer"
+                aria-label="Video Crossfader"
+              />
+            </div>
           </div>
         </div>
       </div>

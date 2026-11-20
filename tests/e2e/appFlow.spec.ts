@@ -57,8 +57,17 @@ test('Dual-window VDJ v2.1 cabin launches cleanly, opens Guide/Marcos/Ajustes dr
       mainPage.getByRole('region', { name: 'Cabina de Video Master', exact: true })
     ).toBeVisible();
     await expect(mainPage.getByRole('region', { name: 'Mixer Central', exact: true })).toBeVisible();
+    await expect(mainPage.getByRole('region', { name: 'Deck A FX y Sampler', exact: true })).toBeVisible();
+    await expect(mainPage.getByRole('region', { name: 'Deck B FX y Sampler', exact: true })).toBeVisible();
 
     await expect(mainPage.getByRole('combobox', { name: 'Calidad Video Global' })).toBeVisible();
+    const keysBtn = mainPage.getByRole('button', { name: 'Mostrar Atajos' });
+    await expect(keysBtn).toBeVisible();
+    await keysBtn.click();
+    await expect(keysBtn).toHaveAttribute('aria-pressed', 'true');
+    await keysBtn.click();
+    await expect(keysBtn).toHaveAttribute('aria-pressed', 'false');
+
     const headerMarcosBtn = mainPage.getByRole('banner').getByRole('button', { name: 'Marcos', exact: true });
     await expect(headerMarcosBtn).toBeVisible();
     await expect(mainPage.getByRole('button', { name: 'Guía', exact: true })).toBeVisible();
@@ -82,10 +91,11 @@ test('Dual-window VDJ v2.1 cabin launches cleanly, opens Guide/Marcos/Ajustes dr
 
     // Test Top Bar Marcos Drawer
     await headerMarcosBtn.click();
-    await expect(mainPage.getByRole('dialog', { name: 'Marcos y Visuales' })).toBeVisible();
-    await expect(mainPage.getByRole('button', { name: 'Karaoke' })).toBeVisible();
+    const marcosDialog = mainPage.getByRole('dialog', { name: 'Marcos y Visuales' });
+    await expect(marcosDialog).toBeVisible();
+    await expect(marcosDialog.getByRole('button', { name: 'Karaoke' })).toBeVisible();
     await mainPage.getByRole('button', { name: 'Cerrar Marcos' }).click();
-    await expect(mainPage.getByRole('dialog', { name: 'Marcos y Visuales' })).toBeHidden();
+    await expect(marcosDialog).toBeHidden();
 
     // Test Top Bar Ajustes Drawer
     await mainPage.getByRole('button', { name: 'Ajustes', exact: true }).click();

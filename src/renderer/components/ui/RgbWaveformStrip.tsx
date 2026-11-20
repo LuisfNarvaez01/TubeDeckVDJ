@@ -53,11 +53,11 @@ export function RgbWaveformStrip({
       const h = canvas.height;
       const midY = h / 2;
 
-      ctx!.fillStyle = '#07090E';
+      ctx!.fillStyle = '#08090C';
       ctx!.fillRect(0, 0, w, h);
 
       // Subtle horizontal center axis
-      ctx!.fillStyle = '#161E2B';
+      ctx!.fillStyle = 'rgba(255, 255, 255, 0.06)';
       ctx!.fillRect(0, midY, w, 1);
 
       const samples = liveRgbRef?.current[deckId] ?? [];
@@ -118,7 +118,7 @@ export function RgbWaveformStrip({
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#090C12';
+    ctx.fillStyle = '#08090C';
     ctx.fillRect(0, 0, w, h);
 
     const remaining = Math.max(0, durationSec - currentTimeSec);
@@ -179,14 +179,14 @@ export function RgbWaveformStrip({
         ref={liveCanvasRef}
         width={480}
         height={32}
-        className="h-8 w-full rounded-t-md border border-b-0 border-[#1F2937] bg-[#07090E]"
+        className="h-8 w-full rounded-t-md border border-b-0 border-white/[0.06] bg-[#08090C]"
       />
       <canvas
         ref={overviewCanvasRef}
         width={480}
         height={24}
         onClick={handleOverviewClick}
-        className="h-6 w-full cursor-pointer rounded-b-md border border-[#1F2937] bg-[#090C12]"
+        className="h-6 w-full cursor-pointer rounded-b-md border border-white/[0.06] bg-[#08090C]"
         title="Clic para saltar a cualquier punto de la canción"
       />
     </div>

@@ -32,6 +32,11 @@ interface LibraryStore {
   setTasteProfile: (profile: HistoryTasteProfile | null) => void;
   batchDownload: BatchDownloadProgress | null;
   setBatchDownload: (progress: BatchDownloadProgress | null) => void;
+  playedVideoIds: string[];
+  markTrackPlayed: (videoId: string) => void;
+  previewingVideoId: string | null;
+  previewLoading: boolean;
+  setPreviewState: (videoId: string | null, loading?: boolean) => void;
 }
 
 export const useLibraryStore = create<LibraryStore>((set) => ({
@@ -59,5 +64,15 @@ export const useLibraryStore = create<LibraryStore>((set) => ({
   tasteProfile: null,
   setTasteProfile: (tasteProfile) => set({ tasteProfile }),
   batchDownload: null,
-  setBatchDownload: (batchDownload) => set({ batchDownload })
+  setBatchDownload: (batchDownload) => set({ batchDownload }),
+  playedVideoIds: [],
+  markTrackPlayed: (videoId) =>
+    set((state) => {
+      if (!videoId || state.playedVideoIds.includes(videoId)) return state;
+      return { playedVideoIds: [...state.playedVideoIds.slice(-199), videoId] };
+    }),
+  previewingVideoId: null,
+  previewLoading: false,
+  setPreviewState: (previewingVideoId, previewLoading = false) =>
+    set({ previewingVideoId, previewLoading })
 }));

@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent, type ReactElement } from 'react';
+import { useEffect, useRef, useState, type PointerEvent, type ReactElement } from 'react';
 import { Disc3, Minus, Plus, OctagonPause } from 'lucide-react';
 import type { DeckId } from '../../../shared/types';
 
@@ -30,10 +30,37 @@ export function JogWheel({
     lastX: 0,
     lastY: 0
   });
+  const grooveRef = useRef<HTMLDivElement | null>(null);
+  const timeSyncRef = useRef(currentTimeSec);
   const [scratching, setScratching] = useState(false);
 
-  // 33.3 RPM = 200 degrees per second
-  const rotationDeg = (currentTimeSec * 200) % 360;
+  timeSyncRef.current = currentTimeSec;
+
+  // Smooth 60fps platter spin while playing (no React state re-renders)
+  useEffect(() => {
+    if (!playing) {
+      if (grooveRef.current) {
+        grooveRef.current.style.transform = `rotate(${((currentTimeSec * 200) % 360).toFixed(1)}deg)`;
+      }
+      return;
+    }
+
+    let rafId = 0;
+    const baseSec = timeSyncRef.current;
+    const startMs = performance.now();
+
+    const step = (now: number) => {
+      const elapsedSec = (now - startMs) / 1000;
+      const deg = ((baseSec + elapsedSec) * 200) % 360;
+      if (grooveRef.current) {
+        grooveRef.current.style.transform = `rotate(${deg.toFixed(1)}deg)`;
+      }
+      rafId = requestAnimationFrame(step);
+    };
+
+    rafId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafId);
+  }, [playing, currentTimeSec]);
 
   const handlePointerDown = (e: PointerEvent<HTMLDivElement>) => {
     dragRef.current = { active: true, lastX: e.clientX, lastY: e.clientY };
@@ -76,6 +103,12 @@ export function JogWheel({
     }
   };
 
+  const progressRatio = durationSec > 0 ? Math.min(1, Math.max(0, currentTimeSec / durationSec)) : 0;
+  const ringRadius = 48;
+  const circumference = 2 * Math.PI * ringRadius;
+  const dashOffset = circumference * (1 - progressRatio);
+  const rotationDeg = (currentTimeSec * 200) % 360;
+
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div
@@ -98,35 +131,63 @@ export function JogWheel({
             onScrubDelta(1.5);
           }
         }}
-        className="relative flex h-24 w-24 shrink-0 cursor-grab items-center justify-center rounded-full border-2 bg-[#07090E] shadow-inner active:cursor-grabbing"
+        className="relative flex h-[104px] w-[104px] shrink-0 cursor-grab items-center justify-center rounded-full border border-white/[0.08] bg-[#08090C] shadow-inner active:cursor-grabbing"
         style={{
-          borderColor: scratching || playing ? accentColor : '#1F2937'
+          boxShadow: scratching || playing ? `0 0 0 1px ${accentColor}55` : undefined
         }}
         title={
           playing
-            ? 'Arrastra para Pitch Bend (Nudge temporal)'
+            ? 'Arrastra borde o plato para Pitch Bend (Nudge temporal)'
             : 'Arrastra para buscar punto exacto (Scrub / Frame)'
         }
       >
-        {/* Outer rotating vinyl grooves & position marker */}
+        {/* Outer SVG LED progress arc */}
+        <svg
+          className="pointer-events-none absolute inset-0 h-full w-full -rotate-90"
+          viewBox="0 0 104 104"
+          aria-hidden="true"
+        >
+          <circle
+            cx="52"
+            cy="52"
+            r={ringRadius}
+            fill="none"
+            stroke="rgba(255,255,255,0.06)"
+            strokeWidth="2.5"
+          />
+          <circle
+            cx="52"
+            cy="52"
+            r={ringRadius}
+            fill="none"
+            stroke={playing || scratching ? accentColor : 'rgba(226,232,240,0.45)'}
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={dashOffset}
+          />
+        </svg>
+
+        {/* Tactile vinyl/CDJ rotating platter grooves */}
         <div
-          className="absolute inset-1 rounded-full border border-[#1F2937] bg-[radial-gradient(circle_at_center,#131924_0%,#090C12_65%,#111827_100%)]"
+          ref={grooveRef}
+          className="absolute inset-2 rounded-full border border-white/[0.08] bg-[repeating-radial-gradient(circle_at_center,#141720_0px,#0a0c10_3px,#11141c_5px)]"
           style={{ transform: `rotate(${rotationDeg.toFixed(1)}deg)` }}
         >
           <span
-            className="absolute left-1/2 top-1 h-2.5 w-1 -translate-x-1/2 rounded-full"
-            style={{ backgroundColor: accentColor }}
+            className="absolute left-1/2 top-1 h-3 w-1 -translate-x-1/2 rounded-full"
+            style={{ backgroundColor: playing ? accentColor : '#E2E8F0' }}
           />
         </div>
 
-        {/* Center album art cap */}
-        <div className="relative z-10 flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-[#0F141D]">
+        {/* Center album art spindle */}
+        <div className="relative z-10 flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-[#151821]">
           {thumbnailUrl ? (
             <img
               src={thumbnailUrl}
               alt=""
               draggable={false}
-              className="h-full w-full object-cover outline-1 -outline-offset-1 outline-white/10"
+              className="h-full w-full object-cover"
             />
           ) : (
             <Disc3 className="h-5 w-5 text-[#64748B]" />
@@ -142,7 +203,7 @@ export function JogWheel({
           onPointerDown={() => onNudge(0.95)}
           onPointerUp={() => onNudge(1)}
           onPointerLeave={() => onNudge(1)}
-          className="rounded border border-[#1F2937] bg-[#090C12] px-1.5 py-0.5 text-[10px] text-[#94A3B8] hover:border-[#334155] hover:text-white cursor-pointer"
+          className="rounded border border-white/[0.08] bg-[#151821] px-1.5 py-0.5 text-[10px] text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
           title="Frenar momentáneamente (Bend -)"
         >
           <Minus className="h-3 w-3" />
@@ -151,7 +212,7 @@ export function JogWheel({
           type="button"
           aria-label={`Brake Deck ${deckId}`}
           onClick={onBrake}
-          className="inline-flex items-center gap-0.5 rounded border border-[#1F2937] bg-[#090C12] px-1.5 py-0.5 text-[10px] font-semibold text-[#94A3B8] hover:border-[#EF4444]/60 hover:text-[#FCA5A5] cursor-pointer"
+          className="inline-flex items-center gap-0.5 rounded border border-white/[0.08] bg-[#151821] px-1.5 py-0.5 text-[10px] font-semibold text-[#94A3B8] hover:border-[#EF4444]/50 hover:text-[#FCA5A5] cursor-pointer"
           title="Parada tipo vinilo (Brake)"
         >
           <OctagonPause className="h-3 w-3" />
@@ -163,7 +224,7 @@ export function JogWheel({
           onPointerDown={() => onNudge(1.05)}
           onPointerUp={() => onNudge(1)}
           onPointerLeave={() => onNudge(1)}
-          className="rounded border border-[#1F2937] bg-[#090C12] px-1.5 py-0.5 text-[10px] text-[#94A3B8] hover:border-[#334155] hover:text-white cursor-pointer"
+          className="rounded border border-white/[0.08] bg-[#151821] px-1.5 py-0.5 text-[10px] text-[#94A3B8] hover:bg-[#1C202B] hover:text-[#F8FAFC] cursor-pointer"
           title="Acelerar momentáneamente (Bend +)"
         >
           <Plus className="h-3 w-3" />
@@ -172,4 +233,3 @@ export function JogWheel({
     </div>
   );
 }
-
