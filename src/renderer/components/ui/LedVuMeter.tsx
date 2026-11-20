@@ -60,12 +60,12 @@ export function LedVuMeter({
               const isPeak = idxFromBottom === peakHoldRef.current[chIdx] - 1 && peakHoldRef.current[chIdx] > 0;
               const lit = idxFromBottom < activeCount || isPeak;
 
-              let color = '#10B981';
-              if (idxFromBottom >= segments - 2) color = '#EF4444';
-              else if (idxFromBottom >= segments - 5) color = '#F59E0B';
-              else if (isPeak) color = '#F8FAFC';
+              let color = '#F0FDFF';
+              if (idxFromBottom >= segments - 2) color = '#FF5247';
+              else if (idxFromBottom >= segments - 5) color = '#F5C542';
+              else if (isPeak) color = '#F5F5F6';
 
-              ctx.fillStyle = lit ? color : '#151821';
+              ctx.fillStyle = lit ? color : '#151518';
               ctx.fillRect(x, y, colW, segH);
             }
           });
@@ -84,9 +84,9 @@ export function LedVuMeter({
         ref={canvasRef}
         width={stereo ? 16 : 11}
         height={height}
-        className="rounded-sm border border-white/[0.06] bg-[#08090C] p-0.5"
+        className="rounded-sm border border-white/[0.06] bg-ground p-0.5"
       />
-      {label ? <span className="font-mono-tabular text-[9px] text-[#64748B]">{label}</span> : null}
+      {label ? <span className="font-mono-tabular text-[10px] text-faint">{label}</span> : null}
     </div>
   );
 }

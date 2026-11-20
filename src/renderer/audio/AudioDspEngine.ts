@@ -34,6 +34,8 @@ interface DeckChannelNodes {
   analyser: AnalyserNode;
   analyserL: AnalyserNode | null;
   analyserR: AnalyserNode | null;
+  /** High-resolution, pre-EQ analyser used for musical key detection. */
+  keyAnalyser: AnalyserNode | null;
   channelFader: GainNode;
   crossfaderGain: GainNode;
   cueToggleGain: GainNode;
@@ -279,6 +281,14 @@ export class AudioDspEngine {
     const cueToggleGain = ctx.createGain();
     cueToggleGain.gain.value = 0;
 
+    let keyAnalyser: AnalyserNode | null = null;
+    if (typeof ctx.createAnalyser === 'function') {
+      keyAnalyser = ctx.createAnalyser();
+      keyAnalyser.fftSize = 16384;
+      keyAnalyser.smoothingTimeConstant = 0;
+      trimGain.connect(keyAnalyser);
+    }
+
     trimGain.connect(autoGain);
     autoGain.connect(eqLow);
     eqLow.connect(eqMid);
@@ -367,6 +377,7 @@ export class AudioDspEngine {
       keyShiftSemitones: 0,
       analyser,
       analyserL,
+      keyAnalyser,
       analyserR,
       channelFader,
       crossfaderGain,
@@ -781,6 +792,26 @@ export class AudioDspEngine {
 
   getMasterAnalyser(): AnalyserNode | null {
     return this.masterAnalyser;
+  }
+
+  getDeckKeyAnalyser(deck: DeckId): AnalyserNode | null {
+    return this.decks ? this.decks[deck].keyAnalyser : null;
+  }
+
+  getSampleRate(): number {
+    return this.ctx?.sampleRate ?? 48000;
+  }
+
+  private recordDest: MediaStreamAudioDestinationNode | null = null;
+
+  /** Post-limiter master mix (never the headphone split) for mix recording. */
+  getRecordingStream(): MediaStream | null {
+    if (!this.ctx || !this.masterAnalyser) return null;
+    if (!this.recordDest) {
+      this.recordDest = this.ctx.createMediaStreamDestination();
+      this.masterAnalyser.connect(this.recordDest);
+    }
+    return this.recordDest.stream;
   }
 
   getOutputDestinations(): {

@@ -18,6 +18,34 @@ export interface YouTubeTrack {
   mediaKind?: 'video' | 'audio';
   viewsText?: string;
   publishedText?: string;
+  /** Artist names when known (YouTube Music radio). */
+  artists?: string[];
+  /** Human-readable reason shown on radio suggestions, e.g. "Porque escuchaste X". */
+  recommendReason?: string;
+}
+
+/** Explicit and implicit feedback signals that feed the local taste model. */
+export type FeedbackSignal = 'like' | 'dislike' | 'skip' | 'complete' | 'block-channel';
+
+export interface TrackFeedbackInput {
+  track: Pick<YouTubeTrack, 'videoId' | 'title' | 'channel'> & { artists?: string[] };
+  signal: FeedbackSignal;
+}
+
+export interface TasteSeedTrack {
+  videoId: string;
+  title: string;
+  channel: string;
+  durationSec: number;
+  thumbnailUrl: string;
+}
+
+export interface TasteSummary {
+  seedCount: number;
+  likes: number;
+  dislikes: number;
+  blockedChannels: string[];
+  topArtists: Array<{ name: string; score: number }>;
 }
 
 export type StreamMode = 'muxed' | 'dash-split';
@@ -146,6 +174,8 @@ export interface TrackMetadataRecord {
   loop: LoopState | null;
   waveformPeaks: number[] | null;
   playCount: number;
+  /** Camelot code detected for the track, e.g. "8A". */
+  musicalKey?: string | null;
 }
 
 export interface UpdateStatus {
@@ -182,4 +212,42 @@ export interface BatchDownloadProgress {
   currentTitle: string;
   outputDir: string | null;
   errors: string[];
+}
+
+export type LocalPlaceKind = 'drive' | 'removable' | 'optical' | 'network' | 'folder' | 'library';
+
+export interface LocalPlace {
+  kind: LocalPlaceKind;
+  label: string;
+  path: string;
+  /** Secondary text, e.g. the full path. */
+  detail?: string;
+}
+
+export interface LocalDirListing {
+  path: string;
+  parent: string | null;
+  folders: { name: string; path: string }[];
+  tracks: YouTubeTrack[];
+  /** True when the listing includes files from sub-folders. */
+  recursive: boolean;
+  /** True when a recursive scan hit the file limit. */
+  truncated: boolean;
+}
+
+export type SmartCrateKind = 'match' | 'most-played' | 'recent' | 'liked' | 'forgotten';
+
+export interface SmartCrateQuery {
+  kind: SmartCrateKind;
+  /** For "match": Camelot code of what is playing (after key shift). */
+  camelot?: string | null;
+  /** For "match": effective BPM of what is playing. */
+  bpm?: number | null;
+}
+
+export interface SmartCrateTrack extends YouTubeTrack {
+  playCount?: number;
+  lastPlayedAt?: number;
+  musicalKey?: string | null;
+  bpm?: number | null;
 }

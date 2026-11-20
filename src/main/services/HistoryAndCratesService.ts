@@ -5,8 +5,11 @@ import type {
   HistoryTasteProfile,
   MidiMapping,
   MixSession,
+  SmartCrateQuery,
+  SmartCrateTrack,
   YouTubeTrack
 } from '../../shared/types';
+import { harmonicMatch } from '../../shared/camelot';
 import type { DatabaseService } from './DatabaseService';
 
 const TASTE_STOPWORDS = new Set([
@@ -225,6 +228,119 @@ export class HistoryAndCratesService {
       durationSec: Number(r.duration_sec),
       thumbnailUrl: String(r.thumbnail_url),
       isLive: false
+    }));
+  }
+
+  /**
+   * Smart crates are rules, not lists: they are recomputed from play history, feedback
+   * and analysed track metadata every time they are opened.
+   */
+  getSmartCrate(query: SmartCrateQuery, nowMs = Date.now(), limit = 60): SmartCrateTrack[] {
+    const thumb = (videoId: string, stored?: unknown): string =>
+      typeof stored === 'string' && stored
+        ? stored
+        : videoId.startsWith('local_')
+          ? ''
+          : `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+
+    if (query.kind === 'liked') {
+      const rows = this.db.queryAll<Record<string, unknown>>(
+        `SELECT f.video_id, f.title, f.channel, f.signal, f.created_at
+         FROM track_feedback f
+         JOIN (SELECT video_id, MAX(created_at) AS last_at FROM track_feedback
+               WHERE signal IN ('like', 'dislike') GROUP BY video_id) l
+           ON l.video_id = f.video_id AND l.last_at = f.created_at
+         WHERE f.signal = 'like'
+         ORDER BY f.created_at DESC LIMIT ?`,
+        [limit]
+      );
+      return rows.map((r) => ({
+        videoId: String(r.video_id),
+        title: String(r.title),
+        channel: String(r.channel),
+        durationSec: 0,
+        thumbnailUrl: thumb(String(r.video_id)),
+        isLive: false
+      }));
+    }
+
+    if (query.kind === 'match') {
+      const rows = this.db.queryAll<Record<string, unknown>>(
+        `SELECT video_id, title, channel, duration_sec, thumbnail_url, bpm, musical_key, play_count
+         FROM track_metadata
+         WHERE title <> '' AND video_id NOT LIKE 'local_%' AND (musical_key IS NOT NULL OR bpm IS NOT NULL)`
+      );
+      const scored: { t: SmartCrateTrack; score: number }[] = [];
+      for (const r of rows) {
+        const key = typeof r.musical_key === 'string' ? r.musical_key : null;
+        const bpm = r.bpm !== null && r.bpm !== undefined ? Number(r.bpm) : null;
+        let score = 0;
+        if (query.camelot) {
+          const m = key ? harmonicMatch(query.camelot, key) : null;
+          if (m === 'clash' || !m) continue;
+          score += m === 'same' ? 3 : m === 'compatible' ? 2.5 : 1.5;
+        }
+        if (query.bpm) {
+          if (!bpm) continue;
+          // Allow half/double time (a 90 BPM reggaeton mixes with 180 drum & bass).
+          const ratios = [bpm / query.bpm, (bpm * 2) / query.bpm, bpm / 2 / query.bpm];
+          const diff = Math.min(...ratios.map((x) => Math.abs(x - 1)));
+          if (diff > 0.06) continue;
+          score += 2 * (1 - diff / 0.06);
+        }
+        scored.push({
+          score,
+          t: {
+            videoId: String(r.video_id),
+            title: String(r.title),
+            channel: String(r.channel),
+            durationSec: Number(r.duration_sec ?? 0),
+            thumbnailUrl: thumb(String(r.video_id), r.thumbnail_url),
+            isLive: false,
+            musicalKey: key,
+            bpm,
+            playCount: Number(r.play_count ?? 0)
+          }
+        });
+      }
+      return scored
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map((x) => x.t);
+    }
+
+    const order =
+      query.kind === 'most-played'
+        ? 'plays DESC, last_at DESC'
+        : query.kind === 'forgotten'
+          ? 'plays DESC, last_at ASC'
+          : 'last_at DESC';
+    const having = query.kind === 'forgotten' ? 'HAVING MAX(h.played_at) < ?' : '';
+    const params: unknown[] = query.kind === 'forgotten' ? [nowMs - 30 * 86_400_000, limit] : [limit];
+    const rows = this.db.queryAll<Record<string, unknown>>(
+      `SELECT h.video_id, MAX(h.title) AS title, MAX(h.channel) AS channel,
+              MAX(h.duration_sec) AS duration_sec, COUNT(*) AS plays, MAX(h.played_at) AS last_at,
+              MAX(m.thumbnail_url) AS thumbnail_url, MAX(m.musical_key) AS musical_key, MAX(h.bpm) AS bpm
+       FROM history_entries h
+       LEFT JOIN track_metadata m ON m.video_id = h.video_id
+       WHERE h.video_id NOT LIKE 'local_%'
+       GROUP BY h.video_id
+       ${having}
+       ORDER BY ${order}
+       LIMIT ?`,
+      params
+    );
+    return rows.map((r) => ({
+      videoId: String(r.video_id),
+      title: String(r.title),
+      channel: String(r.channel),
+      durationSec: Number(r.duration_sec ?? 0),
+      thumbnailUrl: thumb(String(r.video_id), r.thumbnail_url),
+      isLive: false,
+      playCount: Number(r.plays),
+      lastPlayedAt: Number(r.last_at),
+      musicalKey: typeof r.musical_key === 'string' ? r.musical_key : null,
+      bpm: r.bpm !== null && r.bpm !== undefined ? Number(r.bpm) : null
     }));
   }
 

@@ -1,3 +1,4 @@
+import { looseSongKey } from '../../shared/songIdentity';
 import type { DeckId, YouTubeTrack } from '../../shared/types';
 
 export type QueueSource = 'user' | 'youtube-radio' | 'local';
@@ -48,12 +49,29 @@ export interface AutomixCallbacks {
 
 const RADIO_RETRY_COOLDOWN_MS = 8000;
 
+/** Marks a deck the DJ loaded by hand: Automix must not overwrite it and will mix into it. */
+export const MANUAL_DECK_CLAIM = 'manual';
+
+/** Thrown by a deck loader when a newer load for the same deck replaced this one. */
+export class DeckLoadSupersededError extends Error {
+  readonly superseded = true;
+  constructor(deck: DeckId) {
+    super(`Deck ${deck}: carga reemplazada por una más reciente`);
+    this.name = 'DeckLoadSupersededError';
+  }
+}
+
+function isSuperseded(err: unknown): boolean {
+  return Boolean(err && typeof err === 'object' && (err as { superseded?: boolean }).superseded);
+}
+
 export class QueueAndAutomixEngine {
   private queue: QueueItem[] = [];
   private tickLocked = false;
   private preloadedForDeck: Partial<Record<DeckId, string>> = {};
   private transitionedForDeck: Partial<Record<DeckId, boolean>> = {};
   private playedVideoIds = new Set<string>();
+  private playedSongKeys = new Set<string>();
   private radioSeedVideoId: string | null = null;
   private radioPool: YouTubeTrack[] = [];
   private lastRadioFetchMs = -Infinity;
@@ -151,10 +169,66 @@ export class QueueAndAutomixEngine {
     return this.queue.map((item) => ({ ...item }));
   }
 
-  recordPlayed(videoId: string): void {
+  recordPlayed(videoId: string, title?: string): void {
     if (videoId) {
       this.playedVideoIds.add(videoId);
     }
+    if (title) {
+      const key = looseSongKey(title);
+      if (key) this.playedSongKeys.add(key);
+    }
+  }
+
+  /** True when this song (any upload of it) already played this session. */
+  wasSongPlayed(track: YouTubeTrack): boolean {
+    if (this.playedVideoIds.has(track.videoId)) return true;
+    const key = looseSongKey(track.title);
+    return key.length > 0 && this.playedSongKeys.has(key);
+  }
+
+  /**
+   * The DJ loaded `track` onto `deck` by hand. Automix keeps its hands off that deck
+   * (it will mix into it instead of overwriting it), a queue item that was preloaded
+   * there goes back to waiting, and pending copies of the same song leave the queue.
+   */
+  claimDeckForManualLoad(deck: DeckId, track: YouTubeTrack): void {
+    const previous = this.preloadedForDeck[deck];
+    if (previous && previous !== MANUAL_DECK_CLAIM) {
+      const item = this.queue.find((q) => q.queueId === previous);
+      if (item && item.track.videoId === track.videoId) {
+        return; // reloading the very queue item that is already there (e.g. retry)
+      }
+      if (item) {
+        item.status = 'pending';
+        item.errorMessage = undefined;
+      }
+    }
+    const key = looseSongKey(track.title);
+    this.queue = this.queue.filter(
+      (q) =>
+        q.status === 'loaded' ||
+        q.status === 'preloading' ||
+        (q.track.videoId !== track.videoId && (!key || looseSongKey(q.track.title) !== key))
+    );
+    this.preloadedForDeck[deck] = MANUAL_DECK_CLAIM;
+    this.transitionedForDeck[deck] = false;
+  }
+
+  /** The deck was emptied (eject): drop the queue item that sat on it. */
+  releaseDeck(deck: DeckId): void {
+    const previous = this.preloadedForDeck[deck];
+    if (previous && previous !== MANUAL_DECK_CLAIM) {
+      this.queue = this.queue.filter((q) => q.queueId !== previous);
+    }
+    delete this.preloadedForDeck[deck];
+    this.transitionedForDeck[deck] = false;
+  }
+
+  /** Drops cached radio suggestions so the next fetch reflects fresh feedback. */
+  invalidateRadioPool(): void {
+    this.radioPool = [];
+    this.radioSeedVideoId = null;
+    this.lastRadioFetchMs = -Infinity;
   }
 
   markDeckChanged(deck: DeckId): void {
@@ -185,7 +259,7 @@ export class QueueAndAutomixEngine {
       this.radioPool = [];
       this.radioSeedVideoId = context.activeVideoId;
     } else {
-      this.radioPool = this.radioPool.filter((t) => !excluded.has(t.videoId));
+      this.radioPool = this.radioPool.filter((t) => !excluded.has(t.videoId) && !this.isQueuedOrPlayedSong(t));
     }
 
     if (this.radioPool.length === 0) {
@@ -198,7 +272,7 @@ export class QueueAndAutomixEngine {
           context.activeVideoId,
           Array.from(excluded)
         );
-        this.radioPool = fetched.filter((t) => !excluded.has(t.videoId));
+        this.radioPool = fetched.filter((t) => !excluded.has(t.videoId) && !this.isQueuedOrPlayedSong(t));
       } catch {
         this.radioPool = [];
         return;
@@ -210,6 +284,12 @@ export class QueueAndAutomixEngine {
       this.enqueue(nextSuggested, 'youtube-radio');
       callbacks.onRadioQueued?.(nextSuggested);
     }
+  }
+
+  private isQueuedOrPlayedSong(track: YouTubeTrack): boolean {
+    if (this.wasSongPlayed(track)) return true;
+    const key = looseSongKey(track.title);
+    return key.length > 0 && this.queue.some((q) => looseSongKey(q.track.title) === key);
   }
 
   async tick(
@@ -233,6 +313,8 @@ export class QueueAndAutomixEngine {
       if (context.activeVideoId) {
         this.playedVideoIds.add(context.activeVideoId);
       }
+      // The deck on air can never be "the next one": forget stale claims on it.
+      delete this.preloadedForDeck[activeDeck];
 
       const mode = options.preloadMode ?? 'immediate';
       const leadSec =
@@ -256,17 +338,31 @@ export class QueueAndAutomixEngine {
 
           if (!nextPending) break;
 
+          if (nextPending.source === 'youtube-radio' && this.wasSongPlayed(nextPending.track)) {
+            this.queue = this.queue.filter((q) => q.queueId !== nextPending?.queueId);
+            continue;
+          }
+
           nextPending.status = 'preloading';
           try {
             await callbacks.loadDeck(inactiveDeck, nextPending.track);
+            if (this.preloadedForDeck[inactiveDeck] === MANUAL_DECK_CLAIM) {
+              nextPending.status = 'pending';
+              break;
+            }
             nextPending.status = 'loaded';
             this.preloadedForDeck[inactiveDeck] = nextPending.queueId;
             break;
           } catch (err) {
+            if (isSuperseded(err)) {
+              // The DJ loaded something else on that deck meanwhile: keep this song waiting.
+              nextPending.status = 'pending';
+              break;
+            }
             const reason = err instanceof Error ? err.message : String(err);
             nextPending.status = 'failed';
             nextPending.errorMessage = reason;
-            this.playedVideoIds.add(nextPending.track.videoId);
+            this.recordPlayed(nextPending.track.videoId);
             callbacks.onTrackSkipped({ ...nextPending }, reason);
           }
         }
@@ -281,7 +377,7 @@ export class QueueAndAutomixEngine {
       ) {
         const loadedItem = this.queue.find((q) => q.queueId === loadedQueueId);
         if (loadedItem) {
-          this.playedVideoIds.add(loadedItem.track.videoId);
+          this.recordPlayed(loadedItem.track.videoId, loadedItem.track.title);
         }
         this.transitionedForDeck[activeDeck] = true;
         await callbacks.startTransition(

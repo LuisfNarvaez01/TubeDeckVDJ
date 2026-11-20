@@ -7,10 +7,17 @@ import type {
   DisplayInfo,
   HistoryEntry,
   HistoryTasteProfile,
+  LocalDirListing,
+  LocalPlace,
   MidiMapping,
   MixSession,
   Result,
   RtcSignalPayload,
+  SmartCrateQuery,
+  SmartCrateTrack,
+  TasteSeedTrack,
+  TasteSummary,
+  TrackFeedbackInput,
   TrackMetadataRecord,
   UpdateStatus,
   YouTubeTrack,
@@ -23,7 +30,17 @@ export interface TubeDeckAPI {
   getSuggestions: (query: string) => Promise<Result<string[]>>;
   getPlaylistTracks: (urlOrId: string) => Promise<Result<YouTubeTrack[]>>;
   getRelatedTracks: (videoId: string, excludeIds?: string[]) => Promise<Result<YouTubeTrack[]>>;
-  getRecommendedTracks: (videoId: string, excludeIds?: string[]) => Promise<Result<YouTubeTrack[]>>;
+  getRecommendedTracks: (
+    videoId: string,
+    excludeIds?: string[],
+    seedTitle?: string
+  ) => Promise<Result<YouTubeTrack[]>>;
+  sendTrackFeedback: (input: TrackFeedbackInput) => Promise<Result<boolean>>;
+  getTasteSeeds: () => Promise<Result<TasteSeedTrack[]>>;
+  setTasteSeeds: (seeds: TasteSeedTrack[]) => Promise<Result<TasteSeedTrack[]>>;
+  getTasteSummary: () => Promise<Result<TasteSummary>>;
+  unblockChannel: (name: string) => Promise<Result<boolean>>;
+  resetTasteFeedback: () => Promise<Result<boolean>>;
   resolveStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   invalidateStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   getYtDlpStatus: () => Promise<Result<YtDlpStatus>>;
@@ -54,6 +71,7 @@ export interface TubeDeckAPI {
   createCrate: (name: string, color?: string) => Promise<Result<Crate>>;
   addTrackToCrate: (crateId: string, track: YouTubeTrack) => Promise<Result<void>>;
   getCrateTracks: (crateId: string) => Promise<Result<YouTubeTrack[]>>;
+  getSmartCrate: (query: SmartCrateQuery) => Promise<Result<SmartCrateTrack[]>>;
   listMidiMappings: (deviceName?: string) => Promise<Result<MidiMapping[]>>;
   saveMidiMapping: (mapping: Omit<MidiMapping, 'id'>) => Promise<Result<MidiMapping>>;
   deleteMidiMapping: (id: string) => Promise<Result<void>>;
@@ -74,6 +92,13 @@ export interface TubeDeckAPI {
   pickLocalFolder: () => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
   removeLocalFolder: (folderPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
   resolveLocalFile: (filePath: string) => Promise<Result<DeckStreamEndpoints>>;
+  listLocalPlaces: () => Promise<Result<LocalPlace[]>>;
+  startMixRecording: (kind: 'audio' | 'video') => Promise<Result<{ id: string; filePath: string }>>;
+  appendMixRecording: (id: string, chunk: Uint8Array) => Promise<Result<number>>;
+  stopMixRecording: (id: string) => Promise<Result<{ filePath: string; bytes: number }>>;
+  revealMixRecording: (filePath: string) => Promise<Result<void>>;
+  browseLocalDir: (dirPath: string, recursive?: boolean) => Promise<Result<LocalDirListing>>;
+  addLocalFolderPath: (dirPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
 }
 
 function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -89,8 +114,14 @@ const api: TubeDeckAPI = {
   getPlaylistTracks: (urlOrId) => ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_PLAYLIST, urlOrId),
   getRelatedTracks: (videoId, excludeIds = []) =>
     ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RELATED, videoId, excludeIds),
-  getRecommendedTracks: (videoId, excludeIds = []) =>
-    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RECOMMENDED, videoId, excludeIds),
+  getRecommendedTracks: (videoId, excludeIds = [], seedTitle) =>
+    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RECOMMENDED, videoId, excludeIds, seedTitle),
+  sendTrackFeedback: (input) => ipcRenderer.invoke(IPC_CHANNELS.TASTE_FEEDBACK, input),
+  getTasteSeeds: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_GET_SEEDS),
+  setTasteSeeds: (seeds) => ipcRenderer.invoke(IPC_CHANNELS.TASTE_SET_SEEDS, seeds),
+  getTasteSummary: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_SUMMARY),
+  unblockChannel: (name) => ipcRenderer.invoke(IPC_CHANNELS.TASTE_UNBLOCK_CHANNEL, name),
+  resetTasteFeedback: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_RESET),
   resolveStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_RESOLVE, videoId),
   invalidateStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_INVALIDATE, videoId),
   getYtDlpStatus: () => ipcRenderer.invoke(IPC_CHANNELS.YTDLP_STATUS),
@@ -126,6 +157,7 @@ const api: TubeDeckAPI = {
   createCrate: (name, color) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_CREATE, name, color),
   addTrackToCrate: (crateId, track) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_ADD_TRACK, crateId, track),
   getCrateTracks: (crateId) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_GET_TRACKS, crateId),
+  getSmartCrate: (query) => ipcRenderer.invoke(IPC_CHANNELS.CRATE_SMART, query),
   listMidiMappings: (deviceName) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_LIST_MAPPINGS, deviceName),
   saveMidiMapping: (mapping) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_SAVE_MAPPING, mapping),
   deleteMidiMapping: (id) => ipcRenderer.invoke(IPC_CHANNELS.MIDI_DELETE_MAPPING, id),
@@ -143,7 +175,15 @@ const api: TubeDeckAPI = {
   pickLocalFiles: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_PICK_FILES),
   pickLocalFolder: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_PICK_FOLDER),
   removeLocalFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REMOVE_FOLDER, folderPath),
-  resolveLocalFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_RESOLVE_FILE, filePath)
+  resolveLocalFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_RESOLVE_FILE, filePath),
+  listLocalPlaces: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_LIST_PLACES),
+  startMixRecording: (kind) => ipcRenderer.invoke(IPC_CHANNELS.REC_START, kind),
+  appendMixRecording: (id, chunk) => ipcRenderer.invoke(IPC_CHANNELS.REC_CHUNK, id, chunk),
+  stopMixRecording: (id) => ipcRenderer.invoke(IPC_CHANNELS.REC_STOP, id),
+  revealMixRecording: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.REC_REVEAL, filePath),
+  browseLocalDir: (dirPath, recursive) =>
+    ipcRenderer.invoke(IPC_CHANNELS.LOCAL_BROWSE_DIR, dirPath, recursive === true),
+  addLocalFolderPath: (dirPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_ADD_FOLDER_PATH, dirPath)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);

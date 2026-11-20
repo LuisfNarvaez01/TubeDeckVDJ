@@ -50,6 +50,13 @@ test('Dual-window VDJ v2.1 cabin launches cleanly, opens Guide/Marcos/Ajustes dr
 
     await mainPage.waitForLoadState('domcontentloaded');
 
+    // 0. First run: the radio taste setup ("10 reference songs") opens and can be skipped
+    const tasteDialog = mainPage.getByRole('dialog', { name: 'Ajustar mi radio' });
+    await expect(tasteDialog).toBeVisible();
+    await expect(tasteDialog.getByText('Enséñale a la radio lo que pones')).toBeVisible();
+    await tasteDialog.getByRole('button', { name: 'Omitir por ahora' }).click();
+    await expect(tasteDialog).toBeHidden();
+
     // 1. Verify all primary cabin panels, Top Bar actions, and 4 bottom tabs
     await expect(mainPage.getByRole('region', { name: 'Deck A', exact: true })).toBeVisible();
     await expect(mainPage.getByRole('region', { name: 'Deck B', exact: true })).toBeVisible();
@@ -75,7 +82,8 @@ test('Dual-window VDJ v2.1 cabin launches cleanly, opens Guide/Marcos/Ajustes dr
 
     await expect(mainPage.getByRole('button', { name: 'Buscador YouTube' })).toBeVisible();
     await expect(mainPage.getByRole('button', { name: /^Biblioteca Local/ })).toBeVisible();
-    await expect(mainPage.getByRole('button', { name: /^Cola/ })).toBeVisible();
+    const upNext = mainPage.getByRole('complementary', { name: 'Siguiente' });
+    await expect(upNext).toBeVisible();
     await expect(mainPage.getByRole('button', { name: 'Historial & Crates' })).toBeVisible();
 
     // Verify Jog Wheels & AUTO MIX button
@@ -105,15 +113,21 @@ test('Dual-window VDJ v2.1 cabin launches cleanly, opens Guide/Marcos/Ajustes dr
     await mainPage.getByRole('button', { name: 'Cerrar Ajustes' }).click();
     await expect(mainPage.getByRole('dialog', { name: 'Ajustes del Sistema' })).toBeHidden();
 
-    // Switch across the 4 bottom tabs
+    // Switch across the bottom browser tabs
     await mainPage.getByRole('button', { name: /^Biblioteca Local/ }).click();
     await expect(mainPage.getByRole('button', { name: 'Agregar Archivos' })).toBeVisible();
     await expect(mainPage.getByRole('button', { name: 'Agregar Carpeta' })).toBeVisible();
 
-    await mainPage.getByRole('button', { name: /^Cola/ }).click();
-    await expect(mainPage.getByRole('button', { name: /Radio YT:/i })).toBeVisible();
-    await expect(mainPage.getByRole('combobox', { name: 'Estilo Automix' })).toBeVisible();
-    await expect(mainPage.getByRole('button', { name: 'Vaciar Cola' })).toBeVisible();
+    // The "Siguiente" (Up Next) column is always visible next to the browser tabs
+    await expect(upNext.getByRole('button', { name: /Radio YT:/i })).toBeVisible();
+    await upNext.getByRole('button', { name: 'Opciones de cola' }).click();
+    await expect(upNext.getByRole('combobox', { name: 'Estilo Automix' })).toBeVisible();
+    await expect(upNext.getByRole('button', { name: 'Vaciar Cola' })).toBeVisible();
+
+    // Browser dock can be enlarged and restored
+    await mainPage.getByRole('button', { name: 'Ampliar navegador' }).click();
+    await expect(mainPage.getByRole('button', { name: 'Cabina completa' })).toBeVisible();
+    await mainPage.getByRole('button', { name: 'Cabina completa' }).click();
 
     await mainPage.getByRole('button', { name: 'Historial & Crates' }).click();
     await expect(mainPage.getByText(/Nueva Sesión|Sesiones/i).first()).toBeVisible();

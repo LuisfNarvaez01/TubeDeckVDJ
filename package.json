@@ -1,6 +1,6 @@
 {
   "name": "tubedeck-vdj",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "private": true,
   "description": "VirtualDJ-style dual-screen YouTube video mixing desktop app",
   "author": "LuisfNarvaez01",
@@ -20,6 +20,7 @@
     "release:win": "electron-vite build && electron-builder --win nsis --publish always"
   },
   "dependencies": {
+    "@fontsource-variable/figtree": "^5.3.0",
     "electron-updater": "^6.8.11",
     "lucide-react": "^1.76.0",
     "react": "^19.3.1",

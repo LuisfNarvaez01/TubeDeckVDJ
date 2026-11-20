@@ -209,6 +209,67 @@ export class DatabaseService {
       }
       this.save();
     }
+
+    this.applyMigration(
+      2,
+      `
+      CREATE TABLE IF NOT EXISTS track_feedback (
+        id TEXT PRIMARY KEY,
+        video_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        channel TEXT NOT NULL DEFAULT '',
+        artists_json TEXT NOT NULL DEFAULT '[]',
+        signal TEXT NOT NULL CHECK(signal IN ('like', 'dislike', 'skip', 'complete', 'block-channel')),
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_track_feedback_video ON track_feedback(video_id);
+
+      CREATE TABLE IF NOT EXISTS blocked_channels (
+        name_key TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS taste_seeds (
+        video_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        channel TEXT NOT NULL DEFAULT '',
+        duration_sec REAL NOT NULL DEFAULT 0,
+        thumbnail_url TEXT NOT NULL DEFAULT '',
+        position INTEGER NOT NULL DEFAULT 0,
+        added_at INTEGER NOT NULL
+      );
+      `
+    );
+
+    this.applyMigration(3, 'ALTER TABLE track_metadata ADD COLUMN musical_key TEXT;');
+  }
+
+  private applyMigration(version: number, sql: string): void {
+    const db = this.getDbOrThrow();
+    const applied = this.queryOne<{ version: number }>(
+      'SELECT version FROM schema_version WHERE version = ?',
+      [version]
+    );
+    if (applied) return;
+    db.run('BEGIN TRANSACTION;');
+    this.inTransaction = true;
+    try {
+      db.run(sql);
+      db.run('INSERT INTO schema_version (version, applied_at) VALUES (?, ?);', [
+        version,
+        Date.now()
+      ]);
+      db.run('COMMIT;');
+      this.inTransaction = false;
+    } catch (err) {
+      if (this.inTransaction) {
+        db.run('ROLLBACK;');
+        this.inTransaction = false;
+      }
+      throw err;
+    }
+    this.save();
   }
 
   queryAll<T extends Record<string, unknown>>(sql: string, params: unknown[] = []): T[] {
@@ -293,14 +354,16 @@ export class DatabaseService {
       loop: track.loop !== undefined ? track.loop : (existing?.loop ?? null),
       waveformPeaks:
         track.waveformPeaks !== undefined ? track.waveformPeaks : (existing?.waveformPeaks ?? null),
-      playCount: track.playCount ?? existing?.playCount ?? 0
+      playCount: track.playCount ?? existing?.playCount ?? 0,
+      musicalKey:
+        track.musicalKey !== undefined ? track.musicalKey : (existing?.musicalKey ?? null)
     };
 
     this.run(
       `INSERT INTO track_metadata (
          video_id, title, channel, duration_sec, thumbnail_url, bpm, beat_offset_sec,
-         gain_db, hot_cues_json, loop_json, waveform_peaks_json, play_count
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         gain_db, hot_cues_json, loop_json, waveform_peaks_json, play_count, musical_key
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(video_id) DO UPDATE SET
          title = excluded.title,
          channel = excluded.channel,
@@ -312,7 +375,8 @@ export class DatabaseService {
          hot_cues_json = excluded.hot_cues_json,
          loop_json = excluded.loop_json,
          waveform_peaks_json = excluded.waveform_peaks_json,
-         play_count = excluded.play_count`,
+         play_count = excluded.play_count,
+         musical_key = excluded.musical_key`,
       [
         merged.videoId,
         merged.title,
@@ -325,7 +389,8 @@ export class DatabaseService {
         JSON.stringify(merged.hotCues),
         merged.loop ? JSON.stringify(merged.loop) : null,
         merged.waveformPeaks ? JSON.stringify(merged.waveformPeaks) : null,
-        merged.playCount
+        merged.playCount,
+        merged.musicalKey
       ]
     );
 
@@ -354,7 +419,8 @@ export class DatabaseService {
       hotCues: parseJsonOrNull<HotCue[]>(row.hot_cues_json) ?? [],
       loop: parseJsonOrNull<LoopState>(row.loop_json),
       waveformPeaks: parseJsonOrNull<number[]>(row.waveform_peaks_json),
-      playCount: Number(row.play_count ?? 0)
+      playCount: Number(row.play_count ?? 0),
+      musicalKey: typeof row.musical_key === 'string' ? row.musical_key : null
     };
   }
 

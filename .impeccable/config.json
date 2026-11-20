@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-color",
+        "value": "#f1f5f9",
+        "files": [
+          "src/renderer/video/OverlayCompositor.ts"
+        ],
+        "createdAt": "2026-11-20T19:06:33.564Z",
+        "reason": "DESIGN.md Output Exemption rule: Screen 2 OSD art in src/renderer/video/* keeps its own colours (documented by the documenter from the shipped build)"
+      }
+    ]
+  }
+}

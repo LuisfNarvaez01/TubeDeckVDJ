@@ -1,9 +1,10 @@
-import { dialog, ipcMain } from 'electron';
+import { app, dialog, ipcMain, shell } from 'electron';
 import path from 'path';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type {
   DeckStreamEndpoints,
+  LocalPlace,
   Result,
   RtcSignalPayload,
   VideoQualityTier,
@@ -14,7 +15,10 @@ import type { BatchDownloadFormat, BatchDownloadService } from '../services/Batc
 import type { DatabaseService } from '../services/DatabaseService';
 import type { DisplayWindowManager } from '../services/DisplayWindowManager';
 import type { HistoryAndCratesService } from '../services/HistoryAndCratesService';
-import type { LocalLibraryService } from '../services/LocalLibraryService';
+import { browseDirectory, listDrivePlaces, type LocalLibraryService } from '../services/LocalLibraryService';
+import type { MixRecordingService } from '../services/MixRecordingService';
+import type { RecommendationEngine } from '../services/RecommendationEngine';
+import type { TasteFeedbackService } from '../services/TasteFeedbackService';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
 import type { ExportFormat, SessionExporter } from '../services/SessionExporter';
 import type { StreamResolverService } from '../services/StreamResolverService';
@@ -23,6 +27,26 @@ import type { YtDlpBinaryManager } from '../services/YtDlpBinaryManager';
 
 const VideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'ID de video inválido');
 const NonEmptyStringSchema = z.string().trim().min(1).max(500);
+const FeedbackSchema = z.object({
+  track: z.object({
+    videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/),
+    title: z.string().max(500),
+    channel: z.string().max(300),
+    artists: z.array(z.string().max(200)).max(20).optional()
+  }),
+  signal: z.enum(['like', 'dislike', 'skip', 'complete', 'block-channel'])
+});
+const TasteSeedsSchema = z
+  .array(
+    z.object({
+      videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/),
+      title: z.string().max(500),
+      channel: z.string().max(300),
+      durationSec: z.number().min(0).max(36000),
+      thumbnailUrl: z.string().max(2000)
+    })
+  )
+  .max(10);
 const RtcSignalSchema = z.object({
   type: z.enum(['ready', 'offer', 'answer', 'ice']),
   sdp: z.string().optional(),
@@ -58,7 +82,10 @@ export interface MainServices {
   exporter: SessionExporter;
   updater?: AutoUpdaterService;
   localLibrary?: LocalLibraryService;
+  recordings?: MixRecordingService;
   batchDownloader?: BatchDownloadService;
+  taste?: TasteFeedbackService;
+  recommender?: RecommendationEngine;
 }
 
 function buildEndpoints(
@@ -134,15 +161,54 @@ export function registerIpcHandlers(services: MainServices): void {
 
   ipcMain.handle(
     IPC_CHANNELS.YOUTUBE_RECOMMENDED,
-    (_event, rawVideoId: unknown, rawExcludeIds: unknown) =>
+    (_event, rawVideoId: unknown, rawExcludeIds: unknown, rawSeedTitle: unknown) =>
       wrapResult(async () => {
         const videoId = VideoIdSchema.parse(rawVideoId);
         const excludeIds = Array.isArray(rawExcludeIds)
           ? z.array(VideoIdSchema).max(200).parse(rawExcludeIds)
           : [];
+        const seedTitle =
+          typeof rawSeedTitle === 'string' ? rawSeedTitle.trim().slice(0, 200) : undefined;
+        if (services.recommender) {
+          return services.recommender.recommend({ seedVideoId: videoId, seedTitle, excludeVideoIds: excludeIds, limit: 12 });
+        }
         const profile = services.history.buildTasteProfile(100);
         return services.search.getHistoryWeightedRecommendations(videoId, profile, excludeIds, 12);
       })
+  );
+
+  const requireTaste = (): TasteFeedbackService => {
+    if (!services.taste) throw new Error('Taste feedback service unavailable');
+    return services.taste;
+  };
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_FEEDBACK, (_event, rawInput: unknown) =>
+    wrapResult(() => {
+      requireTaste().recordFeedback(FeedbackSchema.parse(rawInput));
+      return true;
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_GET_SEEDS, () => wrapResult(() => requireTaste().getTasteSeeds()));
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_SET_SEEDS, (_event, rawSeeds: unknown) =>
+    wrapResult(() => requireTaste().setTasteSeeds(TasteSeedsSchema.parse(rawSeeds)))
+  );
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_SUMMARY, () => wrapResult(() => requireTaste().getSummary()));
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_UNBLOCK_CHANNEL, (_event, rawName: unknown) =>
+    wrapResult(() => {
+      requireTaste().unblockChannel(NonEmptyStringSchema.parse(rawName));
+      return true;
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.TASTE_RESET, () =>
+    wrapResult(() => {
+      requireTaste().resetFeedback();
+      return true;
+    })
   );
 
   ipcMain.handle(IPC_CHANNELS.STREAM_RESOLVE, (_event, rawVideoId: unknown) =>
@@ -342,6 +408,19 @@ export function registerIpcHandlers(services: MainServices): void {
     })
   );
 
+  ipcMain.handle(IPC_CHANNELS.CRATE_SMART, (_event, rawQuery: unknown) =>
+    wrapResult(() => {
+      const query = z
+        .object({
+          kind: z.enum(['match', 'most-played', 'recent', 'liked', 'forgotten']),
+          camelot: z.string().regex(/^\d{1,2}[AB]$/).nullish(),
+          bpm: z.number().positive().max(400).nullish()
+        })
+        .parse(rawQuery);
+      return services.history.getSmartCrate(query);
+    })
+  );
+
   ipcMain.handle(IPC_CHANNELS.CRATE_GET_TRACKS, (_event, rawCrateId: unknown) =>
     wrapResult(() => {
       const crateId = NonEmptyStringSchema.parse(rawCrateId);
@@ -490,6 +569,81 @@ export function registerIpcHandlers(services: MainServices): void {
       if (!services.localLibrary) return { folders: [], tracks: [] };
       const folderPath = NonEmptyStringSchema.parse(rawFolder);
       services.localLibrary.removeFolder(folderPath);
+      return services.localLibrary.listLibrary();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.REC_START, (_event, rawKind: unknown) =>
+    wrapResult(() => {
+      if (!services.recordings) throw new Error('Grabación no disponible');
+      const kind = z.enum(['audio', 'video']).parse(rawKind);
+      return services.recordings.start(kind);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.REC_CHUNK, (_event, rawId: unknown, rawChunk: unknown) =>
+    wrapResult(() => {
+      if (!services.recordings) throw new Error('Grabación no disponible');
+      const id = NonEmptyStringSchema.parse(rawId);
+      if (!(rawChunk instanceof Uint8Array)) throw new Error('Fragmento de grabación inválido');
+      return services.recordings.append(id, rawChunk);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.REC_STOP, (_event, rawId: unknown) =>
+    wrapResult(() => {
+      if (!services.recordings) throw new Error('Grabación no disponible');
+      return services.recordings.stop(NonEmptyStringSchema.parse(rawId));
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.REC_REVEAL, (_event, rawPath: unknown) =>
+    wrapResult(() => {
+      if (!services.recordings) return;
+      const filePath = z.string().trim().min(1).max(1000).parse(rawPath);
+      if (!services.recordings.isOwnRecording(filePath)) throw new Error('Ruta no permitida');
+      shell.showItemInFolder(filePath);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_LIST_PLACES, () =>
+    wrapResult(async (): Promise<LocalPlace[]> => {
+      const quick: LocalPlace[] = [];
+      const named: [Parameters<typeof app.getPath>[0], string][] = [
+        ['music', 'Música'],
+        ['videos', 'Videos'],
+        ['downloads', 'Descargas'],
+        ['desktop', 'Escritorio']
+      ];
+      for (const [key, label] of named) {
+        try {
+          quick.push({ kind: 'folder', label, path: app.getPath(key) });
+        } catch {
+          // folder not defined on this OS
+        }
+      }
+      const saved: LocalPlace[] = (services.localLibrary?.listLibrary().folders ?? []).map((f) => ({
+        kind: 'library',
+        label: path.basename(f) || f,
+        path: f,
+        detail: f
+      }));
+      return [...saved, ...quick, ...(await listDrivePlaces())];
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_BROWSE_DIR, (_event, rawPath: unknown, rawRecursive: unknown) =>
+    wrapResult(() => {
+      const dirPath = z.string().trim().min(1).max(1000).parse(rawPath);
+      return browseDirectory(dirPath, rawRecursive === true);
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_ADD_FOLDER_PATH, (_event, rawPath: unknown) =>
+    wrapResult(() => {
+      if (!services.localLibrary) return { folders: [], tracks: [] };
+      const dirPath = z.string().trim().min(1).max(1000).parse(rawPath);
+      services.localLibrary.addFolder(dirPath);
       return services.localLibrary.listLibrary();
     })
   );

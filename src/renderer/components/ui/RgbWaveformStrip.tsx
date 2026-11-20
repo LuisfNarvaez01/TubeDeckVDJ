@@ -53,7 +53,7 @@ export function RgbWaveformStrip({
       const h = canvas.height;
       const midY = h / 2;
 
-      ctx!.fillStyle = '#08090C';
+      ctx!.fillStyle = '#000000';
       ctx!.fillRect(0, 0, w, h);
 
       // Subtle horizontal center axis
@@ -71,29 +71,31 @@ export function RgbWaveformStrip({
           const x = (offset + i) * barW;
           const bw = Math.max(1.5, barW - 1);
 
-          // Bass (warm orange)
+          // Bass body in the deck's own colour, so A and B can never be confused
           const lowH = Math.max(1, s.low * (midY - 2));
-          ctx!.fillStyle = 'rgba(249, 115, 22, 0.85)';
+          ctx!.globalAlpha = 0.9;
+          ctx!.fillStyle = accentColor;
           ctx!.fillRect(x, midY - lowH, bw, lowH * 2);
+          ctx!.globalAlpha = 1;
 
-          // Mid (emerald green)
+          // Mids in translucent ink
           const midH = s.mid * (midY - 4);
           if (midH > 1) {
-            ctx!.fillStyle = 'rgba(16, 185, 129, 0.78)';
+            ctx!.fillStyle = 'rgba(243, 241, 234, 0.45)';
             ctx!.fillRect(x, midY - midH, bw, midH * 2);
           }
 
-          // Highs (electric cyan / crisp crest)
+          // Highs as a crisp ink crest
           const hiH = s.high * (midY - 6);
           if (hiH > 1) {
-            ctx!.fillStyle = 'rgba(56, 189, 248, 0.85)';
+            ctx!.fillStyle = 'rgba(243, 241, 234, 0.85)';
             ctx!.fillRect(x, midY - hiH, bw, hiH * 2);
           }
         }
       }
 
       // Center needle
-      ctx!.fillStyle = '#F8FAFC';
+      ctx!.fillStyle = '#F5F5F6';
       ctx!.fillRect(w - 3, 0, 2, h);
 
       rafId = requestAnimationFrame(renderLive);
@@ -101,7 +103,7 @@ export function RgbWaveformStrip({
 
     rafId = requestAnimationFrame(renderLive);
     return () => cancelAnimationFrame(rafId);
-  }, [deckId, liveRgbRef]);
+  }, [deckId, liveRgbRef, accentColor]);
 
   // Full-track Overview + Hot Cues + Loop overlay + End Warning
   useEffect(() => {
@@ -118,7 +120,7 @@ export function RgbWaveformStrip({
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#08090C';
+    ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, w, h);
 
     const remaining = Math.max(0, durationSec - currentTimeSec);
@@ -136,11 +138,11 @@ export function RgbWaveformStrip({
         const barH = Math.max(2, waveformPeaks[i] * (h - 6));
         const x = i * barW;
         const y = (h - barH) / 2;
-        ctx.fillStyle = i / waveformPeaks.length <= progress ? accentColor : '#283548';
+        ctx.fillStyle = i / waveformPeaks.length <= progress ? accentColor : '#2A2A30';
         ctx.fillRect(x, y, Math.max(1, barW - 0.8), barH);
       }
     } else {
-      ctx.fillStyle = '#1F2937';
+      ctx.fillStyle = '#1C1C21';
       ctx.fillRect(0, h / 2 - 1, w, 2);
       ctx.fillStyle = accentColor;
       ctx.fillRect(0, h / 2 - 2, w * progress, 4);
@@ -149,7 +151,7 @@ export function RgbWaveformStrip({
     if (loop && durationSec > 0) {
       const lx1 = (loop.inSec / durationSec) * w;
       const lx2 = (loop.outSec / durationSec) * w;
-      ctx.fillStyle = loop.active ? 'rgba(16, 185, 129, 0.30)' : 'rgba(148, 163, 184, 0.16)';
+      ctx.fillStyle = loop.active ? 'rgba(255, 244, 220, 0.22)' : 'rgba(143, 156, 149, 0.16)';
       ctx.fillRect(lx1, 0, Math.max(2, lx2 - lx1), h);
     }
 
@@ -162,7 +164,7 @@ export function RgbWaveformStrip({
     }
 
     const px = progress * w;
-    ctx.fillStyle = '#F8FAFC';
+    ctx.fillStyle = '#F5F5F6';
     ctx.fillRect(px - 1, 0, 2, h);
   }, [waveformPeaks, currentTimeSec, durationSec, hotCues, loop, playing, accentColor]);
 
@@ -179,14 +181,14 @@ export function RgbWaveformStrip({
         ref={liveCanvasRef}
         width={480}
         height={32}
-        className="h-8 w-full rounded-t-md border border-b-0 border-white/[0.06] bg-[#08090C]"
+        className="h-8 w-full rounded-t-md border border-b-0 border-white/[0.06] bg-ground"
       />
       <canvas
         ref={overviewCanvasRef}
         width={480}
         height={24}
         onClick={handleOverviewClick}
-        className="h-6 w-full cursor-pointer rounded-b-md border border-white/[0.06] bg-[#08090C]"
+        className="h-6 w-full cursor-pointer rounded-b-md border border-white/[0.06] bg-ground"
         title="Clic para saltar a cualquier punto de la canción"
       />
     </div>

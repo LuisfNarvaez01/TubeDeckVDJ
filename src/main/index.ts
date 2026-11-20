@@ -9,6 +9,9 @@ import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { HistoryAndCratesService } from './services/HistoryAndCratesService';
 import { LocalLibraryService } from './services/LocalLibraryService';
+import { MixRecordingService } from './services/MixRecordingService';
+import { RecommendationEngine } from './services/RecommendationEngine';
+import { TasteFeedbackService } from './services/TasteFeedbackService';
 import { RamStreamProxy } from './services/RamStreamProxy';
 import { SessionExporter } from './services/SessionExporter';
 import {
@@ -26,6 +29,7 @@ let ramProxy: RamStreamProxy | null = null;
 let displayManager: DisplayWindowManager | null = null;
 let updaterService: AutoUpdaterService | null = null;
 let batchDownloaderService: BatchDownloadService | null = null;
+let recordingService: MixRecordingService | null = null;
 
 function buildContentSecurityPolicy(isDev: boolean): string {
   const scriptSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
@@ -120,8 +124,15 @@ app.whenReady().then(async () => {
 
   const search = new YouTubeSearchService();
   const history = new HistoryAndCratesService(db);
+  const taste = new TasteFeedbackService(db);
+  const recommender = new RecommendationEngine(search, {
+    getSnapshot: () => taste.getSnapshot(),
+    buildTasteProfile: (limit) => history.buildTasteProfile(limit)
+  });
   const exporter = new SessionExporter();
   const localLibrary = new LocalLibraryService(db);
+  const recordings = new MixRecordingService(path.join(app.getPath('music'), 'TubeDeck Grabaciones'));
+  recordingService = recordings;
   const batchDownloader = new BatchDownloadService({
     binaryManager: ytDlp,
     localLibrary,
@@ -153,7 +164,10 @@ app.whenReady().then(async () => {
     exporter,
     updater,
     localLibrary,
-    batchDownloader
+    batchDownloader,
+    taste,
+    recommender,
+    recordings
   });
 
   mainWindow = createMainWindow();
@@ -183,6 +197,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('will-quit', () => {
+  void recordingService?.stopAll();
   batchDownloaderService?.cancel();
   updaterService?.cancelStartupCheck();
   displayManager?.dispose();

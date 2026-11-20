@@ -152,13 +152,13 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
       onClick={onClose}
     >
       <div
-        className="animate-modal-in flex max-h-[84vh] w-full max-w-3xl flex-col gap-3 rounded-xl border border-white/[0.08] bg-[#0F1117] p-4 shadow-2xl"
+        className="animate-modal-in flex max-h-[84vh] w-full max-w-3xl flex-col gap-3 rounded-xl border border-white/[0.08] bg-surface p-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
           <div>
-            <h2 className="text-base font-bold text-[#F8FAFC]">Guía Rápida de Cabina — TubeDeck VDJ</h2>
-            <p className="text-xs text-[#94A3B8]">
+            <h2 className="text-base font-bold text-ink">Guía Rápida de Cabina — TubeDeck VDJ</h2>
+            <p className="text-xs text-muted">
               Referencia de controles, mezcla automática de audio/video, marcos y reproducción híbrida.
             </p>
           </div>
@@ -166,7 +166,7 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
             type="button"
             onClick={onClose}
             aria-label="Cerrar Guía"
-            className="rounded-lg border border-white/[0.06] bg-[#151821] p-1.5 text-[#94A3B8] hover:text-[#F8FAFC] cursor-pointer"
+            className="rounded-lg border border-white/[0.06] bg-raised p-1.5 text-muted hover:text-ink cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
@@ -180,8 +180,8 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
               onClick={() => setCategory(id)}
               className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer ${
                 category === id
-                  ? 'border-white/25 bg-[#1C202B] text-[#F8FAFC]'
-                  : 'border-white/[0.06] bg-[#151821] text-[#94A3B8] hover:text-[#F8FAFC]'
+                  ? 'border-white/25 bg-raised-2 text-ink'
+                  : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -194,10 +194,10 @@ export function InteractiveGuideModal({ open, onClose }: InteractiveGuideModalPr
           {GUIDE_ITEMS[category].map((item) => (
             <div
               key={item.control}
-              className="flex flex-col gap-1 rounded-lg border border-white/[0.06] bg-[#08090C] p-3"
+              className="flex flex-col gap-1 rounded-lg border border-white/[0.06] bg-ground p-3"
             >
-              <h3 className="text-xs font-bold text-[#F8FAFC]">{item.control}</h3>
-              <p className="text-xs leading-relaxed text-[#94A3B8]">{item.detail}</p>
+              <h3 className="text-xs font-bold text-ink">{item.control}</h3>
+              <p className="text-xs leading-relaxed text-muted">{item.detail}</p>
             </div>
           ))}
         </div>

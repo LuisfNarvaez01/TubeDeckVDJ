@@ -1,9 +1,9 @@
-# AI Context — TubeDeck VDJ (`v2.2.0`)
+# AI Context — TubeDeck VDJ (`v3.0.0`)
 
 Documento de referencia técnica rápida para darle contexto inmediato del proyecto a cualquier asistente de IA.
 
 ## 1. Resumen del Proyecto
-- **Nombre / Paquete:** `TubeDeck VDJ` (`tubedeck-vdj`, versión `2.2.0`, `appId`: `com.tubedeck.vdj`).
+- **Nombre / Paquete:** `TubeDeck VDJ` (`tubedeck-vdj`, versión `3.0.0`, `appId`: `com.tubedeck.vdj`).
 - **Objetivo:** Cabina DJ/VDJ de doble pantalla para Windows que mezcla videos de YouTube en streaming en memoria (**sin descargar archivos multimedia al disco** durante la reproducción normal), permite intercalar archivos o carpetas locales, renderiza video compuesto a 60 fps en Pantalla 2 con transiciones WebGL2 y marcos configurables, y ofrece descarga opcional por lotes de sesiones del historial.
 - **Repositorio / Auto-Actualizaciones:** `https://github.com/LuisfNarvaez01/TubeDeckVDJ.git` (`electron-updater` vía GitHub Releases + workflow `.github/workflows/release.yml` activado al hacer push de tags `v*`).
 
@@ -12,7 +12,7 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 - **Frontend:** React `19.3.1`, TypeScript, Tailwind CSS v4 (`@tailwindcss/vite`), Zustand `5.1.0`, `lucide-react` (`1.76.0`).
 - **Audio y Video:** Web Audio API (`AudioDspEngine`, `AudioOutputRouter`), reproducción dual HTMLMediaElement (`DualDeckMediaSync`), WebGL2 / GLSL (`WebGLVideoCompositor` + `transitions.glsl.ts` + `effects.glsl.ts`), Canvas 2D (`OverlayCompositor`), WebRTC loopback (`outputRtcBridge`).
 - **Proceso Main / Persistencia:** `youtubei.js` `18.3.0`, binario `yt-dlp.exe` en `resources/bin/` (empaquetado en `extraResources` → `bin/`), `sql.js` `1.17.0` (SQLite WASM sin compilación nativa C++, `sql-wasm.wasm` en `extraResources`), `zod` `4.6.7`.
-- **Testing:** Vitest `5.1.1` (26 archivos, 42 tests unitarios/componentes) y Playwright `1.65.1` (`tests/e2e/appFlow.spec.ts` para binario compilado y ejecutable empaquetado).
+- **Testing:** Vitest `5.1.1` (28 archivos, 60 tests unitarios/componentes) y Playwright `1.65.1` (`tests/e2e/appFlow.spec.ts` para binario compilado y ejecutable empaquetado).
 
 ## 3. Arquitectura y Mapa de Archivos (`src/`)
 
@@ -21,8 +21,10 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 - `src/main/ipc/registerHandlers.ts`: Registro de handlers IPC validados con `zod` retornando `Result<T>` (`{ success: true, data } | { success: false, error }`).
 - `src/main/services/StreamResolverService.ts`: Resolución de URLs de YouTube vía `yt-dlp` eligiendo **H.264 720p** por defecto y exponiendo `videoVariants` (`1080p`, `720p`, `480p`, `360p`) en modo `dash-split` o `muxed`.
 - `src/main/services/RamStreamProxy.ts`: Proxy HTTP local en `127.0.0.1` en RAM con lectura por rangos (`Range`) en bloques de **2 MB** para evitar cortes/throttling de YouTube, parámetro `?quality=`, timeout/reintentos y streaming `HTTP 206` para archivos locales (`/local/:fileId`).
-- `src/main/services/YouTubeSearchService.ts`: Búsqueda en YouTube con metadatos ricos (`durationSec`, `viewsText`, `publishedText`), playlists, pistas relacionadas y `getHistoryWeightedRecommendations` (prioridad a la última canción reproducida + perfil histórico).
-- `src/main/services/DatabaseService.ts`, `HistoryAndCratesService.ts`, `SessionExporter.ts`: Base SQLite (`tubedeck.db` con tablas `sessions`, `history_entries`, `track_metadata`, `crates`, `crate_tracks`, `midi_mappings`, `app_settings`, `schema_version`), generación del perfil de afinidad (`buildTasteProfile(100)`) y exportación de sesiones.
+- `src/main/services/YouTubeSearchService.ts`: Búsqueda en YouTube con metadatos ricos (`durationSec`, `viewsText`, `publishedText`), playlists, pistas relacionadas y `getMusicRadio` (radio *automix* de YouTube Music vía `music.getUpNext`, prefiere la versión con video oficial 16:9). Toda llamada a YouTube pasa por `withClient`/`withRetry`: timeout de 12 s (`DEFAULT_YOUTUBE_TIMEOUT_MS`), y ante cuelgue o fallo descarta la sesión Innertube y reintenta una vez con una nueva; el error final llega en español ("YouTube tardó demasiado en responder…") y el buscador ofrece **Reintentar**. `getHistoryWeightedRecommendations` queda solo como respaldo (el feed `watch_next` anónimo ya casi no devuelve resultados).
+- `src/main/services/RecommendationEngine.ts`: Pipeline de Radio YT (Fuente → Filtro → Puntuación → Selección). Fuentes en paralelo: radio YT Music de la canción actual + una de la sesión reciente + un Me gusta o canción de referencia (caché 20 min). Filtra basura (reacciones, tutoriales, vlogs, shorts, mezclas largas; duración 90–600 s), no me gusta y canales bloqueados; puntúa consenso entre radios, afinidad por artista, video oficial, perfil histórico; diversidad (máx. 2 por artista, sin versiones duplicadas). Devuelve `recommendReason` por pista.
+- `src/main/services/TasteFeedbackService.ts`: Perfil local que reemplaza a la cuenta de Google: tablas `track_feedback` (`like`/`dislike`/`skip`/`complete`/`block-channel`, decaimiento de 60 días), `blocked_channels` y `taste_seeds` (hasta 10 canciones de referencia del asistente de primer uso).
+- `src/main/services/DatabaseService.ts`, `HistoryAndCratesService.ts`, `SessionExporter.ts`: Base SQLite (`tubedeck.db` con tablas `sessions`, `history_entries`, `track_metadata`, `crates`, `crate_tracks`, `midi_mappings`, `app_settings`, `schema_version`; migración v2: `track_feedback`, `blocked_channels`, `taste_seeds`), generación del perfil de afinidad (`buildTasteProfile(100)`) y exportación de sesiones.
 - `src/main/services/LocalLibraryService.ts`: Administración de archivos y carpetas locales de audio/video.
 - `src/main/services/BatchDownloadService.ts`: Descarga por lotes de sesiones del historial vía `yt-dlp.exe` (formatos sin dependencia de `ffmpeg`) con eventos de progreso y registro en `LocalLibraryService`.
 - `src/main/services/DisplayWindowManager.ts`: Detección de monitores y ventana secundaria limpia `role=output` (Pantalla 2).
@@ -30,7 +32,7 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
 
 ### Preload y Contrato Compartido (`src/preload/`, `src/shared/`)
 - `src/preload/index.ts` (compilado a `out/preload/index.cjs` con `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`): Expone `window.tubedeckAPI`.
-- `src/shared/ipcChannels.ts`: Constante `IPC_CHANNELS` con 49 canales (`youtube:*`, `stream:*`, `ytdlp:*`, `db:*`, `display:*`, `history:*`, `local:*`, `crate:*`, `midi:*`, `updater:*`).
+- `src/shared/ipcChannels.ts`: Constante `IPC_CHANNELS` con 55 canales (`youtube:*`, `stream:*`, `ytdlp:*`, `db:*`, `display:*`, `history:*`, `taste:*`, `local:*`, `crate:*`, `midi:*`, `updater:*`).
 - `src/shared/types.ts`: Tipos compartidos (`YouTubeTrack`, `ResolvedStream`, `DeckStreamEndpoints`, `VideoQualityTier`, `HistoryTasteProfile`, `BatchDownloadProgress`, etc.).
 
 ### Renderer (`src/renderer/`)
@@ -39,25 +41,38 @@ Documento de referencia técnica rápida para darle contexto inmediato del proye
   - `AudioDspEngine.ts`: EQ de 3 bandas + Kill, Color Filter, Crossfader con curvas, Sampler de 8 pads, Deck FX (Echo/Reverb/Flanger), ruteo Master/Cue.
   - `AudioOutputRouter.ts`: Ruteo hacia dispositivos de audio (`setSinkId`) para Master y Audífonos o modo Mono Split.
   - `DualDeckMediaSync.ts`: Sincronización audio/video en `dash-split`, watchdog anti-congelamiento `checkVideoHealth` con downgrade automático (`720p` → `480p` → `360p`) y soporte `mediaKind: 'audio'`.
+- Grabación de mezcla (v3): `audio/MixRecorder.ts` (MediaRecorder del master post-limitador + canvas de Pantalla 2) → `main/services/MixRecordingService.ts` escribe por trozos en `Música/TubeDeck Grabaciones`.
+- Listas inteligentes (v3): `HistoryAndCratesService.getSmartCrate` (combina con lo que suena, Me gusta, Más tocadas, Recientes, Olvidadas).
+- Explorador local (v2.4+): `LocalLibraryService.browseDirectory` / `listDrivePlaces` (unidades, USB, accesos).
 - `src/renderer/video/`:
   - `WebGLVideoCompositor.ts` + `transitions.glsl.ts` + `effects.glsl.ts`: 9 transiciones de video, soporte de viewport interno `u_videoRect` para marcos y captura a 60 fps para Pantalla 2.
   - `VideoFxPipeline.ts`: 7 efectos visuales reactivos al análisis de bandas de audio.
   - `OverlayCompositor.ts`: Marcos (`minimal-studio`, `karaoke-stage`, `gala-gold`, `club-led`, PNG `custom` vía `getVideoInsetRect()`), Logo, Marquesina, OSD de pista y Webcam.
   - `outputRtcBridge.ts`: Envío/recepción WebRTC local del stream compuesto hacia `OutputWindowView.tsx`.
 - `src/renderer/dj/`:
-  - `QueueAndAutomixEngine.ts`: Cola con precarga temprana (`immediate` 4s / `90s` / `60s` / `30s`), `moveToNext`, `interleaveBySource` (intercalar Local/YouTube), `clear()` y Radio YT automática.
+  - `QueueAndAutomixEngine.ts`: Cola con precarga temprana (`immediate` 4s / `90s` / `60s` / `30s`), `moveToNext`, `interleaveBySource` (intercalar Local/YouTube), `clear()` y Radio YT automática. Las cargas manuales reclaman el deck (`claimDeckForManualLoad`), una carga más nueva cancela a la anterior (`DeckLoadSupersededError`) y la Radio no repite canciones (`looseSongKey`).
+  - `HarmonicKey.ts` (v3): tono musical en vivo (cromagrama + perfiles Krumhansl) → código Camelot, guardado en `track_metadata.musical_key`; reglas de mezcla armónica en `src/shared/camelot.ts`.
+  - `BeatPhase.ts` (v3): ancla del beatgrid (`beat_offset_sec`), medidor de fase (`PhaseMeter.tsx`) y SYNC que alinea fase; Automix iguala BPM y fase si los tempos están a ±8 %.
   - `CueLoopTempoController.ts`: Hot Cues 1–8, Auto-Loop, Loop Roll, Beat Jump y CUE real.
   - `BpmAndWaveformEngine.ts`: Detección de BPM por energía y cálculo de tasa para Sync.
 - `src/renderer/controllers/`: `HotkeyManager.ts` (atajos de teclado) y `MidiLearnEngine.ts` (Web MIDI API).
 - `src/renderer/store/`: Stores Zustand (`useDeckStore.ts`, `useMixerStore.ts`, `useLibraryStore.ts`, `useSettingsStore.ts`).
 - `src/renderer/components/`:
-  - Principales: `DeckPanel.tsx`, `MixerCenter.tsx`, `VideoPreviewBar.tsx`, `SearchBrowserTab.tsx`, `LocalLibraryTab.tsx`, `QueueTab.tsx`, `HistoryAndCratesTab.tsx`, `OverlayControls.tsx`, `SettingsTab.tsx`, `InteractiveGuideModal.tsx`, `OutputWindowView.tsx`.
+  - Principales: `DeckPanel.tsx` (incluye 👍/👎 de la pista cargada), `MixerCenter.tsx`, `VideoPreviewBar.tsx`, `SearchBrowserTab.tsx`, `LocalLibraryTab.tsx`, `QueueTab.tsx`, `HistoryAndCratesTab.tsx`, `OverlayControls.tsx`, `SettingsTab.tsx`, `InteractiveGuideModal.tsx`, `TasteSetupModal.tsx`, `OutputWindowView.tsx`.
+  - Dock inferior (estilo página de video de YouTube): izquierda 3 pestañas (`SearchBrowserTab`, `LocalLibraryTab`, `HistoryAndCratesTab`); derecha columna fija **Siguiente** (`QueueTab.tsx` dentro de `<aside aria-label="Siguiente">`, 300–380 px) con Automix/Radio, opciones plegables (`Opciones de cola`), motivo de cada sugerencia de la radio y 👍/👎/bloquear canal. `SearchBrowserTab` muestra tarjetas 16:9 (título 2 líneas, canal, vistas · fecha; A/B/CUE sobre la miniatura al hover/focus) o lista compacta (`tubedeck.searchViewMode` en localStorage) y cae a lista automáticamente si el área mide < 250 px.
+  - Divisor cabina/dock (`role="separator"`: arrastre, flechas, doble clic restablece) y botón **Ampliar navegador / Cabina completa**; alto en `tubedeck.dockHeight` (mín. 120 px). Sin alto explícito el dock tiene mín. 220 px y la cabina hace scroll interno si no cabe.
+  - `TasteSetupModal.tsx` ("Ajustar mi radio"): hasta 10 canciones de referencia (solo canciones de 1–10 min, sin mezclas), resumen de lo aprendido, desbloquear canales, reiniciar. Se abre en el primer arranque (setting `tasteSetupDismissed`) y desde Siguiente → Opciones.
+  - Señales implícitas en `App.tsx` (`reportImplicitFeedback`): sugerencia de radio audible 3–30 s y reemplazada = `skip`; ≥ 60 % escuchada = `complete`.
   - Controles `src/renderer/components/ui/`: `JogWheel.tsx`, `LedVuMeter.tsx`, `RgbWaveformStrip.tsx`, `RotaryKnob.tsx`.
 
 ## 4. Reglas de Diseño Visual (UI)
-- **Esquema Obsidian / Hardware:** Fondo base `#08090C`, paneles `#0F1117`, controles `#151821`/`#1C202B` con divisores hairline `border-white/[0.06]`, acentos Deck A `#0EA5E9`, Deck B `#F59E0B`, En vivo `#10B981` (sin violetas/morados).
-- **Cero emojis:** Prohibido usar emojis Unicode en la interfaz; utilizar únicamente íconos SVG de `lucide-react` y caracteres Unicode simples de dirección.
-- **Disposición actual (`v2.2.0`):** Barra superior con selector global de calidad, píldora **Siguiente**, estado P2, toggle **KEYS** y botones para **Marcos** (drawer), **Guía** (modal) y **Ajustes** (drawer). Fila central de 3 columnas simétricas (`DeckFxSamplerModule A` | `MixerCenter` | `DeckFxSamplerModule B`). El área inferior conserva 4 pestañas (`Buscador YouTube`, `Biblioteca Local`, `Cola`, `Historial & Crates`).
+- **Fuente de verdad:** `PRODUCT.md` (producto y usuarios), `DESIGN.md` (sistema visual) y `.impeccable/surfaces/src-renderer-app-tsx.md` (contrato de dirección). Leerlos antes de tocar la UI.
+- **Mundo visual "Muro de streaming de noche" (v2.2+):** fondo negro puro (v2.4), el color lo ponen las miniaturas y el video; lo enfocado se eleva y lo demás se atenúa. Tokens Tailwind v4 en `src/renderer/styles/index.css` (`@theme`): `ground #000000`, `surface #0b0b0d`, `raised #151518`, `raised-2/3`, `ink #f5f5f6`, `ink-2`, `ink-soft`, `muted`, `faint`, `deck-a #22e1f0` (cian), `deck-b #ff4fa8` (magenta), `live #f0fdff` (en vivo / foco), `danger`. Usar clases de token (`bg-surface`, `text-deck-a/80`), nunca hex sueltos en la UI.
+- **Tipografía:** Figtree Variable empaquetada localmente (`@fontsource-variable/figtree`, la CSP no permite fuentes remotas). `.font-mono-tabular` = Figtree con `tabular-nums` para relojes, BPM, horas y contadores.
+- **Firma:** el deck al aire (reproduciendo + fader + crossfader abiertos) se eleva con borde/sombra de su color y etiqueta `AL AIRE`; en el buscador la tarjeta en hover/foco se eleva con anillo cálido y sus hermanas bajan a 0.55 de opacidad; la cola muestra la hora estimada de inicio de cada canción y el estado por forma de línea (punteada pendiente, sólida precargada, tachado fallida); la barra superior muestra solo la próxima decisión con cuenta regresiva.
+- **Reglas:** color saturado solo en lo accionable o en vivo; Deck A/B son identidad funcional; sin emojis (solo `lucide-react`); los estados de pads usan línea interior (`inset box-shadow`), no `border-b-2`; el arte de salida de Pantalla 2 (`src/renderer/video/*`, marcos) conserva sus propios colores.
+- **Marca:** `components/ui/BrandMark.tsx` y `build/icon.svg` → `build/icon.png` (1024) y `build/icon.ico` (16–256). La versión de la barra superior sale de `__APP_VERSION__` (definida en `electron.vite.config.ts` desde `package.json`).
+- **Disposición:** barra superior (marca, versión, calidad, Siguiente + cuenta regresiva, Automix/Radio/P2/KEYS/Marcos/Guía/Ajustes); fila de decks + master de video; fila FX A | Mixer (mín. 560 px) | FX B; dock inferior con 3 pestañas + columna fija `Siguiente`, divisor arrastrable.
 
 ## 5. Comandos Clave (PowerShell en Windows)
 > **Nota:** En Windows PowerShell 5.1 no usar `&&`; separar comandos con `;` y comprobar `$LASTEXITCODE`.
@@ -72,7 +87,7 @@ npm run typecheck
 # Compilación de producción (out/main, out/preload, out/renderer)
 npm run build
 
-# Pruebas unitarias (26 archivos / 42 tests)
+# Pruebas unitarias (28 archivos / 60 tests)
 npx vitest run
 
 # Pruebas E2E contra app compilada (out/main/index.js)
@@ -81,7 +96,7 @@ npx playwright test tests/e2e/appFlow.spec.ts
 # Pruebas E2E contra ejecutable Windows empaquetado
 $env:TUBEDECK_E2E_EXE="d:\Trabajos\Pantallas\dist\win-unpacked\TubeDeck VDJ.exe"; npx playwright test tests/e2e/appFlow.spec.ts
 
-# Empaquetado NSIS sin firma de código local (genera dist/TubeDeck VDJ Setup 2.2.0.exe)
+# Empaquetado NSIS sin firma de código local (genera dist/TubeDeck VDJ Setup 3.0.0.exe)
 $env:CSC_IDENTITY_AUTO_DISCOVERY="false"; npx electron-builder --win nsis
 ```
 
