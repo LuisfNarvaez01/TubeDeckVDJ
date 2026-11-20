@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { DisplayInfo, UpdateStatus, YtDlpStatus } from '../../shared/types';
+import type {
+  DeckId,
+  DisplayInfo,
+  UpdateStatus,
+  VideoQualityPreference,
+  VideoQualityTier,
+  YtDlpStatus
+} from '../../shared/types';
 import type { AudioOutputDevice } from '../audio/AudioOutputRouter';
 import { createDefaultOverlayConfig, type OverlayConfig } from '../video/OverlayCompositor';
 import { createDefaultDeckFxState, type DeckFxState } from '../video/VideoFxPipeline';
@@ -15,6 +22,9 @@ interface SettingsStore {
   selectedDisplayId: number | null;
   outputOpen: boolean;
   outputResolution: '720p' | '1080p';
+  videoQuality: VideoQualityPreference;
+  activeDeckQuality: Record<DeckId, VideoQualityTier | null>;
+  qualityNotice: string | null;
   ytDlpStatus: YtDlpStatus;
   overlayConfig: OverlayConfig;
   videoMode: VideoCrossfaderMode;
@@ -32,6 +42,9 @@ interface SettingsStore {
   setSelectedDisplayId: (id: number | null) => void;
   setOutputOpen: (open: boolean) => void;
   setOutputResolution: (res: '720p' | '1080p') => void;
+  setVideoQuality: (q: VideoQualityPreference) => void;
+  setActiveDeckQuality: (deck: DeckId, tier: VideoQualityTier | null) => void;
+  setQualityNotice: (msg: string | null) => void;
   setYtDlpStatus: (status: YtDlpStatus) => void;
   setOverlayConfig: (cfg: OverlayConfig) => void;
   setVideoMode: (mode: VideoCrossfaderMode) => void;
@@ -52,6 +65,9 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   selectedDisplayId: null,
   outputOpen: false,
   outputResolution: '1080p',
+  videoQuality: 'auto',
+  activeDeckQuality: { A: null, B: null },
+  qualityNotice: null,
   ytDlpStatus: { available: false, binaryPath: null, downloading: false, error: null },
   overlayConfig: createDefaultOverlayConfig(),
   videoMode: 'linked',
@@ -69,6 +85,12 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setSelectedDisplayId: (selectedDisplayId) => set({ selectedDisplayId }),
   setOutputOpen: (outputOpen) => set({ outputOpen }),
   setOutputResolution: (outputResolution) => set({ outputResolution }),
+  setVideoQuality: (videoQuality) => set({ videoQuality }),
+  setActiveDeckQuality: (deck, tier) =>
+    set((state) => ({
+      activeDeckQuality: { ...state.activeDeckQuality, [deck]: tier }
+    })),
+  setQualityNotice: (qualityNotice) => set({ qualityNotice }),
   setYtDlpStatus: (ytDlpStatus) => set({ ytDlpStatus }),
   setOverlayConfig: (overlayConfig) => set({ overlayConfig }),
   setVideoMode: (videoMode) => set({ videoMode }),
@@ -78,4 +100,3 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
   setMasterFx: (masterFx) => set({ masterFx }),
   setUpdaterStatus: (updaterStatus) => set({ updaterStatus })
 }));
-

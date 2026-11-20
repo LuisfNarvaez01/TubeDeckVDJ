@@ -92,3 +92,4 @@ describe('BatchDownloadService', () => {
     expect(runner).toHaveBeenCalledTimes(1);
   });
 });
+

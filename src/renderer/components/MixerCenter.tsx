@@ -50,11 +50,11 @@ export function MixerCenter({
 
   const renderChannel = (deck: DeckId) => {
     const ch = mixer.channels[deck];
-    const accent = deck === 'A' ? '#00D4FF' : '#FF8A00';
+    const accent = deck === 'A' ? '#0EA5E9' : '#F59E0B';
     return (
       <div
         key={deck}
-        className="flex flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-2"
+        className="flex flex-col gap-2 rounded-lg border border-[#262F3F] bg-[#0B0D11] p-2"
       >
         <div className="flex items-center justify-between text-[11px] font-semibold">
           <span style={{ color: accent }}>CANAL {deck}</span>
@@ -135,14 +135,14 @@ export function MixerCenter({
 
   return (
     <section
-      className="flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-[#1F2735] bg-[#131822] p-2.5"
+      className="flex flex-wrap items-center justify-center gap-2.5 rounded-xl border border-[#262F3F] bg-[#141820] p-2.5"
       aria-label="Mixer Central"
     >
       <div className="flex items-center gap-2.5">
         {renderChannel('A')}
 
         {/* Master + Cue Center Strip */}
-        <div className="flex flex-col items-center gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] px-3 py-2">
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-[#262F3F] bg-[#0B0D11] px-3 py-2">
           <div className="flex items-center gap-3">
             <RotaryKnob
               label="MASTER"
@@ -192,8 +192,8 @@ export function MixerCenter({
               >
                 <ArrowLeftRight className="h-3.5 w-3.5" />
                 {mixer.autoFadeActive
-                  ? `FADE ➔ ${mixer.autoFadeTarget ?? nextAutoTarget}`
-                  : `AUTO MIX ➔ ${nextAutoTarget}`}
+                  ? `FADE → ${mixer.autoFadeTarget ?? nextAutoTarget}`
+                  : `AUTO MIX → ${nextAutoTarget}`}
               </button>
             ) : null}
 

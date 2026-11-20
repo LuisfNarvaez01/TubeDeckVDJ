@@ -1,6 +1,24 @@
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { Disc3, Radio, Sparkles, Monitor, CloudDownload } from 'lucide-react';
-import type { Crate, DeckId, MidiMapping, YouTubeTrack } from '../shared/types';
+import {
+  AlertTriangle,
+  ArrowRight,
+  BookOpen,
+  CloudDownload,
+  Disc3,
+  Frame,
+  Monitor,
+  Radio,
+  Sliders,
+  Sparkles,
+  X
+} from 'lucide-react';
+import type {
+  Crate,
+  DeckId,
+  MidiMapping,
+  VideoQualityPreference,
+  YouTubeTrack
+} from '../shared/types';
 import {
   AudioDspEngine,
   type AudioFxId,
@@ -12,6 +30,8 @@ import { AudioOutputRouter } from './audio/AudioOutputRouter';
 import { DualDeckMediaSync } from './audio/DualDeckMediaSync';
 import { DeckPanel } from './components/DeckPanel';
 import { HistoryAndCratesTab } from './components/HistoryAndCratesTab';
+import { InteractiveGuideModal } from './components/InteractiveGuideModal';
+import { LocalLibraryTab } from './components/LocalLibraryTab';
 import { MixerCenter } from './components/MixerCenter';
 import { OverlayControls } from './components/OverlayControls';
 import { QueueTab } from './components/QueueTab';
@@ -37,7 +57,7 @@ import {
   type VideoTransitionId
 } from './video/WebGLVideoCompositor';
 
-type BrowserTab = 'search' | 'queue' | 'history' | 'overlays' | 'settings';
+type BrowserTab = 'search' | 'local' | 'queue' | 'history';
 
 interface CrossfadeAnimationState {
   active: boolean;
@@ -53,6 +73,10 @@ interface CrossfadeAnimationState {
 
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<BrowserTab>('search');
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [framesDrawerOpen, setFramesDrawerOpen] = useState(false);
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [crates, setCrates] = useState<Crate[]>([]);
   const [midiDevices, setMidiDevices] = useState<string[]>([]);
@@ -238,12 +262,13 @@ export function App(): ReactElement {
     [setDeckPatch]
   );
 
-  // Initialize displays, yt-dlp, updater, mix session, crates, MIDI, WebGL compositor & WebRTC bridge
+  // Initialize displays, yt-dlp, updater, local library, taste profile, batch download progress, MIDI, WebGL & WebRTC
   useEffect(() => {
     const api = window.tubedeckAPI;
     let unsubDisplays = () => {};
     let unsubClosed = () => {};
     let unsubUpdater = () => {};
+    let unsubBatch = () => {};
     let rtcHandle: ReturnType<typeof startOutputRtcSender> | null = null;
 
     if (api) {
@@ -275,6 +300,17 @@ export function App(): ReactElement {
       void api.getUpdateStatus().then((res) => {
         if (res.success && res.data) useSettingsStore.getState().setUpdaterStatus(res.data);
       });
+      void api.listLocalLibrary?.().then((res) => {
+        if (res.success) {
+          useLibraryStore.getState().setLocalLibrary(res.data.folders, res.data.tracks);
+        }
+      });
+      void api.getHistoryTasteProfile?.().then((res) => {
+        if (res.success) {
+          useLibraryStore.getState().setTasteProfile(res.data);
+        }
+      });
+
       unsubDisplays = api.onDisplaysChanged((list) => {
         useSettingsStore.getState().setDisplays(list);
       });
@@ -284,6 +320,17 @@ export function App(): ReactElement {
       unsubUpdater = api.onUpdateStatus((status) => {
         useSettingsStore.getState().setUpdaterStatus(status);
       });
+      unsubBatch =
+        api.onBatchDownloadProgress?.((prog) => {
+          useLibraryStore.getState().setBatchDownload(prog);
+          if (prog.status === 'done') {
+            void api.listLocalLibrary?.().then((res) => {
+              if (res.success) {
+                useLibraryStore.getState().setLocalLibrary(res.data.folders, res.data.tracks);
+              }
+            });
+          }
+        }) ?? (() => {});
     }
 
     if (masterCanvasRef.current && !compositorRef.current) {
@@ -305,6 +352,7 @@ export function App(): ReactElement {
       unsubDisplays();
       unsubClosed();
       unsubUpdater();
+      unsubBatch();
       rtcHandle?.dispose();
       compositorRef.current?.dispose();
       compositorRef.current = null;
@@ -335,8 +383,13 @@ export function App(): ReactElement {
       const { dsp, decks, cueCtrls } = await ensureAudioInitialized();
       dsp.setDeckAutoGain(deck, 1);
 
+      const resolvePromise =
+        track.source === 'local' && track.localFilePath && window.tubedeckAPI.resolveLocalFile
+          ? window.tubedeckAPI.resolveLocalFile(track.localFilePath)
+          : window.tubedeckAPI.resolveStream(track.videoId);
+
       const [streamRes, metaRes] = await Promise.all([
-        window.tubedeckAPI.resolveStream(track.videoId),
+        resolvePromise,
         window.tubedeckAPI.getTrackMeta(track.videoId)
       ]);
 
@@ -345,7 +398,20 @@ export function App(): ReactElement {
         throw new Error(streamRes.error);
       }
 
-      await decks[deck].load(streamRes.data);
+      const preferredQuality = useSettingsStore.getState().videoQuality;
+      await decks[deck].load({
+        ...streamRes.data,
+        preferredQuality,
+        mediaKind: track.mediaKind ?? streamRes.data.mediaKind ?? 'video',
+        onQualityDowngraded: (tier, reason) => {
+          const st = useSettingsStore.getState();
+          st.setActiveDeckQuality(deck, tier);
+          st.setQualityNotice(`Deck ${deck}: ${reason}`);
+        }
+      });
+
+      useSettingsStore.getState().setActiveDeckQuality(deck, decks[deck].getActiveQuality());
+
       const savedMeta = metaRes.success ? metaRes.data : null;
       const cues = savedMeta?.hotCues ?? [];
       const loop = savedMeta?.loop ?? null;
@@ -368,7 +434,7 @@ export function App(): ReactElement {
     [ensureAudioInitialized, setDeckPatch]
   );
 
-  // Main 60fps engine: unified Audio+Video fade, live RGB waveforms, Auto-Gain, Automix + Auto-Radio, WebGL master
+  // Main 60fps engine: Audio+Video fade, anti-freeze watchdog, waveforms, Automix, WebGL master + Frames
   useEffect(() => {
     let rafId = 0;
     let lastUiUpdate = 0;
@@ -384,7 +450,6 @@ export function App(): ReactElement {
       const stMixer = useMixerStore.getState();
       const stDecks = useDeckStore.getState().decks;
 
-      // 1. Unified smooth Audio + Video crossfade animation
       let effectiveVideoMix =
         stSettings.videoMode === 'linked' ? stMixer.crossfader : stSettings.videoMix;
 
@@ -435,7 +500,6 @@ export function App(): ReactElement {
         }
       }
 
-      // 2. Track OSD trigger on dominant deck switch
       const nextDom: DeckId = effectiveVideoMix < 0.5 ? 'A' : 'B';
       if (nextDom !== activeDominantDeckRef.current) {
         activeDominantDeckRef.current = nextDom;
@@ -450,11 +514,11 @@ export function App(): ReactElement {
           const s = syncs[id];
           if (!s.isPaused()) {
             s.syncDrift(now);
+            s.checkVideoHealth(now);
             void cueCtrls?.[id].checkLoopBoundary(s.getCurrentTime());
           }
         });
 
-        // 3. Live RGB waveform buffer & Auto-Gain RMS normalizer (~22Hz)
         if (dsp && now - lastWaveSample >= 45) {
           lastWaveSample = now;
           (['A', 'B'] as DeckId[]).forEach((id) => {
@@ -482,7 +546,6 @@ export function App(): ReactElement {
           });
         }
 
-        // 4. Energy history sample at 25Hz for automatic BPM detection
         if (dsp && now - lastEnergySample >= 40) {
           lastEnergySample = now;
           (['A', 'B'] as DeckId[]).forEach((id) => {
@@ -504,7 +567,6 @@ export function App(): ReactElement {
           });
         }
 
-        // 5. UI playhead & session logging at 10Hz
         if (now - lastUiUpdate >= 100) {
           const dtMs = lastUiUpdate === 0 ? 100 : now - lastUiUpdate;
           lastUiUpdate = now;
@@ -533,18 +595,26 @@ export function App(): ReactElement {
                 activeSessionIdRef.current
               ) {
                 lastLoggedTrackRef.current[id] = playKey;
-                void window.tubedeckAPI?.logTrackPlay({
-                  sessionId: activeSessionIdRef.current,
-                  deck: id,
-                  videoId: prev.track.videoId,
-                  title: prev.track.title,
-                  channel: prev.track.channel,
-                  durationSec: prev.track.durationSec,
-                  playedAt: Date.now(),
-                  endedAt: null,
-                  bpm: prev.bpm,
-                  transitionUsed: stSettings.transition
-                });
+                void window.tubedeckAPI
+                  ?.logTrackPlay({
+                    sessionId: activeSessionIdRef.current,
+                    deck: id,
+                    videoId: prev.track.videoId,
+                    title: prev.track.title,
+                    channel: prev.track.channel,
+                    durationSec: prev.track.durationSec,
+                    playedAt: Date.now(),
+                    endedAt: null,
+                    bpm: prev.bpm,
+                    transitionUsed: stSettings.transition
+                  })
+                  .then(() => {
+                    void window.tubedeckAPI?.getHistoryTasteProfile?.().then((res) => {
+                      if (res.success) {
+                        useLibraryStore.getState().setTasteProfile(res.data);
+                      }
+                    });
+                  });
               }
             } else if (!playing) {
               onAirMsRef.current[id] = 0;
@@ -552,7 +622,6 @@ export function App(): ReactElement {
           });
         }
 
-        // 6. Automix + YouTube Auto-Radio tick every 250ms
         if (now - lastAutomixTick >= 250) {
           lastAutomixTick = now;
           const isTransitioning = Boolean(crossfadeAnimRef.current?.active);
@@ -577,6 +646,7 @@ export function App(): ReactElement {
                   activeDeck,
                   activeVideoId: deckState.track.videoId,
                   otherDeckVideoId: otherState.track?.videoId ?? null,
+                  elapsedSec: deckState.currentTimeSec,
                   remainingSec,
                   isActivePlaying: deckState.playing,
                   isActiveEnded: isEnded,
@@ -585,6 +655,7 @@ export function App(): ReactElement {
                 {
                   enabled: true,
                   preloadLeadSec: 30,
+                  preloadMode: lib.preloadMode,
                   crossfadeDurationSec: lib.automixFadeDurationSec,
                   outroTriggerSec: Math.min(lib.automixFadeDurationSec, 12),
                   autoRadioEnabled: lib.autoRadioEnabled,
@@ -606,7 +677,9 @@ export function App(): ReactElement {
                     useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue());
                   },
                   fetchSuggestedTracks: async (seedVideoId, excludeIds) => {
-                    const res = await window.tubedeckAPI?.getRelatedTracks(seedVideoId, excludeIds);
+                    const res = await (window.tubedeckAPI?.getRecommendedTracks
+                      ? window.tubedeckAPI.getRecommendedTracks(seedVideoId, excludeIds)
+                      : window.tubedeckAPI?.getRelatedTracks(seedVideoId, excludeIds));
                     return res?.success ? res.data : [];
                   },
                   onRadioQueued: (track) => {
@@ -624,7 +697,6 @@ export function App(): ReactElement {
         }
       }
 
-      // 7. WebGL2 Master Video Compositor at 60fps
       if (compositorRef.current) {
         const ovCanvas = overlayCompRef.current.getCanvas();
         const ovCtx = ovCanvas.getContext('2d');
@@ -647,6 +719,7 @@ export function App(): ReactElement {
           videoA: syncs?.A.getVideoElement() ?? null,
           videoB: syncs?.B.getVideoElement() ?? null,
           overlayCanvas: ovCanvas,
+          videoRect: overlayCompRef.current.getVideoInsetRect(),
           timeSec: now / 1000,
           audioBands: bands,
           fxUniforms
@@ -675,6 +748,13 @@ export function App(): ReactElement {
     } catch {
       // error already stored in deck state
     }
+  };
+
+  const handlePlayNextInQueue = (track: YouTubeTrack) => {
+    const item = queueEngineRef.current.enqueue(track);
+    queueEngineRef.current.moveToNext(item.queueId);
+    libraryStore.setQueue(queueEngineRef.current.getQueue());
+    libraryStore.setAutomixStatusNote(`"${track.title}" movido a Siguiente.`);
   };
 
   const handleTogglePlay = useCallback(
@@ -814,7 +894,6 @@ export function App(): ReactElement {
     [cancelAutoCrossfade, handleTogglePlay, handleTriggerAutoVideo]
   );
 
-  // Global keyboard shortcuts & Web MIDI init
   useEffect(() => {
     const dispatchHotkey = (action: HotkeyAction) => {
       if (action === 'deckA.playPause') void handleTogglePlay('A');
@@ -849,6 +928,12 @@ export function App(): ReactElement {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setGuideOpen(false);
+        setFramesDrawerOpen(false);
+        setSettingsDrawerOpen(false);
+        return;
+      }
       const action = hotkeyManagerRef.current.handleKeyEvent(e);
       if (action) {
         e.preventDefault();
@@ -902,6 +987,16 @@ export function App(): ReactElement {
       webcamStreamRef.current.getTracks().forEach((t) => t.stop());
       webcamStreamRef.current = null;
       webcamVideoRef.current = null;
+    }
+  };
+
+  const handleVideoQualityChange = (q: VideoQualityPreference) => {
+    settings.setVideoQuality(q);
+    if (decksSyncRef.current) {
+      (['A', 'B'] as DeckId[]).forEach((d) => {
+        const tier = decksSyncRef.current![d].setPreferredQuality(q);
+        settings.setActiveDeckQuality(d, tier);
+      });
     }
   };
 
@@ -1020,50 +1115,123 @@ export function App(): ReactElement {
   );
 
   const upd = settings.updaterStatus;
+  const nextQueuedItem = libraryStore.queue[0] ?? null;
+  const frameEnabled = Boolean(
+    settings.overlayConfig.frame?.enabled && settings.overlayConfig.frame.preset !== 'none'
+  );
 
   return (
-    <div className="flex h-screen w-screen flex-col gap-2 bg-[#07090E] p-2 text-[#F8FAFC]">
+    <div className="flex h-screen w-screen flex-col gap-2 bg-[#0B0D11] p-2 text-[#F1F5F9]">
       <audio ref={masterSinkAudioRef} className="hidden" />
       <audio ref={cueSinkAudioRef} className="hidden" />
 
-      {/* Top Club Pro Status Bar */}
-      <header className="flex h-8 shrink-0 items-center justify-between rounded-lg border border-[#1F2937] bg-[#0F141D] px-3 text-xs">
-        <div className="flex items-center gap-2.5">
-          <Disc3 className="h-4 w-4 text-[#00D4FF]" />
-          <span className="font-bold tracking-wide text-[#F8FAFC]">TubeDeck VDJ</span>
-          <span className="rounded border border-[#1F2937] bg-[#07090E] px-1.5 py-0.2 font-mono-tabular text-[10px] text-[#94A3B8]">
-            v{upd?.currentVersion ?? '2.0.0'}
+      {/* Top Studio Header Bar (60-30-10) */}
+      <header className="flex h-10 shrink-0 items-center justify-between gap-2 rounded-lg border border-[#262F3F] bg-[#141820] px-3 text-xs">
+        <div className="flex items-center gap-2 shrink-0">
+          <Disc3 className="h-4 w-4 text-[#0EA5E9]" />
+          <span className="font-bold tracking-wide text-[#F1F5F9]">TubeDeck VDJ</span>
+          <span className="rounded border border-[#262F3F] bg-[#0B0D11] px-1.5 py-0.5 font-mono-tabular text-[10px] text-[#94A3B8]">
+            v{upd?.currentVersion ?? '2.1.0'}
           </span>
+
+          <select
+            aria-label="Calidad Video Global"
+            value={settings.videoQuality}
+            onChange={(e) => handleVideoQualityChange(e.target.value as VideoQualityPreference)}
+            title="Calidad de video YouTube global (Auto evita congelamientos)"
+            className="rounded border border-[#262F3F] bg-[#0B0D11] px-2 py-1 text-[10px] text-[#F1F5F9] focus:border-[#0EA5E9] focus:outline-none cursor-pointer"
+          >
+            <option value="auto">Video Auto (Fluido 720p)</option>
+            <option value="720p">720p HD</option>
+            <option value="480p">480p Ligero</option>
+            <option value="360p">360p Internet Lento</option>
+            <option value="1080p">1080p Máxima</option>
+          </select>
         </div>
 
-        <div className="flex items-center gap-2 text-[11px]">
+        {/* Center: Always-visible YouTube-style Up Next banner + optional quality notice */}
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab('queue')}
+            title="Ir a Cola de Reproducción"
+            className="flex min-w-0 max-w-md items-center gap-1.5 rounded-md border border-[#262F3F] bg-[#0B0D11] px-2.5 py-1 text-[11px] hover:border-[#0EA5E9]/50 cursor-pointer"
+          >
+            <ArrowRight className="h-3 w-3 shrink-0 text-[#10B981]" />
+            <span className="shrink-0 font-semibold text-[#64748B]">Siguiente:</span>
+            {nextQueuedItem ? (
+              <>
+                <span className="truncate font-semibold text-[#F1F5F9]">
+                  {nextQueuedItem.track.title}
+                </span>
+                <span
+                  className={`shrink-0 rounded px-1 text-[9px] font-bold ${
+                    nextQueuedItem.track.source === 'local'
+                      ? 'bg-[#F59E0B]/15 text-[#F59E0B]'
+                      : nextQueuedItem.source === 'youtube-radio'
+                        ? 'bg-[#0EA5E9]/15 text-[#0EA5E9]'
+                        : 'bg-[#1B212D] text-[#94A3B8]'
+                  }`}
+                >
+                  {nextQueuedItem.track.source === 'local'
+                    ? 'LOCAL'
+                    : nextQueuedItem.source === 'youtube-radio'
+                      ? 'RADIO'
+                      : 'YT'}
+                </span>
+              </>
+            ) : (
+              <span className="truncate text-[#64748B]">
+                {libraryStore.autoRadioEnabled ? 'Radio YT seleccionará automáticamente' : 'Cola vacía'}
+              </span>
+            )}
+          </button>
+
+          {settings.qualityNotice ? (
+            <div className="flex items-center gap-1 rounded border border-[#F59E0B]/50 bg-[#F59E0B]/10 px-2 py-0.5 text-[10px] text-[#F59E0B]">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              <span className="max-w-44 truncate">{settings.qualityNotice}</span>
+              <button
+                type="button"
+                aria-label="Cerrar aviso de calidad"
+                onClick={() => settings.setQualityNotice(null)}
+                className="hover:text-[#F1F5F9] cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Right: Status badges & Top Navigation Buttons */}
+        <div className="flex items-center gap-1.5 shrink-0 text-[11px]">
           <span
-            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
+            className={`hidden xl:inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
               libraryStore.automixEnabled
-                ? 'bg-[#10B981]/20 text-[#6EE7B7]'
-                : 'bg-[#07090E] text-[#64748B]'
+                ? 'bg-[#10B981]/15 text-[#10B981]'
+                : 'bg-[#0B0D11] text-[#64748B]'
             }`}
           >
             <Sparkles className="h-3 w-3" />
-            Automix {libraryStore.automixEnabled ? 'ON' : 'OFF'}
+            Automix
           </span>
 
           <span
-            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
+            className={`hidden xl:inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
               libraryStore.autoRadioEnabled
-                ? 'bg-[#8B5CF6]/20 text-[#DDD6FE]'
-                : 'bg-[#07090E] text-[#64748B]'
+                ? 'bg-[#0EA5E9]/15 text-[#0EA5E9]'
+                : 'bg-[#0B0D11] text-[#64748B]'
             }`}
           >
             <Radio className="h-3 w-3" />
-            Radio YT {libraryStore.autoRadioEnabled ? 'ON' : 'OFF'}
+            Radio
           </span>
 
           <span
             className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-semibold ${
               settings.outputOpen
-                ? 'bg-[#EF4444]/20 text-[#FCA5A5]'
-                : 'bg-[#07090E] text-[#64748B]'
+                ? 'bg-[#EF4444]/15 text-[#EF4444]'
+                : 'bg-[#0B0D11] text-[#64748B]'
             }`}
           >
             <Monitor className="h-3 w-3" />
@@ -1073,20 +1241,64 @@ export function App(): ReactElement {
           {upd?.state === 'available' || upd?.state === 'downloaded' ? (
             <button
               type="button"
-              onClick={() => setActiveTab('settings')}
-              className="inline-flex items-center gap-1 rounded border border-[#10B981]/60 bg-[#10B981]/20 px-2 py-0.5 font-semibold text-[#6EE7B7] cursor-pointer"
+              onClick={() => {
+                setFramesDrawerOpen(false);
+                setSettingsDrawerOpen(true);
+              }}
+              className="inline-flex items-center gap-1 rounded border border-[#10B981]/60 bg-[#10B981]/15 px-2 py-1 font-semibold text-[#10B981] cursor-pointer"
             >
               <CloudDownload className="h-3 w-3" />
               {upd.state === 'downloaded'
                 ? `Instalar v${upd.availableVersion}`
-                : `Nueva v${upd.availableVersion}`}
+                : `v${upd.availableVersion}`}
             </button>
           ) : null}
+
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsDrawerOpen(false);
+              setFramesDrawerOpen((v) => !v);
+            }}
+            className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 font-semibold cursor-pointer ${
+              framesDrawerOpen || frameEnabled
+                ? 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9]'
+                : 'border-[#262F3F] bg-[#0B0D11] text-[#94A3B8] hover:text-[#F1F5F9]'
+            }`}
+          >
+            <Frame className="h-3.5 w-3.5" />
+            Marcos
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setGuideOpen(true)}
+            className="inline-flex items-center gap-1 rounded border border-[#262F3F] bg-[#0B0D11] px-2.5 py-1 font-semibold text-[#94A3B8] hover:border-[#0EA5E9]/50 hover:text-[#F1F5F9] cursor-pointer"
+          >
+            <BookOpen className="h-3.5 w-3.5 text-[#0EA5E9]" />
+            Guía
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setFramesDrawerOpen(false);
+              setSettingsDrawerOpen((v) => !v);
+            }}
+            className={`inline-flex items-center gap-1 rounded border px-2.5 py-1 font-semibold cursor-pointer ${
+              settingsDrawerOpen
+                ? 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9]'
+                : 'border-[#262F3F] bg-[#0B0D11] text-[#94A3B8] hover:text-[#F1F5F9]'
+            }`}
+          >
+            <Sliders className="h-3.5 w-3.5" />
+            Ajustes
+          </button>
         </div>
       </header>
 
-      {/* Top Row: Deck A | Video Master & Previews | Deck B */}
-      <div className="grid grid-cols-[1fr_410px_1fr] gap-2">
+      {/* Top Row: Deck A | Spacious Video Master & Previews | Deck B */}
+      <div className="grid grid-cols-[1fr_470px_1fr] gap-2">
         {renderDeck('A')}
 
         <VideoPreviewBar
@@ -1100,6 +1312,9 @@ export function App(): ReactElement {
           displays={settings.displays}
           selectedDisplayId={settings.selectedDisplayId}
           outputOpen={settings.outputOpen}
+          frameEnabled={frameEnabled}
+          activeQualityA={settings.activeDeckQuality.A}
+          activeQualityB={settings.activeDeckQuality.B}
           onVideoMixChange={(m) => settings.setVideoMix(m)}
           onVideoModeChange={(mode: VideoCrossfaderMode) => settings.setVideoMode(mode)}
           onAutoDurationChange={(sec) => settings.setAutoDurationSec(sec)}
@@ -1132,6 +1347,10 @@ export function App(): ReactElement {
                 settings.setOutputOpen(true);
               }
             }
+          }}
+          onOpenFramesDrawer={() => {
+            setSettingsDrawerOpen(false);
+            setFramesDrawerOpen(true);
           }}
         />
 
@@ -1213,16 +1432,15 @@ export function App(): ReactElement {
         }
       />
 
-      {/* Bottom Row: Tabs */}
-      <section className="flex flex-1 min-h-0 flex-col gap-2 rounded-xl border border-[#1F2937] bg-[#0F141D] p-2.5">
+      {/* Bottom Row: Clean 4-Tab Library & Queue Workspace */}
+      <section className="flex flex-1 min-h-0 flex-col gap-2 rounded-xl border border-[#262F3F] bg-[#141820] p-2.5">
         <nav className="flex items-center gap-1.5 text-xs">
           {(
             [
               ['search', 'Buscador YouTube'],
+              ['local', `Biblioteca Local (${libraryStore.localTracks.length})`],
               ['queue', `Cola (${libraryStore.queue.length})`],
-              ['history', 'Historial & Crates'],
-              ['overlays', 'Overlays & Visuales'],
-              ['settings', 'Ajustes (Audio / Pantalla / MIDI)']
+              ['history', 'Historial & Crates']
             ] as const
           ).map(([id, label]) => (
             <button
@@ -1231,8 +1449,8 @@ export function App(): ReactElement {
               onClick={() => setActiveTab(id)}
               className={`rounded-lg border px-3 py-1 font-semibold cursor-pointer ${
                 activeTab === id
-                  ? 'border-[#00D4FF] bg-[#00D4FF]/15 text-[#00D4FF]'
-                  : 'border-[#1F2937] bg-[#07090E] text-[#94A3B8] hover:text-[#F8FAFC]'
+                  ? 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9]'
+                  : 'border-[#262F3F] bg-[#0B0D11] text-[#94A3B8] hover:text-[#F1F5F9]'
               }`}
             >
               {label}
@@ -1248,12 +1466,42 @@ export function App(): ReactElement {
                 queueEngineRef.current.enqueueMany(tracks, 'user');
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
+              onPlayNextInQueue={handlePlayNextInQueue}
               crates={crates}
               onAddToCrate={async (crateId, track) => {
                 await window.tubedeckAPI?.addTrackToCrate(crateId, track);
                 const res = await window.tubedeckAPI?.listCrates();
                 if (res?.success) setCrates(res.data);
               }}
+            />
+          ) : null}
+
+          {activeTab === 'local' ? (
+            <LocalLibraryTab
+              onPickFiles={async () => {
+                const res = await window.tubedeckAPI?.pickLocalFiles();
+                if (res?.success) {
+                  libraryStore.setLocalLibrary(res.data.folders, res.data.tracks);
+                }
+              }}
+              onPickFolder={async () => {
+                const res = await window.tubedeckAPI?.pickLocalFolder();
+                if (res?.success) {
+                  libraryStore.setLocalLibrary(res.data.folders, res.data.tracks);
+                }
+              }}
+              onRemoveFolder={async (folderPath) => {
+                const res = await window.tubedeckAPI?.removeLocalFolder(folderPath);
+                if (res?.success) {
+                  libraryStore.setLocalLibrary(res.data.folders, res.data.tracks);
+                }
+              }}
+              onLoadToDeck={handleLoadToDeck}
+              onAddToQueue={(tracks) => {
+                queueEngineRef.current.enqueueMany(tracks, 'local');
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+              }}
+              onPlayNextInQueue={handlePlayNextInQueue}
             />
           ) : null}
 
@@ -1269,9 +1517,23 @@ export function App(): ReactElement {
                 queueEngineRef.current.reorder(from, to);
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
+              onMoveToNext={(queueId) => {
+                queueEngineRef.current.moveToNext(queueId);
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+              }}
               onRemoveQueueItem={(queueId) => {
                 queueEngineRef.current.remove(queueId);
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
+              }}
+              onClearQueue={() => {
+                queueEngineRef.current.clear();
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+                libraryStore.setAutomixStatusNote('Cola limpiada por completo.');
+              }}
+              onInterleaveQueue={() => {
+                queueEngineRef.current.interleaveBySource();
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+                libraryStore.setAutomixStatusNote('Cola intercalada entre Local y YouTube.');
               }}
               onToggleAutomix={(enabled) => {
                 libraryStore.setAutomixEnabled(enabled);
@@ -1282,6 +1544,7 @@ export function App(): ReactElement {
               }}
               onFadeTypeChange={(ft) => libraryStore.setAutomixFadeType(ft)}
               onFadeDurationChange={(sec) => libraryStore.setAutomixFadeDurationSec(sec)}
+              onPreloadModeChange={(mode) => libraryStore.setPreloadMode(mode)}
               onFetchSuggestionsNow={async () => {
                 const activeDeck: DeckId = useMixerStore.getState().crossfader <= 0.5 ? 'A' : 'B';
                 const seedTrack =
@@ -1289,7 +1552,7 @@ export function App(): ReactElement {
                   useDeckStore.getState().decks[activeDeck === 'A' ? 'B' : 'A'].track;
                 if (!seedTrack || !window.tubedeckAPI) {
                   libraryStore.setAutomixStatusNote(
-                    'Carga primero una pista en Deck A o B para pedir recomendaciones similares.'
+                    'Carga primero una pista en Deck A o B para pedir recomendaciones.'
                   );
                   return;
                 }
@@ -1297,15 +1560,14 @@ export function App(): ReactElement {
                   seedTrack.videoId,
                   ...queueEngineRef.current.getQueue().map((q) => q.track.videoId)
                 ];
-                const res = await window.tubedeckAPI.getRelatedTracks(
-                  seedTrack.videoId,
-                  existingIds
-                );
+                const res = await (window.tubedeckAPI.getRecommendedTracks
+                  ? window.tubedeckAPI.getRecommendedTracks(seedTrack.videoId, existingIds)
+                  : window.tubedeckAPI.getRelatedTracks(seedTrack.videoId, existingIds));
                 if (res.success && res.data.length > 0) {
                   queueEngineRef.current.enqueueMany(res.data.slice(0, 3), 'youtube-radio');
                   libraryStore.setQueue(queueEngineRef.current.getQueue());
                   libraryStore.setAutomixStatusNote(
-                    `Radio YT agregó ${Math.min(3, res.data.length)} canciones sugeridas.`
+                    `Radio YT agregó ${Math.min(3, res.data.length)} canciones según tu historial.`
                   );
                 }
               }}
@@ -1339,109 +1601,184 @@ export function App(): ReactElement {
                 const res = await window.tubedeckAPI?.listCrates();
                 if (res?.success) setCrates(res.data);
               }}
-            />
-          ) : null}
-
-          {activeTab === 'overlays' ? (
-            <OverlayControls
-              config={settings.overlayConfig}
-              onChange={handleOverlayConfigChange}
-            />
-          ) : null}
-
-          {activeTab === 'settings' ? (
-            <SettingsTab
-              onRefreshAudioDevices={async () => {
-                await ensureAudioInitialized();
-                if (routerRef.current) {
-                  settings.setAudioOutputs(await routerRef.current.enumerateOutputs());
-                }
-              }}
-              onSelectMasterDevice={async (id) => {
-                await ensureAudioInitialized();
-                await routerRef.current?.setMasterDevice(id);
-                settings.setMasterDeviceId(id);
-              }}
-              onSelectCueDevice={async (id) => {
-                await ensureAudioInitialized();
-                await routerRef.current?.setCueDevice(id);
-                settings.setCueDeviceId(id);
-              }}
-              onToggleMonoSplit={async (enabled) => {
-                await ensureAudioInitialized();
-                routerRef.current?.setMonoSplit(enabled);
-                settings.setMonoSplit(enabled);
-              }}
-              onEnsureYtDlp={async () => {
-                if (!window.tubedeckAPI) return;
-                settings.setYtDlpStatus({ ...settings.ytDlpStatus, downloading: true });
-                const res = await window.tubedeckAPI.ensureYtDlp();
-                if (res.success) {
-                  settings.setYtDlpStatus(res.data);
-                } else {
-                  settings.setYtDlpStatus({
-                    available: false,
-                    binaryPath: null,
-                    downloading: false,
-                    error: res.error
-                  });
-                }
-              }}
-              onResolutionChange={(res) => {
-                settings.setOutputResolution(res);
-                if (res === '1080p') compositorRef.current?.setResolution(1920, 1080);
-                else compositorRef.current?.setResolution(1280, 720);
-              }}
-              midiDevices={midiDevices}
-              midiMappings={midiMappings}
-              learningControlKey={learningControlKey}
-              onInitMidi={async () => {
-                const devs = await midiEngineRef.current.init(handleMidiControl);
-                setMidiDevices(devs);
-              }}
-              onStartMidiLearn={(controlKey, mode: MidiLearnMode) => {
-                setLearningControlKey(controlKey);
-                midiEngineRef.current.startLearn(controlKey, mode, (learned) => {
-                  setLearningControlKey(null);
-                  void window.tubedeckAPI?.saveMidiMapping(learned).then((res) => {
-                    if (res.success) {
-                      void window.tubedeckAPI?.listMidiMappings().then((listRes) => {
-                        if (listRes.success) {
-                          setMidiMappings(listRes.data);
-                          midiEngineRef.current.loadMappings(listRes.data);
-                        }
-                      });
-                    }
-                  });
-                });
-              }}
-              onDeleteMidiMapping={async (id) => {
-                await window.tubedeckAPI?.deleteMidiMapping(id);
-                const listRes = await window.tubedeckAPI?.listMidiMappings();
-                if (listRes?.success) {
-                  setMidiMappings(listRes.data);
-                  midiEngineRef.current.loadMappings(listRes.data);
-                }
-              }}
-              onCheckForUpdates={async () => {
-                const res = await window.tubedeckAPI?.checkForUpdates();
+              onStartBatchDownload={async (sessionId, format) => {
+                const res = await window.tubedeckAPI?.startBatchDownload(sessionId, format);
                 if (res?.success && res.data) {
-                  settings.setUpdaterStatus(res.data);
+                  libraryStore.setBatchDownload(res.data);
                 }
               }}
-              onDownloadUpdate={async () => {
-                const res = await window.tubedeckAPI?.downloadUpdate();
-                if (res?.success && res.data) {
-                  settings.setUpdaterStatus(res.data);
-                }
-              }}
-              onInstallUpdate={async () => {
-                await window.tubedeckAPI?.installUpdate();
+              onCancelBatchDownload={async () => {
+                await window.tubedeckAPI?.cancelBatchDownload();
               }}
             />
           ) : null}
         </div>
       </section>
+
+      {/* Slide-over Drawer: Marcos y Visuales */}
+      {framesDrawerOpen ? (
+        <div className="fixed inset-0 z-40 flex justify-end bg-black/60 backdrop-blur-[1px]">
+          <div
+            className="flex-1"
+            onClick={() => setFramesDrawerOpen(false)}
+            aria-hidden="true"
+          />
+          <aside
+            role="dialog"
+            aria-label="Marcos y Visuales"
+            className="animate-drawer-in flex h-full w-[440px] max-w-[95vw] flex-col border-l border-[#262F3F] bg-[#141820] shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-[#262F3F] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Frame className="h-4 w-4 text-[#0EA5E9]" />
+                <h2 className="text-sm font-bold text-[#F1F5F9]">Marcos y Overlays en Vivo</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar Marcos"
+                onClick={() => setFramesDrawerOpen(false)}
+                className="rounded-lg border border-[#262F3F] bg-[#0B0D11] p-1 text-[#94A3B8] hover:text-[#F1F5F9] cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-3">
+              <OverlayControls
+                config={settings.overlayConfig}
+                onChange={handleOverlayConfigChange}
+              />
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      {/* Slide-over Drawer: Ajustes del Sistema */}
+      {settingsDrawerOpen ? (
+        <div className="fixed inset-0 z-40 flex justify-end bg-black/60 backdrop-blur-[1px]">
+          <div
+            className="flex-1"
+            onClick={() => setSettingsDrawerOpen(false)}
+            aria-hidden="true"
+          />
+          <aside
+            role="dialog"
+            aria-label="Ajustes del Sistema"
+            className="animate-drawer-in flex h-full w-[540px] max-w-[95vw] flex-col border-l border-[#262F3F] bg-[#141820] shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-[#262F3F] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Sliders className="h-4 w-4 text-[#0EA5E9]" />
+                <h2 className="text-sm font-bold text-[#F1F5F9]">
+                  Ajustes (Audio / Pantalla / MIDI / Actualizaciones)
+                </h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar Ajustes"
+                onClick={() => setSettingsDrawerOpen(false)}
+                className="rounded-lg border border-[#262F3F] bg-[#0B0D11] p-1 text-[#94A3B8] hover:text-[#F1F5F9] cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-3">
+              <SettingsTab
+                onRefreshAudioDevices={async () => {
+                  await ensureAudioInitialized();
+                  if (routerRef.current) {
+                    settings.setAudioOutputs(await routerRef.current.enumerateOutputs());
+                  }
+                }}
+                onSelectMasterDevice={async (id) => {
+                  await ensureAudioInitialized();
+                  await routerRef.current?.setMasterDevice(id);
+                  settings.setMasterDeviceId(id);
+                }}
+                onSelectCueDevice={async (id) => {
+                  await ensureAudioInitialized();
+                  await routerRef.current?.setCueDevice(id);
+                  settings.setCueDeviceId(id);
+                }}
+                onToggleMonoSplit={async (enabled) => {
+                  await ensureAudioInitialized();
+                  routerRef.current?.setMonoSplit(enabled);
+                  settings.setMonoSplit(enabled);
+                }}
+                onEnsureYtDlp={async () => {
+                  if (!window.tubedeckAPI) return;
+                  settings.setYtDlpStatus({ ...settings.ytDlpStatus, downloading: true });
+                  const res = await window.tubedeckAPI.ensureYtDlp();
+                  if (res.success) {
+                    settings.setYtDlpStatus(res.data);
+                  } else {
+                    settings.setYtDlpStatus({
+                      available: false,
+                      binaryPath: null,
+                      downloading: false,
+                      error: res.error
+                    });
+                  }
+                }}
+                onResolutionChange={(res) => {
+                  settings.setOutputResolution(res);
+                  if (res === '1080p') compositorRef.current?.setResolution(1920, 1080);
+                  else compositorRef.current?.setResolution(1280, 720);
+                }}
+                onVideoQualityChange={handleVideoQualityChange}
+                midiDevices={midiDevices}
+                midiMappings={midiMappings}
+                learningControlKey={learningControlKey}
+                onInitMidi={async () => {
+                  const devs = await midiEngineRef.current.init(handleMidiControl);
+                  setMidiDevices(devs);
+                }}
+                onStartMidiLearn={(controlKey, mode: MidiLearnMode) => {
+                  setLearningControlKey(controlKey);
+                  midiEngineRef.current.startLearn(controlKey, mode, (learned) => {
+                    setLearningControlKey(null);
+                    void window.tubedeckAPI?.saveMidiMapping(learned).then((res) => {
+                      if (res.success) {
+                        void window.tubedeckAPI?.listMidiMappings().then((listRes) => {
+                          if (listRes.success) {
+                            setMidiMappings(listRes.data);
+                            midiEngineRef.current.loadMappings(listRes.data);
+                          }
+                        });
+                      }
+                    });
+                  });
+                }}
+                onDeleteMidiMapping={async (id) => {
+                  await window.tubedeckAPI?.deleteMidiMapping(id);
+                  const listRes = await window.tubedeckAPI?.listMidiMappings();
+                  if (listRes?.success) {
+                    setMidiMappings(listRes.data);
+                    midiEngineRef.current.loadMappings(listRes.data);
+                  }
+                }}
+                onCheckForUpdates={async () => {
+                  const res = await window.tubedeckAPI?.checkForUpdates();
+                  if (res?.success && res.data) {
+                    settings.setUpdaterStatus(res.data);
+                  }
+                }}
+                onDownloadUpdate={async () => {
+                  const res = await window.tubedeckAPI?.downloadUpdate();
+                  if (res?.success && res.data) {
+                    settings.setUpdaterStatus(res.data);
+                  }
+                }}
+                onInstallUpdate={async () => {
+                  await window.tubedeckAPI?.installUpdate();
+                }}
+              />
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
+      {/* Modal: Guía Interactiva de Cabina */}
+      <InteractiveGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
     </div>
   );
 }

@@ -97,14 +97,14 @@ export function DeckPanel({
   const setDeckPatch = useDeckStore((s) => s.setDeckPatch);
   const [padMode, setPadMode] = useState<PadMode>('hot-cue');
 
-  const accent = deckId === 'A' ? '#00D4FF' : '#FF8A00';
+  const accent = deckId === 'A' ? '#0EA5E9' : '#F59E0B';
   const remaining = Math.max(0, deck.durationSec - deck.currentTimeSec);
   const isNearEnd = deck.playing && deck.durationSec > 20 && remaining <= 15;
   const effectiveBpm = deck.bpm ? Number((deck.bpm * (1 + deck.pitchPercent / 100)).toFixed(1)) : null;
 
   return (
     <section
-      className="flex flex-col gap-2 rounded-xl border border-[#1F2937] bg-[#0F141D] p-2.5 shadow-lg"
+      className="flex flex-col gap-2 rounded-xl border border-[#262F3F] bg-[#141820] p-2.5"
       aria-label={`Deck ${deckId}`}
     >
       {/* Header: Track info + BPM + Clocks */}

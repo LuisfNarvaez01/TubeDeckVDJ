@@ -9,7 +9,7 @@ import {
   CloudDownload,
   RotateCw
 } from 'lucide-react';
-import type { MidiMapping } from '../../shared/types';
+import type { MidiMapping, VideoQualityPreference } from '../../shared/types';
 import type { MidiLearnMode } from '../controllers/MidiLearnEngine';
 import { useSettingsStore } from '../store/useSettingsStore';
 
@@ -20,6 +20,7 @@ interface SettingsTabProps {
   onToggleMonoSplit: (enabled: boolean) => void;
   onEnsureYtDlp: () => void;
   onResolutionChange: (res: '720p' | '1080p') => void;
+  onVideoQualityChange?: (q: VideoQualityPreference) => void;
   midiDevices?: string[];
   midiMappings?: MidiMapping[];
   learningControlKey?: string | null;
@@ -47,6 +48,7 @@ export function SettingsTab({
   onToggleMonoSplit,
   onEnsureYtDlp,
   onResolutionChange,
+  onVideoQualityChange,
   midiDevices = [],
   midiMappings = [],
   learningControlKey = null,
@@ -152,12 +154,29 @@ export function SettingsTab({
           <select
             value={settings.outputResolution}
             onChange={(e) => onResolutionChange(e.target.value as '720p' | '1080p')}
-            className="rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-[#F1F5F9]"
+            className="rounded border border-[#262F3F] bg-[#141820] px-2 py-1 text-[#F8FAFC]"
           >
             <option value="1080p">1920 × 1080 (Full HD 60 fps)</option>
             <option value="720p">1280 × 720 (HD 60 fps)</option>
           </select>
         </label>
+
+        {onVideoQualityChange ? (
+          <label className="flex flex-col gap-1 text-[#94A3B8]">
+            Calidad Streaming Video YouTube (Anti-Cortes)
+            <select
+              value={settings.videoQuality}
+              onChange={(e) => onVideoQualityChange(e.target.value as VideoQualityPreference)}
+              className="rounded border border-[#262F3F] bg-[#141820] px-2 py-1 text-[#F8FAFC]"
+            >
+              <option value="auto">Automática (720p H.264 → baja si hay lentitud)</option>
+              <option value="720p">720p HD fluido</option>
+              <option value="480p">480p Ligero (Internet lento / Karaoke)</option>
+              <option value="360p">360p Ultra-Ligero</option>
+              <option value="1080p">1080p Full HD (Internet rápido)</option>
+            </select>
+          </label>
+        ) : null}
 
         <div className="text-[11px] text-[#94A3B8]">
           Monitores: {settings.displays.map((d) => `${d.label} (${d.bounds.width}×${d.bounds.height})`).join(' | ') || 'Detectando...'}

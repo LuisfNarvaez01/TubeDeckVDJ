@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactElement } from 'react';
-import { History, FolderPlus, Download, ListPlus } from 'lucide-react';
+import { History, FolderPlus, Download, ListPlus, HardDriveDownload, X, Sparkles } from 'lucide-react';
 import type { Crate, DeckId, HistoryEntry, MixSession, YouTubeTrack } from '../../shared/types';
+import { useLibraryStore } from '../store/useLibraryStore';
 
 interface HistoryAndCratesTabProps {
   activeSessionId: string | null;
@@ -10,6 +11,8 @@ interface HistoryAndCratesTabProps {
   onLoadToDeck: (deck: DeckId, track: YouTubeTrack) => void;
   crates: Crate[];
   onRefreshCrates: () => Promise<void>;
+  onStartBatchDownload?: (sessionId: string, format: 'video' | 'audio') => void;
+  onCancelBatchDownload?: () => void;
 }
 
 export function HistoryAndCratesTab({
@@ -19,16 +22,22 @@ export function HistoryAndCratesTab({
   onAddTracksToQueue,
   onLoadToDeck,
   crates,
-  onRefreshCrates
+  onRefreshCrates,
+  onStartBatchDownload,
+  onCancelBatchDownload
 }: HistoryAndCratesTabProps): ReactElement {
   const [sessions, setSessions] = useState<MixSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(activeSessionId);
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [exportNote, setExportNote] = useState<string | null>(null);
+  const [downloadFmt, setDownloadFmt] = useState<'video' | 'audio'>('video');
 
   const [selectedCrateId, setSelectedCrateId] = useState<string | null>(null);
   const [crateTracks, setCrateTracks] = useState<YouTubeTrack[]>([]);
   const [newCrateName, setNewCrateName] = useState('');
+
+  const tasteProfile = useLibraryStore((s) => s.tasteProfile);
+  const batchDownload = useLibraryStore((s) => s.batchDownload);
 
   const refreshSessions = async () => {
     const res = await window.tubedeckAPI?.listSessions();
@@ -78,7 +87,7 @@ export function HistoryAndCratesTab({
     e.preventDefault();
     const name = newCrateName.trim();
     if (!name || !window.tubedeckAPI) return;
-    const res = await window.tubedeckAPI.createCrate(name, '#00D4FF');
+    const res = await window.tubedeckAPI.createCrate(name, '#0EA5E9');
     if (res.success) {
       setNewCrateName('');
       await onRefreshCrates();
@@ -92,26 +101,29 @@ export function HistoryAndCratesTab({
       title: e.title,
       channel: e.channel,
       durationSec: e.durationSec,
-      thumbnailUrl: `https://i.ytimg.com/vi/${e.videoId}/hqdefault.jpg`,
-      isLive: false
+      thumbnailUrl: e.videoId.startsWith('local_')
+        ? ''
+        : `https://i.ytimg.com/vi/${e.videoId}/hqdefault.jpg`,
+      isLive: false,
+      source: e.videoId.startsWith('local_') ? 'local' : 'youtube'
     }));
     onAddTracksToQueue(tracks);
   };
 
   return (
     <div className="grid h-full grid-cols-2 gap-3 text-xs">
-      {/* Left: Mix History */}
-      <div className="flex min-h-0 flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-2.5">
+      {/* Left: Mix History + Learned Taste + Batch Offline Download */}
+      <div className="flex min-h-0 flex-col gap-2 rounded-lg border border-[#262F3F] bg-[#0B0D11] p-2.5">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F1F5F9]">
-            <History className="h-4 w-4 text-[#00D4FF]" />
-            Historial de Mixes
+          <h3 className="inline-flex items-center gap-1.5 font-semibold text-[#F8FAFC]">
+            <History className="h-4 w-4 text-[#0EA5E9]" />
+            Historial de Mixes y Preferencias
           </h3>
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => void onNewSession()}
-              className="rounded border border-[#00D4FF]/50 bg-[#00D4FF]/15 px-2 py-1 text-[11px] text-[#00D4FF] cursor-pointer"
+              className="rounded border border-[#0EA5E9]/50 bg-[#0EA5E9]/15 px-2 py-1 text-[11px] font-semibold text-[#0EA5E9] cursor-pointer"
             >
               Nueva Sesión
             </button>
@@ -119,7 +131,7 @@ export function HistoryAndCratesTab({
               <button
                 type="button"
                 onClick={() => void onEndActiveSession()}
-                className="rounded border border-[#1F2735] px-2 py-1 text-[11px] text-[#94A3B8] cursor-pointer"
+                className="rounded border border-[#262F3F] px-2 py-1 text-[11px] text-[#94A3B8] cursor-pointer"
               >
                 Cerrar Activa
               </button>
@@ -127,11 +139,31 @@ export function HistoryAndCratesTab({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        {/* Learned Taste Profile Summary */}
+        {tasteProfile && tasteProfile.totalPlays > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-[#262F3F] bg-[#141820] px-2 py-1 text-[10px]">
+            <span className="inline-flex items-center gap-1 font-semibold text-[#A5B4FC]">
+              <Sparkles className="h-3 w-3" />
+              Afinidad ({tasteProfile.totalPlays} pistas):
+            </span>
+            {tasteProfile.topChannels.slice(0, 3).map((c) => (
+              <span key={c.name} className="rounded bg-[#0B0D11] px-1.5 py-0.2 text-[#F8FAFC]">
+                {c.name}
+              </span>
+            ))}
+            {tasteProfile.topKeywords.slice(0, 4).map((k) => (
+              <span key={k.word} className="rounded border border-[#262F3F] px-1.5 py-0.2 text-[#94A3B8]">
+                {k.word}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-1.5">
           <select
             value={selectedSessionId ?? ''}
             onChange={(e) => setSelectedSessionId(e.target.value || null)}
-            className="flex-1 rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-xs text-[#F1F5F9]"
+            className="min-w-36 flex-1 rounded border border-[#262F3F] bg-[#141820] px-2 py-1 text-xs text-[#F8FAFC]"
           >
             {sessions.map((s) => (
               <option key={s.id} value={s.id}>
@@ -144,7 +176,7 @@ export function HistoryAndCratesTab({
             type="button"
             disabled={entries.length === 0}
             onClick={reloadSessionToQueue}
-            className="inline-flex items-center gap-1 rounded border border-[#10B981]/40 bg-[#10B981]/15 px-2 py-1 text-[11px] text-[#6EE7B7] disabled:opacity-40 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded border border-[#10B981]/40 bg-[#10B981]/15 px-2 py-1 text-[11px] font-semibold text-[#10B981] disabled:opacity-40 cursor-pointer"
           >
             <ListPlus className="h-3.5 w-3.5" />
             Recargar Mix
@@ -156,7 +188,7 @@ export function HistoryAndCratesTab({
               type="button"
               disabled={!selectedSessionId}
               onClick={() => void handleExport(fmt)}
-              className="inline-flex items-center gap-1 rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-[11px] uppercase text-[#94A3B8] hover:text-white disabled:opacity-40 cursor-pointer"
+              className="inline-flex items-center gap-1 rounded border border-[#262F3F] bg-[#141820] px-2 py-1 text-[11px] uppercase text-[#94A3B8] hover:text-white disabled:opacity-40 cursor-pointer"
             >
               <Download className="h-3 w-3" />
               {fmt}
@@ -164,9 +196,59 @@ export function HistoryAndCratesTab({
           ))}
         </div>
 
+        {/* Batch Offline Download Strip */}
+        {onStartBatchDownload ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#262F3F] bg-[#141820] px-2.5 py-1.5 text-[11px]">
+            <div className="flex items-center gap-1.5">
+              <HardDriveDownload className="h-3.5 w-3.5 text-[#F59E0B]" />
+              <span className="font-semibold text-[#F8FAFC]">Guardar sesión offline:</span>
+              <select
+                aria-label="Formato Descarga Sesión"
+                value={downloadFmt}
+                onChange={(e) => setDownloadFmt(e.target.value as 'video' | 'audio')}
+                className="rounded border border-[#262F3F] bg-[#0B0D11] px-1.5 py-0.5 text-[11px] text-[#F8FAFC]"
+              >
+                <option value="video">Video MP4 (720p)</option>
+                <option value="audio">Solo Audio M4A</option>
+              </select>
+            </div>
+
+            {batchDownload?.status === 'running' ? (
+              <div className="flex items-center gap-2">
+                <span className="font-mono-tabular text-[#10B981]">
+                  {batchDownload.completed}/{batchDownload.total} — {batchDownload.currentTitle.slice(0, 22)}
+                </span>
+                <button
+                  type="button"
+                  onClick={onCancelBatchDownload}
+                  className="inline-flex items-center gap-1 rounded border border-[#EF4444]/50 bg-[#EF4444]/15 px-2 py-0.5 text-[#FCA5A5] cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                  Cancelar
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={!selectedSessionId || entries.length === 0}
+                onClick={() => selectedSessionId && onStartBatchDownload(selectedSessionId, downloadFmt)}
+                className="inline-flex items-center gap-1 rounded border border-[#F59E0B]/50 bg-[#F59E0B]/15 px-2.5 py-0.5 font-semibold text-[#F59E0B] hover:bg-[#F59E0B]/25 disabled:opacity-40 cursor-pointer"
+              >
+                Descargar Lote ({entries.length})
+              </button>
+            )}
+          </div>
+        ) : null}
+
+        {batchDownload && batchDownload.status === 'done' ? (
+          <p className="text-[11px] text-[#10B981] truncate">
+            Descarga completada: {batchDownload.completed} archivos guardados en {batchDownload.outputDir} (agregados a Biblioteca Local)
+          </p>
+        ) : null}
+
         {exportNote ? <p className="text-[11px] text-[#10B981] truncate">{exportNote}</p> : null}
 
-        <div className="flex-1 overflow-y-auto divide-y divide-[#1F2735] rounded border border-[#1F2735]">
+        <div className="flex-1 overflow-y-auto divide-y divide-[#1E2634] rounded border border-[#262F3F]">
           {entries.length === 0 ? (
             <div className="p-4 text-center text-[#64748B]">
               Sin pistas registradas aún (suenan ≥10s en Master para registrarse).
@@ -175,7 +257,7 @@ export function HistoryAndCratesTab({
             entries.map((entry) => (
               <div key={entry.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-[#F1F5F9]">
+                  <p className="truncate font-medium text-[#F8FAFC]">
                     [{entry.deck}] {entry.title}
                   </p>
                   <p className="truncate text-[11px] text-[#94A3B8]">
@@ -190,25 +272,25 @@ export function HistoryAndCratesTab({
       </div>
 
       {/* Right: Crates */}
-      <div className="flex min-h-0 flex-col gap-2 rounded-lg border border-[#1F2735] bg-[#0B0E14] p-2.5">
+      <div className="flex min-h-0 flex-col gap-2 rounded-lg border border-[#262F3F] bg-[#0B0D11] p-2.5">
         <form onSubmit={handleCreateCrate} className="flex items-center gap-2">
           <input
             type="text"
             value={newCrateName}
             onChange={(e) => setNewCrateName(e.target.value)}
-            placeholder="Nuevo Crate (ej. Salsa, Techno 130)..."
-            className="flex-1 rounded border border-[#1F2735] bg-[#131822] px-2 py-1 text-xs text-[#F1F5F9]"
+            placeholder="Nuevo Crate (ej. Salsa, Karaoke Clásicos)..."
+            className="flex-1 rounded border border-[#262F3F] bg-[#141820] px-2 py-1 text-xs text-[#F8FAFC]"
           />
           <button
             type="submit"
-            className="inline-flex items-center gap-1 rounded border border-[#FF8A00]/50 bg-[#FF8A00]/15 px-2.5 py-1 text-xs font-semibold text-[#FF8A00] cursor-pointer"
+            className="inline-flex items-center gap-1 rounded border border-[#F59E0B]/50 bg-[#F59E0B]/15 px-2.5 py-1 text-xs font-semibold text-[#F59E0B] cursor-pointer"
           >
             <FolderPlus className="h-3.5 w-3.5" />
             Crear Crate
           </button>
         </form>
 
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex flex-wrap items-center gap-1.5">
           {crates.map((c) => (
             <button
               key={c.id}
@@ -216,8 +298,8 @@ export function HistoryAndCratesTab({
               onClick={() => setSelectedCrateId(c.id)}
               className={`rounded border px-2 py-1 text-[11px] cursor-pointer ${
                 selectedCrateId === c.id
-                  ? 'border-[#00D4FF] bg-[#00D4FF]/15 text-[#00D4FF]'
-                  : 'border-[#1F2735] bg-[#131822] text-[#94A3B8]'
+                  ? 'border-[#0EA5E9] bg-[#0EA5E9]/15 text-[#0EA5E9]'
+                  : 'border-[#262F3F] bg-[#141820] text-[#94A3B8]'
               }`}
             >
               {c.name} ({c.trackCount})
@@ -227,14 +309,14 @@ export function HistoryAndCratesTab({
             <button
               type="button"
               onClick={() => onAddTracksToQueue(crateTracks)}
-              className="ml-auto rounded border border-[#10B981]/50 bg-[#10B981]/15 px-2 py-1 text-[11px] text-[#6EE7B7] cursor-pointer"
+              className="ml-auto rounded border border-[#10B981]/50 bg-[#10B981]/15 px-2 py-1 text-[11px] text-[#10B981] cursor-pointer"
             >
               Crate a Cola
             </button>
           ) : null}
         </div>
 
-        <div className="flex-1 overflow-y-auto divide-y divide-[#1F2735] rounded border border-[#1F2735]">
+        <div className="flex-1 overflow-y-auto divide-y divide-[#1E2634] rounded border border-[#262F3F]">
           {crateTracks.length === 0 ? (
             <div className="p-4 text-center text-[#64748B]">
               Selecciona un Crate para ver o cargar sus pistas.
@@ -242,19 +324,19 @@ export function HistoryAndCratesTab({
           ) : (
             crateTracks.map((t) => (
               <div key={t.videoId} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
-                <span className="truncate text-[#F1F5F9]">{t.title}</span>
+                <span className="truncate text-[#F8FAFC]">{t.title}</span>
                 <div className="flex shrink-0 gap-1">
                   <button
                     type="button"
                     onClick={() => onLoadToDeck('A', t)}
-                    className="rounded border border-[#00D4FF]/40 px-1.5 py-0.5 text-[11px] text-[#00D4FF] cursor-pointer"
+                    className="rounded border border-[#0EA5E9]/40 px-1.5 py-0.5 text-[11px] text-[#0EA5E9] cursor-pointer"
                   >
                     A
                   </button>
                   <button
                     type="button"
                     onClick={() => onLoadToDeck('B', t)}
-                    className="rounded border border-[#FF8A00]/40 px-1.5 py-0.5 text-[11px] text-[#FF8A00] cursor-pointer"
+                    className="rounded border border-[#F59E0B]/40 px-1.5 py-0.5 text-[11px] text-[#F59E0B] cursor-pointer"
                   >
                     B
                   </button>
@@ -267,4 +349,3 @@ export function HistoryAndCratesTab({
     </div>
   );
 }
-

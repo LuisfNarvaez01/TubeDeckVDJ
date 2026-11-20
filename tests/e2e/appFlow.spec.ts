@@ -19,7 +19,7 @@ function collectFilesRecursively(rootDir: string): string[] {
   return results;
 }
 
-test('Dual-window VDJ cabin launches cleanly, opens/closes Screen 2, and writes zero media files to disk', async () => {
+test('Dual-window VDJ v2.1 cabin launches cleanly, opens Guide/Marcos/Ajustes drawers and Screen 2, and writes zero media files to disk', async () => {
   const tempUserDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tubedeck-e2e-'));
   const cleanEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -50,7 +50,7 @@ test('Dual-window VDJ cabin launches cleanly, opens/closes Screen 2, and writes 
 
     await mainPage.waitForLoadState('domcontentloaded');
 
-    // 1. Verify all primary cabin panels & bottom tabs
+    // 1. Verify all primary cabin panels, Top Bar actions, and 4 bottom tabs
     await expect(mainPage.getByRole('region', { name: 'Deck A', exact: true })).toBeVisible();
     await expect(mainPage.getByRole('region', { name: 'Deck B', exact: true })).toBeVisible();
     await expect(
@@ -58,30 +58,55 @@ test('Dual-window VDJ cabin launches cleanly, opens/closes Screen 2, and writes 
     ).toBeVisible();
     await expect(mainPage.getByRole('region', { name: 'Mixer Central', exact: true })).toBeVisible();
 
+    await expect(mainPage.getByRole('combobox', { name: 'Calidad Video Global' })).toBeVisible();
+    const headerMarcosBtn = mainPage.getByRole('banner').getByRole('button', { name: 'Marcos', exact: true });
+    await expect(headerMarcosBtn).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: 'Guía', exact: true })).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: 'Ajustes', exact: true })).toBeVisible();
+
     await expect(mainPage.getByRole('button', { name: 'Buscador YouTube' })).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: /^Biblioteca Local/ })).toBeVisible();
     await expect(mainPage.getByRole('button', { name: /^Cola/ })).toBeVisible();
     await expect(mainPage.getByRole('button', { name: 'Historial & Crates' })).toBeVisible();
-    await expect(mainPage.getByRole('button', { name: 'Overlays & Visuales' })).toBeVisible();
-    await expect(
-      mainPage.getByRole('button', { name: 'Ajustes (Audio / Pantalla / MIDI)' })
-    ).toBeVisible();
 
-    // Verify VirtualDJ v2.0 Club Pro controls: Jog Wheels & AUTO MIX button
+    // Verify Jog Wheels & AUTO MIX button
     await expect(mainPage.getByRole('slider', { name: 'Jog Wheel Deck A' })).toBeVisible();
     await expect(mainPage.getByRole('slider', { name: 'Jog Wheel Deck B' })).toBeVisible();
     await expect(mainPage.getByRole('button', { name: 'Auto Mix A B' })).toBeVisible();
 
-    // Switch across bottom tabs without errors (including Cola + Radio YT & Updates card)
+    // Test Top Bar Interactive Guide Modal
+    await mainPage.getByRole('button', { name: 'Guía', exact: true }).click();
+    await expect(mainPage.getByRole('dialog', { name: 'Guía de Cabina' })).toBeVisible();
+    await mainPage.getByRole('button', { name: 'Cerrar Guía' }).click();
+    await expect(mainPage.getByRole('dialog', { name: 'Guía de Cabina' })).toBeHidden();
+
+    // Test Top Bar Marcos Drawer
+    await headerMarcosBtn.click();
+    await expect(mainPage.getByRole('dialog', { name: 'Marcos y Visuales' })).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: 'Karaoke' })).toBeVisible();
+    await mainPage.getByRole('button', { name: 'Cerrar Marcos' }).click();
+    await expect(mainPage.getByRole('dialog', { name: 'Marcos y Visuales' })).toBeHidden();
+
+    // Test Top Bar Ajustes Drawer
+    await mainPage.getByRole('button', { name: 'Ajustes', exact: true }).click();
+    await expect(mainPage.getByRole('dialog', { name: 'Ajustes del Sistema' })).toBeVisible();
+    await expect(mainPage.getByText(/Resolución Master \(60 fps\)/i)).toBeVisible();
+    await expect(mainPage.getByText(/Actualizaciones \(GitHub Releases\)/i)).toBeVisible();
+    await mainPage.getByRole('button', { name: 'Cerrar Ajustes' }).click();
+    await expect(mainPage.getByRole('dialog', { name: 'Ajustes del Sistema' })).toBeHidden();
+
+    // Switch across the 4 bottom tabs
+    await mainPage.getByRole('button', { name: /^Biblioteca Local/ }).click();
+    await expect(mainPage.getByRole('button', { name: 'Agregar Archivos' })).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: 'Agregar Carpeta' })).toBeVisible();
+
     await mainPage.getByRole('button', { name: /^Cola/ }).click();
     await expect(mainPage.getByRole('button', { name: /Radio YT:/i })).toBeVisible();
     await expect(mainPage.getByRole('combobox', { name: 'Estilo Automix' })).toBeVisible();
+    await expect(mainPage.getByRole('button', { name: 'Vaciar Cola' })).toBeVisible();
 
     await mainPage.getByRole('button', { name: 'Historial & Crates' }).click();
     await expect(mainPage.getByText(/Nueva Sesión|Sesiones/i).first()).toBeVisible();
-
-    await mainPage.getByRole('button', { name: 'Ajustes (Audio / Pantalla / MIDI)' }).click();
-    await expect(mainPage.getByText(/Resolución Master \(60 fps\)/i)).toBeVisible();
-    await expect(mainPage.getByText(/Actualizaciones \(GitHub Releases\)/i)).toBeVisible();
 
     // 2. Open Secondary Output Window (Pantalla 2)
     const openBtn = mainPage.getByRole('button', { name: 'Abrir P2' });
@@ -136,4 +161,3 @@ test('Dual-window VDJ cabin launches cleanly, opens/closes Screen 2, and writes 
     fs.rmSync(tempUserDataDir, { recursive: true, force: true });
   }
 });
-
