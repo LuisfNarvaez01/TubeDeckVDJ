@@ -1,9 +1,9 @@
-# AI Context — TubeDeck VDJ (`v2.2.0`)
+# AI Context — TubeDeck VDJ (`v2.3.0`)
 
 Documento de referencia técnica rápida para darle contexto inmediato del proyecto a cualquier asistente de IA.
 
 ## 1. Resumen del Proyecto
-- **Nombre / Paquete:** `TubeDeck VDJ` (`tubedeck-vdj`, versión `2.2.0`, `appId`: `com.tubedeck.vdj`).
+- **Nombre / Paquete:** `TubeDeck VDJ` (`tubedeck-vdj`, versión `2.3.0`, `appId`: `com.tubedeck.vdj`).
 - **Objetivo:** Cabina DJ/VDJ de doble pantalla para Windows que mezcla videos de YouTube en streaming en memoria (**sin descargar archivos multimedia al disco** durante la reproducción normal), permite intercalar archivos o carpetas locales, renderiza video compuesto a 60 fps en Pantalla 2 con transiciones WebGL2 y marcos configurables, y ofrece descarga opcional por lotes de sesiones del historial.
 - **Repositorio / Auto-Actualizaciones:** `https://github.com/LuisfNarvaez01/TubeDeckVDJ.git` (`electron-updater` vía GitHub Releases + workflow `.github/workflows/release.yml` activado al hacer push de tags `v*`).
 
@@ -91,7 +91,7 @@ npx playwright test tests/e2e/appFlow.spec.ts
 # Pruebas E2E contra ejecutable Windows empaquetado
 $env:TUBEDECK_E2E_EXE="d:\Trabajos\Pantallas\dist\win-unpacked\TubeDeck VDJ.exe"; npx playwright test tests/e2e/appFlow.spec.ts
 
-# Empaquetado NSIS sin firma de código local (genera dist/TubeDeck VDJ Setup 2.2.0.exe)
+# Empaquetado NSIS sin firma de código local (genera dist/TubeDeck VDJ Setup 2.3.0.exe)
 $env:CSC_IDENTITY_AUTO_DISCOVERY="false"; npx electron-builder --win nsis
 ```
 
