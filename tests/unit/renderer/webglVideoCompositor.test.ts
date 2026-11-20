@@ -108,9 +108,17 @@ describe('WebGLVideoCompositor & GLSL transitions', () => {
       transition: 'circle-iris',
       videoA: null,
       videoB: null,
-      overlayCanvas: null
+      overlayCanvas: null,
+      videoRect: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 }
     });
 
+    expect(glMock.uniform4f).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'u_videoRect' }),
+      0.1,
+      0.1,
+      0.8,
+      0.8
+    );
     expect(glMock.drawArrays).toHaveBeenCalled();
     compositor.captureOutputStream(60);
     expect(fakeCanvas.captureStream).toHaveBeenCalledWith(60);

@@ -17,6 +17,7 @@ function createMockCtx2d(): CanvasRenderingContext2D {
     clip: vi.fn(),
     fill: vi.fn(),
     stroke: vi.fn(),
+    strokeRect: vi.fn(),
     measureText: vi.fn((text: string) => ({ width: text.length * 10 })),
     globalAlpha: 1,
     fillStyle: '',
@@ -65,6 +66,31 @@ describe('OverlayCompositor', () => {
     const firstX = calls[0][1] as number;
     const secondX = calls[1][1] as number;
     expect(firstX - secondX).toBeCloseTo(120, 1);
+  });
+
+  it('computes inner video rect and draws outer frame borders when frame preset is enabled', () => {
+    const compositor = new OverlayCompositor(1280, 720);
+    const ctx = createMockCtx2d();
+
+    expect(compositor.getVideoInsetRect()).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+
+    const cfg = createDefaultOverlayConfig();
+    cfg.frame = {
+      enabled: true,
+      preset: 'karaoke-stage',
+      customDataUrl: null,
+      insetPercent: 10,
+      accentColor: '#0EA5E9',
+      titleText: 'Viernes Karaoke'
+    };
+    compositor.updateConfig(cfg);
+
+    expect(compositor.getVideoInsetRect()).toEqual({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
+    const drew = compositor.render(ctx, 1000);
+    expect(drew).toBe(true);
+    expect(ctx.fillRect).toHaveBeenCalledTimes(4);
+    expect(ctx.strokeRect).toHaveBeenCalled();
+    expect(ctx.fillText).toHaveBeenCalledWith('Viernes Karaoke', expect.any(Number), expect.any(Number));
   });
 });
 

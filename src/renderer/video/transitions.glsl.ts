@@ -39,6 +39,7 @@ uniform float u_mix;
 uniform float u_aspectA;
 uniform float u_aspectB;
 uniform float u_canvasAspect;
+uniform vec4 u_videoRect;
 ${FX_UNIFORMS_GLSL}
 ${FX_HELPERS_GLSL}
 
@@ -71,14 +72,20 @@ vec4 sampleFitted(sampler2D tex, float hasTex, vec2 uv, float texAspect) {
 
 void main() {
   float m = clamp(u_mix, 0.0, 1.0);
-  vec2 uv = v_uv;
-  vec4 colA = sampleFitted(u_texA, u_hasA, uv, u_aspectA);
-  vec4 colB = sampleFitted(u_texB, u_hasB, uv, u_aspectB);
-  vec4 mixed = vec4(0.0, 0.0, 0.0, 1.0);
+  vec2 rectMin = u_videoRect.xy;
+  vec2 rectSize = max(u_videoRect.zw, vec2(0.001));
+  vec2 uv = (v_uv - rectMin) / rectSize;
+  bool insideVideo = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
+  vec4 finalCol = vec4(0.02, 0.025, 0.04, 1.0);
+  if (insideVideo) {
+    vec4 colA = sampleFitted(u_texA, u_hasA, uv, u_aspectA);
+    vec4 colB = sampleFitted(u_texB, u_hasB, uv, u_aspectB);
+    vec4 mixed = vec4(0.0, 0.0, 0.0, 1.0);
 ${transitionBody}
-  vec4 finalCol = applyPostFx(mixed, uv);
+    finalCol = applyPostFx(mixed, uv);
+  }
   if (u_hasOverlay > 0.5) {
-    vec4 ov = texture(u_texOverlay, uv);
+    vec4 ov = texture(u_texOverlay, v_uv);
     finalCol.rgb = mix(finalCol.rgb, ov.rgb, ov.a);
   }
   fragColor = vec4(finalCol.rgb, 1.0);

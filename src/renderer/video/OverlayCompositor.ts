@@ -1,6 +1,21 @@
 export type OverlayCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+export type VideoFramePreset =
+  | 'none'
+  | 'minimal-studio'
+  | 'karaoke-stage'
+  | 'gala-gold'
+  | 'club-led'
+  | 'custom';
 
 export interface OverlayConfig {
+  frame: {
+    enabled: boolean;
+    preset: VideoFramePreset;
+    customDataUrl: string | null;
+    insetPercent: number;
+    accentColor: string;
+    titleText: string;
+  };
   logo: {
     enabled: boolean;
     dataUrl: string | null;
@@ -31,6 +46,14 @@ export interface OverlayConfig {
 
 export function createDefaultOverlayConfig(): OverlayConfig {
   return {
+    frame: {
+      enabled: false,
+      preset: 'minimal-studio',
+      customDataUrl: null,
+      insetPercent: 8,
+      accentColor: '#0EA5E9',
+      titleText: ''
+    },
     logo: {
       enabled: false,
       dataUrl: null,
@@ -80,6 +103,8 @@ export class OverlayCompositor {
   private config: OverlayConfig = createDefaultOverlayConfig();
   private logoImg: HTMLImageElement | null = null;
   private loadedLogoDataUrl: string | null = null;
+  private customFrameImg: HTMLImageElement | null = null;
+  private loadedFrameDataUrl: string | null = null;
 
   private osdTitle = '';
   private osdChannel = '';
@@ -117,6 +142,108 @@ export class OverlayCompositor {
       this.loadedLogoDataUrl = null;
       this.logoImg = null;
     }
+
+    if (
+      config.frame?.customDataUrl &&
+      config.frame.customDataUrl !== this.loadedFrameDataUrl &&
+      typeof Image !== 'undefined'
+    ) {
+      this.loadedFrameDataUrl = config.frame.customDataUrl;
+      const frameImg = new Image();
+      frameImg.src = config.frame.customDataUrl;
+      this.customFrameImg = frameImg;
+    } else if (!config.frame?.customDataUrl) {
+      this.loadedFrameDataUrl = null;
+      this.customFrameImg = null;
+    }
+  }
+
+  getVideoInsetRect(): { x: number; y: number; w: number; h: number } {
+    const frame = this.config.frame;
+    if (!frame || !frame.enabled || frame.preset === 'none') {
+      return { x: 0, y: 0, w: 1, h: 1 };
+    }
+    const pad = Math.min(0.22, Math.max(0.02, (frame.insetPercent || 8) / 100));
+    return {
+      x: Number(pad.toFixed(4)),
+      y: Number(pad.toFixed(4)),
+      w: Number((1 - pad * 2).toFixed(4)),
+      h: Number((1 - pad * 2).toFixed(4))
+    };
+  }
+
+  private renderVideoFrame(ctx2d: CanvasRenderingContext2D): boolean {
+    const frame = this.config.frame;
+    if (!frame || !frame.enabled || frame.preset === 'none') {
+      return false;
+    }
+
+    const rect = this.getVideoInsetRect();
+    const ix = Math.round(rect.x * this.width);
+    const iy = Math.round(rect.y * this.height);
+    const iw = Math.round(rect.w * this.width);
+    const ih = Math.round(rect.h * this.height);
+
+    if (
+      frame.preset === 'custom' &&
+      this.customFrameImg &&
+      this.customFrameImg.complete &&
+      this.customFrameImg.naturalWidth > 0
+    ) {
+      ctx2d.save();
+      ctx2d.drawImage(this.customFrameImg, 0, 0, this.width, this.height);
+      ctx2d.restore();
+      return true;
+    }
+
+    const matteColors: Record<Exclude<VideoFramePreset, 'none' | 'custom'>, string> = {
+      'minimal-studio': '#0B0D11',
+      'karaoke-stage': '#0D121D',
+      'gala-gold': '#0E0C0A',
+      'club-led': '#07090F'
+    };
+    const presetKey =
+      frame.preset === 'custom' ? 'minimal-studio' : (frame.preset as keyof typeof matteColors);
+    const matte = matteColors[presetKey];
+    const strokeCol = presetKey === 'gala-gold' ? '#D4AF37' : frame.accentColor || '#0EA5E9';
+
+    ctx2d.save();
+    // Draw 4 outer border panels leaving center window transparent so video shows inside
+    ctx2d.fillStyle = matte;
+    ctx2d.fillRect(0, 0, this.width, iy); // top
+    ctx2d.fillRect(0, iy + ih, this.width, this.height - (iy + ih)); // bottom
+    ctx2d.fillRect(0, iy, ix, ih); // left
+    ctx2d.fillRect(ix + iw, iy, this.width - (ix + iw), ih); // right
+
+    // Inner aperture border + subtle outer bevel
+    ctx2d.strokeStyle = strokeCol;
+    ctx2d.lineWidth = presetKey === 'minimal-studio' ? 2 : 3;
+    ctx2d.strokeRect?.(ix - 1, iy - 1, iw + 2, ih + 2);
+
+    if (presetKey === 'karaoke-stage' || presetKey === 'gala-gold') {
+      ctx2d.strokeStyle = presetKey === 'gala-gold' ? 'rgba(212,175,55,0.45)' : 'rgba(248,250,252,0.22)';
+      ctx2d.lineWidth = 1.5;
+      ctx2d.strokeRect?.(ix - 8, iy - 8, iw + 16, ih + 16);
+    } else if (presetKey === 'club-led') {
+      const segs = 16;
+      const segW = (iw + 12) / segs;
+      for (let i = 0; i < segs; i += 1) {
+        ctx2d.fillStyle = i % 2 === 0 ? strokeCol : '#F59E0B';
+        ctx2d.fillRect(ix - 6 + i * segW + 2, iy - 10, Math.max(4, segW - 6), 3);
+        ctx2d.fillRect(ix - 6 + i * segW + 2, iy + ih + 7, Math.max(4, segW - 6), 3);
+      }
+    }
+
+    if (frame.titleText.trim() && iy >= 26) {
+      ctx2d.fillStyle = '#F8FAFC';
+      ctx2d.font = '700 20px Inter, sans-serif';
+      ctx2d.textBaseline = 'top';
+      const label = frame.titleText.trim().slice(0, 64);
+      const tw = ctx2d.measureText(label).width;
+      ctx2d.fillText(label, Math.max(16, (this.width - tw) / 2), Math.max(6, Math.round((iy - 22) / 2)));
+    }
+    ctx2d.restore();
+    return true;
   }
 
   triggerTrackOsd(title: string, channel: string, nowMs = Date.now()): void {
@@ -131,7 +258,7 @@ export class OverlayCompositor {
     webcamVideo?: HTMLVideoElement | null
   ): boolean {
     ctx2d.clearRect(0, 0, this.width, this.height);
-    let drewAnything = false;
+    let drewAnything = this.renderVideoFrame(ctx2d);
 
     // 1. Webcam PiP
     if (

@@ -13,6 +13,7 @@ export interface CompositorFrameState {
   videoA: HTMLVideoElement | null;
   videoB: HTMLVideoElement | null;
   overlayCanvas: HTMLCanvasElement | null;
+  videoRect?: { x: number; y: number; w: number; h: number };
   timeSec?: number;
   audioBands?: { low: number; mid: number; high: number };
   fxUniforms?: Record<string, number>;
@@ -258,6 +259,8 @@ export class WebGLVideoCompositor {
     gl.uniform1f(loc('u_aspectA'), aInfo.aspect);
     gl.uniform1f(loc('u_aspectB'), bInfo.aspect);
     gl.uniform1f(loc('u_canvasAspect'), this.canvas.width / Math.max(1, this.canvas.height));
+    const vr = state.videoRect ?? { x: 0, y: 0, w: 1, h: 1 };
+    gl.uniform4f(loc('u_videoRect'), vr.x, vr.y, vr.w, vr.h);
 
     const bands = state.audioBands ?? { low: 0, mid: 0, high: 0 };
     gl.uniform1f(loc('u_time'), state.timeSec ?? 0);
@@ -279,16 +282,22 @@ export class WebGLVideoCompositor {
     const ctx = this.ctx2d;
     if (!ctx) return;
     const { width, height } = this.canvas;
-    ctx.fillStyle = '#000000';
+    ctx.fillStyle = '#05060A';
     ctx.fillRect(0, 0, width, height);
+
+    const vr = state.videoRect ?? { x: 0, y: 0, w: 1, h: 1 };
+    const dx = vr.x * width;
+    const dy = vr.y * height;
+    const dw = vr.w * width;
+    const dh = vr.h * height;
 
     if (state.videoA && state.videoA.readyState >= 2 && state.mix < 1) {
       ctx.globalAlpha = 1 - state.mix;
-      ctx.drawImage(state.videoA, 0, 0, width, height);
+      ctx.drawImage(state.videoA, dx, dy, dw, dh);
     }
     if (state.videoB && state.videoB.readyState >= 2 && state.mix > 0) {
       ctx.globalAlpha = state.mix;
-      ctx.drawImage(state.videoB, 0, 0, width, height);
+      ctx.drawImage(state.videoB, dx, dy, dw, dh);
     }
     ctx.globalAlpha = 1;
     if (state.overlayCanvas) {
