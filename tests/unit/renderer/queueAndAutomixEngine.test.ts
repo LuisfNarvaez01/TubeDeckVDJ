@@ -174,4 +174,53 @@ describe('QueueAndAutomixEngine', () => {
 
     expect(startTransition).toHaveBeenCalledWith('A', 'B', 8, 'fade-out-in');
   });
+
+  it('preloads immediately after 4s elapsed, supports moveToNext, interleaveBySource, and clear', async () => {
+    const engine = new QueueAndAutomixEngine();
+    const yt1 = makeTrack('yt000000001', 'YouTube 1');
+    const yt2 = makeTrack('yt000000002', 'YouTube 2');
+    const loc1: YouTubeTrack = {
+      ...makeTrack('local_000001', 'Local 1'),
+      source: 'local',
+      localFilePath: 'C:\\Music\\track1.mp4',
+      mediaKind: 'video'
+    };
+    const loc2: YouTubeTrack = {
+      ...makeTrack('local_000002', 'Local 2'),
+      source: 'local',
+      localFilePath: 'C:\\Music\\track2.mp3',
+      mediaKind: 'audio'
+    };
+
+    const items = engine.enqueueMany([yt1, yt2, loc1, loc2]);
+    engine.interleaveBySource();
+    expect(engine.getQueue().map((q) => q.track.videoId)).toEqual([
+      'yt000000001',
+      'local_000001',
+      'yt000000002',
+      'local_000002'
+    ]);
+
+    engine.moveToNext(items[3].queueId);
+    expect(engine.getQueue()[0].track.videoId).toBe('local_000002');
+
+    const loadDeck = vi.fn(async () => {});
+    await engine.tick(
+      {
+        activeDeck: 'A',
+        activeVideoId: 'seed0000001',
+        otherDeckVideoId: null,
+        elapsedSec: 5,
+        remainingSec: 210, // Far more than 30s left!
+        isActivePlaying: true,
+        isActiveEnded: false
+      },
+      { ...DEFAULT_OPTS, preloadMode: 'immediate' },
+      { loadDeck, startTransition: vi.fn(async () => {}), onTrackSkipped: vi.fn() }
+    );
+    expect(loadDeck).toHaveBeenCalledWith('B', expect.objectContaining({ videoId: 'local_000002' }));
+
+    engine.clear();
+    expect(engine.getQueue()).toHaveLength(0);
+  });
 });

@@ -4,9 +4,11 @@ import { fileURLToPath } from 'url';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc/registerHandlers';
 import { AutoUpdaterService } from './services/AutoUpdaterService';
+import { BatchDownloadService } from './services/BatchDownloadService';
 import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { HistoryAndCratesService } from './services/HistoryAndCratesService';
+import { LocalLibraryService } from './services/LocalLibraryService';
 import { RamStreamProxy } from './services/RamStreamProxy';
 import { SessionExporter } from './services/SessionExporter';
 import {
@@ -23,6 +25,7 @@ let dbService: DatabaseService | null = null;
 let ramProxy: RamStreamProxy | null = null;
 let displayManager: DisplayWindowManager | null = null;
 let updaterService: AutoUpdaterService | null = null;
+let batchDownloaderService: BatchDownloadService | null = null;
 
 function buildContentSecurityPolicy(isDev: boolean): string {
   const scriptSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
@@ -118,6 +121,17 @@ app.whenReady().then(async () => {
   const search = new YouTubeSearchService();
   const history = new HistoryAndCratesService(db);
   const exporter = new SessionExporter();
+  const localLibrary = new LocalLibraryService(db);
+  const batchDownloader = new BatchDownloadService({
+    binaryManager: ytDlp,
+    localLibrary,
+    onProgress: (progress) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD_PROGRESS, progress);
+      }
+    }
+  });
+  batchDownloaderService = batchDownloader;
   const updater = new AutoUpdaterService({
     currentVersion: app.getVersion(),
     isPackaged: app.isPackaged,
@@ -128,7 +142,19 @@ app.whenReady().then(async () => {
     }
   });
   updaterService = updater;
-  registerIpcHandlers({ db, search, ytDlp, resolver, proxy, displays, history, exporter, updater });
+  registerIpcHandlers({
+    db,
+    search,
+    ytDlp,
+    resolver,
+    proxy,
+    displays,
+    history,
+    exporter,
+    updater,
+    localLibrary,
+    batchDownloader
+  });
 
   mainWindow = createMainWindow();
   updater.scheduleStartupCheck(8000);
@@ -157,6 +183,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('will-quit', () => {
+  batchDownloaderService?.cancel();
   updaterService?.cancelStartupCheck();
   displayManager?.dispose();
   void ramProxy?.stop();

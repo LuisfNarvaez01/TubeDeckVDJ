@@ -1,11 +1,20 @@
 import { dialog, ipcMain } from 'electron';
+import path from 'path';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
-import type { DeckStreamEndpoints, Result, RtcSignalPayload, YouTubeTrack } from '../../shared/types';
+import type {
+  DeckStreamEndpoints,
+  Result,
+  RtcSignalPayload,
+  VideoQualityTier,
+  YouTubeTrack
+} from '../../shared/types';
 import type { AutoUpdaterService } from '../services/AutoUpdaterService';
+import type { BatchDownloadFormat, BatchDownloadService } from '../services/BatchDownloadService';
 import type { DatabaseService } from '../services/DatabaseService';
 import type { DisplayWindowManager } from '../services/DisplayWindowManager';
 import type { HistoryAndCratesService } from '../services/HistoryAndCratesService';
+import type { LocalLibraryService } from '../services/LocalLibraryService';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
 import type { ExportFormat, SessionExporter } from '../services/SessionExporter';
 import type { StreamResolverService } from '../services/StreamResolverService';
@@ -48,6 +57,8 @@ export interface MainServices {
   history: HistoryAndCratesService;
   exporter: SessionExporter;
   updater?: AutoUpdaterService;
+  localLibrary?: LocalLibraryService;
+  batchDownloader?: BatchDownloadService;
 }
 
 function buildEndpoints(
@@ -55,11 +66,20 @@ function buildEndpoints(
   resolved: Awaited<ReturnType<StreamResolverService['resolve']>>
 ): DeckStreamEndpoints {
   if (resolved.mode === 'dash-split') {
+    const videoQualityUrls: Partial<Record<VideoQualityTier, string>> = {};
+    if (resolved.videoVariants) {
+      for (const tier of Object.keys(resolved.videoVariants) as VideoQualityTier[]) {
+        videoQualityUrls[tier] = proxy.buildLocalUrl(resolved.videoId, 'video', tier);
+      }
+    }
     return {
       videoId: resolved.videoId,
       mode: 'dash-split',
       videoUrl: proxy.buildLocalUrl(resolved.videoId, 'video'),
       audioUrl: proxy.buildLocalUrl(resolved.videoId, 'audio'),
+      videoQualityUrls,
+      sourceType: 'youtube',
+      mediaKind: 'video',
       expiresAtMs: resolved.expiresAtMs
     };
   }
@@ -68,6 +88,8 @@ function buildEndpoints(
     videoId: resolved.videoId,
     mode: 'muxed',
     muxedUrl: proxy.buildLocalUrl(resolved.videoId, 'muxed'),
+    sourceType: 'youtube',
+    mediaKind: 'video',
     expiresAtMs: resolved.expiresAtMs
   };
 }
@@ -107,6 +129,19 @@ export function registerIpcHandlers(services: MainServices): void {
           ? z.array(VideoIdSchema).max(200).parse(rawExcludeIds)
           : [];
         return services.search.getRelatedTracks(videoId, excludeIds);
+      })
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.YOUTUBE_RECOMMENDED,
+    (_event, rawVideoId: unknown, rawExcludeIds: unknown) =>
+      wrapResult(async () => {
+        const videoId = VideoIdSchema.parse(rawVideoId);
+        const excludeIds = Array.isArray(rawExcludeIds)
+          ? z.array(VideoIdSchema).max(200).parse(rawExcludeIds)
+          : [];
+        const profile = services.history.buildTasteProfile(100);
+        return services.search.getHistoryWeightedRecommendations(videoId, profile, excludeIds, 12);
       })
   );
 
@@ -366,5 +401,113 @@ export function registerIpcHandlers(services: MainServices): void {
 
   ipcMain.handle(IPC_CHANNELS.UPDATER_INSTALL, () =>
     wrapResult(() => services.updater?.quitAndInstall() ?? false)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.HISTORY_TASTE_PROFILE, () =>
+    wrapResult(() => services.history.buildTasteProfile(100))
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD,
+    (_event, rawSessionId: unknown, rawFormat: unknown) =>
+      wrapResult(async () => {
+        if (!services.batchDownloader) {
+          throw new Error('Batch downloader unavailable');
+        }
+        const sessionId = NonEmptyStringSchema.parse(rawSessionId);
+        const format = z.enum(['video', 'audio']).parse(rawFormat) as BatchDownloadFormat;
+        const entries = services.history.getSessionHistory(sessionId);
+        const tracks: YouTubeTrack[] = entries
+          .filter((e) => /^[A-Za-z0-9_-]{11}$/.test(e.videoId))
+          .map((e) => ({
+            videoId: e.videoId,
+            title: e.title,
+            channel: e.channel,
+            durationSec: e.durationSec,
+            thumbnailUrl: `https://i.ytimg.com/vi/${e.videoId}/hqdefault.jpg`,
+            isLive: false
+          }));
+        if (tracks.length === 0) {
+          throw new Error('No hay videos de YouTube en el historial de esta sesión');
+        }
+        const { canceled, filePaths } = await dialog.showOpenDialog({
+          title: 'Elegir carpeta para descargar videos de la sesión',
+          properties: ['openDirectory', 'createDirectory']
+        });
+        if (canceled || !filePaths[0]) {
+          return null;
+        }
+        const targetDir = filePaths[0];
+        void services.batchDownloader.startBatch(tracks, targetDir, format).catch(() => {});
+        return services.batchDownloader.getProgress();
+      })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD_CANCEL, () =>
+    wrapResult(() => services.batchDownloader?.cancel() ?? false)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_LIST_LIBRARY, () =>
+    wrapResult(() => services.localLibrary?.listLibrary() ?? { folders: [], tracks: [] })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_PICK_FILES, () =>
+    wrapResult(async () => {
+      if (!services.localLibrary) return { folders: [], tracks: [] };
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: 'Agregar archivos multimedia locales',
+        properties: ['openFile', 'multiSelections'],
+        filters: [
+          {
+            name: 'Video y Audio',
+            extensions: ['mp4', 'webm', 'mkv', 'mov', 'm4v', 'mp3', 'wav', 'flac', 'm4a', 'ogg', 'aac']
+          }
+        ]
+      });
+      if (!canceled && filePaths.length > 0) {
+        services.localLibrary.addFiles(filePaths);
+      }
+      return services.localLibrary.listLibrary();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_PICK_FOLDER, () =>
+    wrapResult(async () => {
+      if (!services.localLibrary) return { folders: [], tracks: [] };
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: 'Agregar carpeta de videos o música local',
+        properties: ['openDirectory']
+      });
+      if (!canceled && filePaths[0]) {
+        services.localLibrary.addFolder(filePaths[0]);
+      }
+      return services.localLibrary.listLibrary();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_REMOVE_FOLDER, (_event, rawFolder: unknown) =>
+    wrapResult(() => {
+      if (!services.localLibrary) return { folders: [], tracks: [] };
+      const folderPath = NonEmptyStringSchema.parse(rawFolder);
+      services.localLibrary.removeFolder(folderPath);
+      return services.localLibrary.listLibrary();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LOCAL_RESOLVE_FILE, (_event, rawFilePath: unknown) =>
+    wrapResult((): DeckStreamEndpoints => {
+      const filePath = z.string().trim().min(1).max(1000).parse(rawFilePath);
+      const reg = services.proxy.registerLocalFile(filePath);
+      const videoId = `local_${path.basename(filePath).slice(0, 16)}`;
+      return {
+        videoId,
+        mode: 'muxed',
+        muxedUrl: reg.mediaKind === 'video' ? reg.url : undefined,
+        audioUrl: reg.mediaKind === 'audio' ? reg.url : undefined,
+        sourceType: 'local',
+        mediaKind: reg.mediaKind,
+        expiresAtMs: Number.MAX_SAFE_INTEGER
+      };
+    })
   );
 }

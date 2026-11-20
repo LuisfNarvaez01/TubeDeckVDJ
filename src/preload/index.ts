@@ -1,10 +1,12 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import type {
+  BatchDownloadProgress,
   Crate,
   DeckStreamEndpoints,
   DisplayInfo,
   HistoryEntry,
+  HistoryTasteProfile,
   MidiMapping,
   MixSession,
   Result,
@@ -21,6 +23,7 @@ export interface TubeDeckAPI {
   getSuggestions: (query: string) => Promise<Result<string[]>>;
   getPlaylistTracks: (urlOrId: string) => Promise<Result<YouTubeTrack[]>>;
   getRelatedTracks: (videoId: string, excludeIds?: string[]) => Promise<Result<YouTubeTrack[]>>;
+  getRecommendedTracks: (videoId: string, excludeIds?: string[]) => Promise<Result<YouTubeTrack[]>>;
   resolveStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   invalidateStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   getYtDlpStatus: () => Promise<Result<YtDlpStatus>>;
@@ -59,6 +62,18 @@ export interface TubeDeckAPI {
   downloadUpdate: () => Promise<Result<UpdateStatus | null>>;
   installUpdate: () => Promise<Result<boolean>>;
   onUpdateStatus: (cb: (status: UpdateStatus) => void) => () => void;
+  getHistoryTasteProfile: () => Promise<Result<HistoryTasteProfile>>;
+  startBatchDownload: (
+    sessionId: string,
+    format: 'video' | 'audio'
+  ) => Promise<Result<BatchDownloadProgress | null>>;
+  cancelBatchDownload: () => Promise<Result<boolean>>;
+  onBatchDownloadProgress: (cb: (progress: BatchDownloadProgress) => void) => () => void;
+  listLocalLibrary: () => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
+  pickLocalFiles: () => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
+  pickLocalFolder: () => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
+  removeLocalFolder: (folderPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
+  resolveLocalFile: (filePath: string) => Promise<Result<DeckStreamEndpoints>>;
 }
 
 function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -74,6 +89,8 @@ const api: TubeDeckAPI = {
   getPlaylistTracks: (urlOrId) => ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_PLAYLIST, urlOrId),
   getRelatedTracks: (videoId, excludeIds = []) =>
     ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RELATED, videoId, excludeIds),
+  getRecommendedTracks: (videoId, excludeIds = []) =>
+    ipcRenderer.invoke(IPC_CHANNELS.YOUTUBE_RECOMMENDED, videoId, excludeIds),
   resolveStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_RESOLVE, videoId),
   invalidateStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_INVALIDATE, videoId),
   getYtDlpStatus: () => ipcRenderer.invoke(IPC_CHANNELS.YTDLP_STATUS),
@@ -116,7 +133,17 @@ const api: TubeDeckAPI = {
   checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_CHECK),
   downloadUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_DOWNLOAD),
   installUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATER_INSTALL),
-  onUpdateStatus: (cb) => subscribeChannel(IPC_CHANNELS.UPDATER_STATUS_EVENT, cb)
+  onUpdateStatus: (cb) => subscribeChannel(IPC_CHANNELS.UPDATER_STATUS_EVENT, cb),
+  getHistoryTasteProfile: () => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_TASTE_PROFILE),
+  startBatchDownload: (sessionId, format) =>
+    ipcRenderer.invoke(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD, sessionId, format),
+  cancelBatchDownload: () => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD_CANCEL),
+  onBatchDownloadProgress: (cb) => subscribeChannel(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD_PROGRESS, cb),
+  listLocalLibrary: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_LIST_LIBRARY),
+  pickLocalFiles: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_PICK_FILES),
+  pickLocalFolder: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_PICK_FOLDER),
+  removeLocalFolder: (folderPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REMOVE_FOLDER, folderPath),
+  resolveLocalFile: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_RESOLVE_FILE, filePath)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);

@@ -1,7 +1,8 @@
 import type { DeckId, YouTubeTrack } from '../../shared/types';
 
-export type QueueSource = 'user' | 'youtube-radio';
+export type QueueSource = 'user' | 'youtube-radio' | 'local';
 export type AutomixFadeType = 'smart-crossfade' | 'fade-out-in' | 'cut' | 'backspin';
+export type PreloadMode = 'immediate' | '90s' | '60s' | '30s';
 
 export interface QueueItem {
   queueId: string;
@@ -14,6 +15,7 @@ export interface QueueItem {
 export interface AutomixOptions {
   enabled: boolean;
   preloadLeadSec: number;
+  preloadMode?: PreloadMode;
   crossfadeDurationSec: number;
   outroTriggerSec: number;
   autoRadioEnabled: boolean;
@@ -24,6 +26,7 @@ export interface AutomixTickContext {
   activeDeck: DeckId;
   activeVideoId: string | null;
   otherDeckVideoId: string | null;
+  elapsedSec?: number;
   remainingSec: number;
   isActivePlaying: boolean;
   isActiveEnded: boolean;
@@ -61,18 +64,19 @@ export class QueueAndAutomixEngine {
     return `q-${Date.now()}-${this.idCounter}`;
   }
 
-  enqueue(track: YouTubeTrack, source: QueueSource = 'user'): QueueItem {
+  enqueue(track: YouTubeTrack, source?: QueueSource): QueueItem {
+    const resolvedSource: QueueSource = source ?? (track.source === 'local' ? 'local' : 'user');
     const item: QueueItem = {
       queueId: this.nextId(),
       track,
       status: 'pending',
-      source
+      source: resolvedSource
     };
     this.queue.push(item);
     return item;
   }
 
-  enqueueMany(tracks: YouTubeTrack[], source: QueueSource = 'user'): QueueItem[] {
+  enqueueMany(tracks: YouTubeTrack[], source?: QueueSource): QueueItem[] {
     return tracks.map((t) => this.enqueue(t, source));
   }
 
@@ -88,6 +92,35 @@ export class QueueAndAutomixEngine {
     }
     const [moved] = this.queue.splice(fromIndex, 1);
     this.queue.splice(toIndex, 0, moved);
+  }
+
+  moveToNext(queueId: string): void {
+    const idx = this.queue.findIndex((q) => q.queueId === queueId);
+    if (idx <= 0) return;
+    const item = this.queue[idx];
+    if (item.status === 'loaded' || item.status === 'preloading') return;
+
+    // Insert at the first pending slot so already-preloaded deck stays undisturbed
+    let targetIdx = this.queue.findIndex((q) => q.status === 'pending' || q.status === 'failed');
+    if (targetIdx === -1) targetIdx = 0;
+    if (idx === targetIdx) return;
+    this.queue.splice(idx, 1);
+    const adjusted = idx < targetIdx ? targetIdx - 1 : targetIdx;
+    this.queue.splice(adjusted, 0, item);
+  }
+
+  interleaveBySource(): void {
+    const pinned = this.queue.filter((q) => q.status === 'loaded' || q.status === 'preloading');
+    const pending = this.queue.filter((q) => q.status !== 'loaded' && q.status !== 'preloading');
+    const yt = pending.filter((q) => q.track.source !== 'local');
+    const local = pending.filter((q) => q.track.source === 'local');
+    const zipped: QueueItem[] = [];
+    const maxLen = Math.max(yt.length, local.length);
+    for (let i = 0; i < maxLen; i += 1) {
+      if (yt[i]) zipped.push(yt[i]);
+      if (local[i]) zipped.push(local[i]);
+    }
+    this.queue = [...pinned, ...zipped];
   }
 
   remove(queueId: string): void {
@@ -201,11 +234,16 @@ export class QueueAndAutomixEngine {
         this.playedVideoIds.add(context.activeVideoId);
       }
 
-      // 1. Preload next valid track into inactive deck when within preloadLeadSec
-      if (
-        (remainingSec <= options.preloadLeadSec || context.isActiveEnded) &&
-        !this.preloadedForDeck[inactiveDeck]
-      ) {
+      const mode = options.preloadMode ?? 'immediate';
+      const leadSec =
+        mode === '90s' ? 90 : mode === '60s' ? 60 : mode === '30s' ? 30 : options.preloadLeadSec;
+      const shouldPreloadNow =
+        context.isActiveEnded ||
+        remainingSec <= leadSec ||
+        (mode === 'immediate' && (context.elapsedSec ?? 0) >= 4);
+
+      // 1. Preload next valid track early so slow internet connections finish buffering before outro
+      if (shouldPreloadNow && !this.preloadedForDeck[inactiveDeck]) {
         let safetyIterations = 0;
         while (safetyIterations < 6) {
           safetyIterations += 1;
