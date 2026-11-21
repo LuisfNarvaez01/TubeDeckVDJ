@@ -7,38 +7,109 @@ import type { LocalLibraryService } from './LocalLibraryService';
 import type { YtDlpBinaryManager } from './YtDlpBinaryManager';
 
 export type BatchDownloadFormat = 'video' | 'audio';
-export type BatchDownloadRunner = (args: string[], signal: AbortSignal) => Promise<void>;
+export type BatchDownloadRunner = (
+  args: string[],
+  signal: AbortSignal,
+  onPercent?: (percent: number) => void
+) => Promise<void>;
 
-function createDefaultRunner(binaryManager: YtDlpBinaryManager): BatchDownloadRunner {
-  return async (args: string[], signal: AbortSignal): Promise<void> => {
+export interface BatchRunnerOptions {
+  /** Same sign-in cookies the player uses, so a bot check does not block downloads. */
+  getCookieFile?: () => string | null;
+  /** Electron's own Node, used by yt-dlp to solve YouTube's JS challenges. */
+  nodeRuntimePath?: string;
+  /** Kill a download that prints nothing for this long (stuck connection). */
+  idleTimeoutMs?: number;
+}
+
+const PERCENT_RE = /\[download\]\s+(\d+(?:\.\d+)?)%/;
+
+/** Extra yt-dlp flags shared by every batch item: JS runtime, cookies, line-based progress. */
+export function buildBatchRuntimeArgs(opts: BatchRunnerOptions): string[] {
+  const args = ['--newline', '--progress', '--socket-timeout', '20', '--retries', '3'];
+  if (opts.nodeRuntimePath) args.push('--js-runtimes', `node:${opts.nodeRuntimePath}`);
+  const cookies = opts.getCookieFile?.();
+  if (cookies) args.push('--cookies', cookies);
+  return args;
+}
+
+export function parseDownloadPercent(line: string): number | null {
+  const m = PERCENT_RE.exec(line);
+  return m ? Math.min(100, Number(m[1])) : null;
+}
+
+function createDefaultRunner(binaryManager: YtDlpBinaryManager, opts: BatchRunnerOptions): BatchDownloadRunner {
+  const idleTimeoutMs = opts.idleTimeoutMs ?? 90_000;
+  return async (args, signal, onPercent): Promise<void> => {
     const binPath = await binaryManager.ensureInstalled();
     await new Promise<void>((resolve, reject) => {
       if (signal.aborted) {
         reject(new Error('Descarga cancelada'));
         return;
       }
-      const child = spawn(binPath, args, { windowsHide: true });
-      let stderr = '';
-      child.stderr?.on('data', (d) => {
-        stderr += String(d);
+      const child = spawn(binPath, [...buildBatchRuntimeArgs(opts), ...args], {
+        windowsHide: true,
+        // stdin closed; stdout MUST be drained or yt-dlp blocks once the pipe fills up.
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: opts.nodeRuntimePath ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env
       });
-      const onAbort = () => {
+      let stderr = '';
+      let settled = false;
+      let idleTimer: NodeJS.Timeout | null = null;
+      const kill = (): void => {
         try {
           child.kill();
         } catch {
           // ignore kill race
         }
-        reject(new Error('Descarga cancelada'));
+      };
+      const onAbort = (): void => {
+        kill();
+        finish(new Error('Descarga cancelada'));
+      };
+      const finish = (err?: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (idleTimer) clearTimeout(idleTimer);
+        signal.removeEventListener('abort', onAbort);
+        if (err) reject(err);
+        else resolve();
+      };
+      const bumpIdle = (): void => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          kill();
+          finish(new Error('la descarga dejó de avanzar (sin conexión o YouTube no responde)'));
+        }, idleTimeoutMs);
       };
       signal.addEventListener('abort', onAbort, { once: true });
-      child.on('error', (err) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(err);
+      bumpIdle();
+      let buf = '';
+      child.stdout?.on('data', (d) => {
+        bumpIdle();
+        buf += String(d);
+        const lines = buf.split(/\r?\n|\r/);
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          const pct = parseDownloadPercent(line);
+          if (pct !== null) onPercent?.(pct);
+        }
       });
+      child.stderr?.on('data', (d) => {
+        bumpIdle();
+        stderr = (stderr + String(d)).slice(-4000);
+      });
+      child.on('error', (err) => finish(err));
       child.on('close', (code) => {
-        signal.removeEventListener('abort', onAbort);
-        if (code === 0) resolve();
-        else reject(new Error(stderr.trim() || `yt-dlp salió con código ${code}`));
+        if (code === 0) {
+          finish();
+          return;
+        }
+        const lastError = stderr
+          .split(/\r?\n/)
+          .filter((l) => /ERROR/i.test(l))
+          .pop();
+        finish(new Error((lastError ?? stderr.trim()) || `yt-dlp salió con código ${code}`));
       });
     });
   };
@@ -63,13 +134,14 @@ export class BatchDownloadService {
   constructor(options: {
     binaryManager?: YtDlpBinaryManager;
     runner?: BatchDownloadRunner;
+    runnerOptions?: BatchRunnerOptions;
     localLibrary?: LocalLibraryService;
     onProgress?: (progress: BatchDownloadProgress) => void;
   }) {
     if (options.runner) {
       this.runner = options.runner;
     } else if (options.binaryManager) {
-      this.runner = createDefaultRunner(options.binaryManager);
+      this.runner = createDefaultRunner(options.binaryManager, options.runnerOptions ?? {});
     } else {
       throw new Error('BatchDownloadService requires binaryManager or runner');
     }
@@ -124,7 +196,8 @@ export class BatchDownloadService {
       failed: 0,
       currentTitle: unique[0]?.title ?? '',
       outputDir,
-      errors: []
+      errors: [],
+      currentPercent: 0
     });
 
     const formatSelector =
@@ -141,7 +214,7 @@ export class BatchDownloadService {
           return this.getProgress();
         }
 
-        this.emit({ currentTitle: track.title });
+        this.emit({ currentTitle: track.title, currentPercent: 0 });
         const args = [
           '-f',
           formatSelector,
@@ -155,8 +228,14 @@ export class BatchDownloadService {
         ];
 
         try {
-          await this.runner(args, abort.signal);
-          this.emit({ completed: this.progress.completed + 1 });
+          let lastEmitPct = -10;
+          await this.runner(args, abort.signal, (pct) => {
+            if (pct - lastEmitPct >= 2 || pct >= 100) {
+              lastEmitPct = pct;
+              this.emit({ currentPercent: pct });
+            }
+          });
+          this.emit({ completed: this.progress.completed + 1, currentPercent: 100 });
         } catch (err) {
           if (abort.signal.aborted) {
             this.emit({ status: 'cancelled', currentTitle: '' });

@@ -18,6 +18,7 @@ import type { HistoryAndCratesService } from '../services/HistoryAndCratesServic
 import { browseDirectory, listDrivePlaces, type LocalLibraryService } from '../services/LocalLibraryService';
 import type { MixRecordingService } from '../services/MixRecordingService';
 import type { YouTubeAccessMonitor, YouTubeAccessStatus } from '../services/YouTubeAccessMonitor';
+import type { NetworkMonitor } from '../services/NetworkMonitor';
 import type { RecommendationEngine } from '../services/RecommendationEngine';
 import type { TasteFeedbackService } from '../services/TasteFeedbackService';
 import type { RamStreamProxy } from '../services/RamStreamProxy';
@@ -27,6 +28,16 @@ import type { YouTubeSearchService } from '../services/YouTubeSearchService';
 import type { YtDlpBinaryManager } from '../services/YtDlpBinaryManager';
 
 const VideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'ID de video inválido');
+
+/**
+ * Exclusion lists come from the renderer and can hold local-file ids or grow long over a
+ * night: keep the valid YouTube ids (most recent last) instead of rejecting the request.
+ */
+export function parseExcludeIds(raw: unknown, max = 400): string[] {
+  if (!Array.isArray(raw)) return [];
+  const valid = raw.filter((v): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{11}$/.test(v));
+  return Array.from(new Set(valid)).slice(-max);
+}
 const NonEmptyStringSchema = z.string().trim().min(1).max(500);
 const FeedbackSchema = z.object({
   track: z.object({
@@ -84,6 +95,7 @@ export interface MainServices {
   updater?: AutoUpdaterService;
   localLibrary?: LocalLibraryService;
   recordings?: MixRecordingService;
+  network?: NetworkMonitor;
   youtubeAccess?: {
     monitor: YouTubeAccessMonitor;
     connect: () => Promise<YouTubeAccessStatus>;
@@ -158,9 +170,7 @@ export function registerIpcHandlers(services: MainServices): void {
     (_event, rawVideoId: unknown, rawExcludeIds: unknown) =>
       wrapResult(async () => {
         const videoId = VideoIdSchema.parse(rawVideoId);
-        const excludeIds = Array.isArray(rawExcludeIds)
-          ? z.array(VideoIdSchema).max(200).parse(rawExcludeIds)
-          : [];
+        const excludeIds = parseExcludeIds(rawExcludeIds);
         return services.search.getRelatedTracks(videoId, excludeIds);
       })
   );
@@ -170,9 +180,7 @@ export function registerIpcHandlers(services: MainServices): void {
     (_event, rawVideoId: unknown, rawExcludeIds: unknown, rawSeedTitle: unknown) =>
       wrapResult(async () => {
         const videoId = VideoIdSchema.parse(rawVideoId);
-        const excludeIds = Array.isArray(rawExcludeIds)
-          ? z.array(VideoIdSchema).max(200).parse(rawExcludeIds)
-          : [];
+        const excludeIds = parseExcludeIds(rawExcludeIds);
         const seedTitle =
           typeof rawSeedTitle === 'string' ? rawSeedTitle.trim().slice(0, 200) : undefined;
         if (services.recommender) {
@@ -226,6 +234,7 @@ export function registerIpcHandlers(services: MainServices): void {
         return buildEndpoints(services.proxy, resolved);
       } catch (err) {
         services.youtubeAccess?.monitor.reportPlaybackError(err instanceof Error ? err.message : String(err));
+        void services.network?.check();
         throw err;
       }
     })
@@ -582,6 +591,16 @@ export function registerIpcHandlers(services: MainServices): void {
       const folderPath = NonEmptyStringSchema.parse(rawFolder);
       services.localLibrary.removeFolder(folderPath);
       return services.localLibrary.listLibrary();
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.NET_STATUS, () =>
+    wrapResult(() => services.network?.getStatus() ?? { online: true, checkedAtMs: null, offlineSinceMs: null })
+  );
+  ipcMain.handle(IPC_CHANNELS.NET_CHECK, () =>
+    wrapResult(async () => {
+      if (!services.network) return { online: true, checkedAtMs: null, offlineSinceMs: null };
+      return services.network.check();
     })
   );
 

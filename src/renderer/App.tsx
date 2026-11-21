@@ -58,6 +58,8 @@ import { PhaseMeter } from './components/ui/PhaseMeter';
 import { RundownColumn } from './components/RundownColumn';
 import { RecordButton } from './components/RecordButton';
 import { useYouTubeAccess, YouTubeBlockedBanner } from './components/YouTubeAccess';
+import { NetworkBanner, useNetworkStatus } from './components/NetworkStatus';
+import { mergeOverlayConfig, OVERLAY_SETTING_KEY, persistOverlayConfig } from './video/overlayPersistence';
 import { MixRecorder, type MixRecordingKind } from './audio/MixRecorder';
 import { HotkeyManager, type HotkeyAction } from './controllers/HotkeyManager';
 import { MidiLearnEngine, type MidiLearnMode } from './controllers/MidiLearnEngine';
@@ -280,6 +282,10 @@ export function App(): ReactElement {
   const autoGainEmaRef = useRef<Record<DeckId, number>>({ A: 0.42, B: 0.42 });
   const brakeTimersRef = useRef<Record<DeckId, number | null>>({ A: null, B: null });
   const queueEngineRef = useRef(new QueueAndAutomixEngine());
+  /** Mirrors the network banner for the Automix engine (read inside the render loop). */
+  const offlineRef = useRef(false);
+  /** Deck Automix just mixed into: if it does not start playing, retry and then skip it. */
+  const automixTargetRef = useRef<{ deck: DeckId; atMs: number; lastTryMs: number } | null>(null);
 
   const masterCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const compositorRef = useRef<WebGLVideoCompositor | null>(null);
@@ -474,10 +480,14 @@ export function App(): ReactElement {
 
       if (syncs && toTrack && syncs[toDeck].isPaused()) {
         try {
-          await syncs[toDeck].play();
-          setDeckPatch(toDeck, { playing: true });
+          // play() can stay pending while a stream buffers: never let it hold the fade back.
+          const started = await Promise.race([
+            syncs[toDeck].play().then(() => true),
+            new Promise<boolean>((r) => setTimeout(() => r(false), 4000))
+          ]);
+          if (started) setDeckPatch(toDeck, { playing: true });
         } catch {
-          // ignore if stream is still buffering
+          // ignore if stream is still buffering; the Automix watchdog retries play
         }
       }
 
@@ -530,6 +540,13 @@ export function App(): ReactElement {
       });
       void api.listCrates().then((res) => {
         if (res.success) setCrates(res.data);
+      });
+      // Frames, logo, marquee and OSD survive restarts (the webcam always starts off).
+      void api.getSetting?.<Partial<OverlayConfig> | null>(OVERLAY_SETTING_KEY, null).then((res) => {
+        if (!res?.success || !res.data) return;
+        const restored = mergeOverlayConfig(res.data);
+        useSettingsStore.getState().setOverlayConfig(restored);
+        overlayCompRef.current.updateConfig(restored);
       });
       void api.listMidiMappings().then((res) => {
         if (res.success) {
@@ -814,6 +831,8 @@ export function App(): ReactElement {
             s.syncDrift(now);
             s.checkVideoHealth(now);
             void cueCtrls?.[id].checkLoopBoundary(s.getCurrentTime());
+          } else if (s.isEnded()) {
+            s.checkVideoHealth(now); // stops a picture that would otherwise keep running alone
           }
         });
 
@@ -918,6 +937,13 @@ export function App(): ReactElement {
             w.lastMoveMs = now;
           } else if (now - w.lastMoveMs > 7000) {
             w.lastMoveMs = now;
+            const dur = syncs[id].getDuration() || st.durationSec;
+            if (dur > 0 && dur - t < 5) {
+              // Stuck in the last seconds: the song is over. Reloading would replay it.
+              stallEndedRef.current[id] = true;
+              syncs[id].pause();
+              return;
+            }
             w.attempts += 1;
             recoverStallRef.current(id, t);
           }
@@ -998,11 +1024,32 @@ export function App(): ReactElement {
           const otherDeck: DeckId = activeDeck === 'A' ? 'B' : 'A';
           const deckState = useDeckStore.getState().decks[activeDeck];
           const otherState = useDeckStore.getState().decks[otherDeck];
-          const isEnded = syncs[activeDeck].isEnded() || stallEndedRef.current[activeDeck];
+          // A deck whose stream died mid-song counts as ended so Automix moves on instead of waiting.
+          const isEnded =
+            syncs[activeDeck].isEnded() ||
+            stallEndedRef.current[activeDeck] ||
+            Boolean(deckState.error && !deckState.loading && deckState.currentTimeSec > 0);
           const remainingSec = isEnded
             ? 0
             : Math.max(0, deckState.durationSec - deckState.currentTimeSec);
           const lib = useLibraryStore.getState();
+
+          const target = automixTargetRef.current;
+          if (target && !isTransitioning) {
+            if (target.deck !== activeDeck || deckState.playing || isEnded) {
+              automixTargetRef.current = null;
+            } else if (!deckState.loading && now - target.atMs > 25_000) {
+              automixTargetRef.current = null;
+              stallEndedRef.current[activeDeck] = true;
+              lib.setAutomixStatusNote(`Deck ${activeDeck} no arrancó: pasando a la siguiente.`);
+            } else if (!deckState.loading && now - target.lastTryMs > 2500) {
+              target.lastTryMs = now;
+              void syncs[activeDeck]
+                .play()
+                .then(() => setDeckPatch(activeDeck, { playing: true }))
+                .catch(() => {});
+            }
+          }
 
           if (lib.automixEnabled && deckState.track && deckState.durationSec > 0) {
             void queueEngineRef.current
@@ -1033,6 +1080,8 @@ export function App(): ReactElement {
                   },
                   startTransition: async (_fromDeck, toDeck, durationSec, fadeType) => {
                     await startUnifiedCrossfade(toDeck, durationSec, fadeType, true);
+                    const t0 = performance.now();
+                    automixTargetRef.current = { deck: toDeck, atMs: t0, lastTryMs: t0 };
                     if (fadeType !== 'cut' && fadeType !== 'backspin') {
                       void beatMatchRef.current(toDeck);
                     }
@@ -1053,6 +1102,14 @@ export function App(): ReactElement {
                       ? window.tubedeckAPI.getRecommendedTracks(seedVideoId, excludeIds, seedTitle)
                       : window.tubedeckAPI?.getRelatedTracks(seedVideoId, excludeIds));
                     return res?.success ? res.data : [];
+                  },
+                  isOffline: () => offlineRef.current,
+                  onRadioEmpty: () => {
+                    useLibraryStore
+                      .getState()
+                      .setAutomixStatusNote(
+                        'La radio no encontró canciones nuevas: probando con otras canciones de la sesión…'
+                      );
                   },
                   onRadioQueued: (track) => {
                     useLibraryStore
@@ -1283,6 +1340,29 @@ export function App(): ReactElement {
   );
 
   const ytAccess = useYouTubeAccess();
+
+  /** Reloads decks whose stream failed (after reconnecting YouTube or the internet). */
+  const reloadErroredDecks = (): void => {
+    for (const d of ['A', 'B'] as DeckId[]) {
+      const st = useDeckStore.getState().decks[d];
+      if (st.track && st.error && !st.loading) {
+        queueEngineRef.current.claimDeckForManualLoad(d, st.track);
+        void loadTrackOntoDeck(d, st.track).catch(() => {});
+      }
+    }
+  };
+
+  const network = useNetworkStatus((online) => {
+    offlineRef.current = !online;
+    const lib = useLibraryStore.getState();
+    if (online) {
+      queueEngineRef.current.invalidateRadioPool();
+      lib.setAutomixStatusNote('Internet de vuelta: retomando el automix.');
+      reloadErroredDecks();
+    } else {
+      lib.setAutomixStatusNote('Sin internet: el automix espera a que vuelva la conexión.');
+    }
+  });
   const mixRecorderRef = useRef<MixRecorder | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordingSavedPath, setRecordingSavedPath] = useState<string | null>(null);
@@ -1598,6 +1678,7 @@ export function App(): ReactElement {
   const handleOverlayConfigChange = async (next: OverlayConfig) => {
     settings.setOverlayConfig(next);
     overlayCompRef.current.updateConfig(next);
+    persistOverlayConfig(next);
 
     if (next.webcam.enabled && !webcamStreamRef.current && navigator.mediaDevices?.getUserMedia) {
       try {
@@ -1732,17 +1813,7 @@ export function App(): ReactElement {
         void loadTrackOntoDeck(d, t).catch(() => {});
       }}
       onEject={handleEjectDeck}
-      onConnectYouTube={() =>
-        void ytAccess.connect().then(() => {
-          for (const d of ['A', 'B'] as DeckId[]) {
-            const st = useDeckStore.getState().decks[d];
-            if (st.track && st.error) {
-              queueEngineRef.current.claimDeckForManualLoad(d, st.track);
-              void loadTrackOntoDeck(d, st.track).catch(() => {});
-            }
-          }
-        })
-      }
+      onConnectYouTube={() => void ytAccess.connect().then(reloadErroredDecks)}
       onTrackFeedback={handleDeckTrackFeedback}
       key={`${deckId}-${layout}`}
       deckId={deckId}
@@ -2083,6 +2154,8 @@ export function App(): ReactElement {
           </button>
         </div>
       </header>
+
+      <NetworkBanner status={network.status} onRecheck={network.recheck} />
 
       <YouTubeBlockedBanner
         status={ytAccess.status}

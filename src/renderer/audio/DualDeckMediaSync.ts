@@ -344,7 +344,18 @@ export class DualDeckMediaSync {
   }
 
   checkVideoHealth(nowMs = Date.now()): 'ok' | 'resumed' | 'kicked' | 'downgraded' {
-    if (this.mode !== 'dash-split' || this.mediaKind !== 'video' || this.audioEl.paused) {
+    if (this.mode === 'dash-split' && this.mediaKind === 'video' && this.audioEl.ended && !this.videoEl.paused) {
+      // The song is over: the picture must stop with it, never keep running on its own.
+      this.videoEl.pause();
+    }
+    if (this.mode !== 'dash-split' || this.mediaKind !== 'video' || this.audioEl.paused || this.audioEl.ended) {
+      this.stallStartedMs = null;
+      return 'ok';
+    }
+
+    // An ended video is not stalled: play() on it would restart it from 0 (picture with no
+    // sound). The video stream is often a little shorter than the audio one.
+    if (this.videoEl.ended || this.nearEnd(this.videoEl)) {
       this.stallStartedMs = null;
       return 'ok';
     }
@@ -403,8 +414,16 @@ export class DualDeckMediaSync {
     return 'ok';
   }
 
+  private nearEnd(el: HTMLMediaElement, marginSec = 0.6): boolean {
+    const d = el.duration;
+    return Number.isFinite(d) && d > 0 && el.currentTime >= d - marginSec;
+  }
+
   isEnded(): boolean {
-    return Boolean(this.getAudioElement().ended);
+    const el = this.getAudioElement();
+    if (el.ended) return true;
+    // Some streams stop a hair before their reported duration and never fire "ended".
+    return el.paused && el.readyState >= 1 && this.nearEnd(el, 0.35);
   }
 
   getCurrentTime(): number {

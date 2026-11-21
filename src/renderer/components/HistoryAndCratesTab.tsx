@@ -263,8 +263,12 @@ export function HistoryAndCratesTab({
             {batchDownload?.status === 'running' ? (
               <div className="flex items-center gap-2">
                 <span className="font-mono-tabular text-live">
-                  {batchDownload.completed}/{batchDownload.total} —{' '}
-                  {batchDownload.currentTitle.slice(0, 22)}
+                  {Math.min(batchDownload.total, batchDownload.completed + batchDownload.failed + 1)}/
+                  {batchDownload.total}
+                  {typeof batchDownload.currentPercent === 'number'
+                    ? ` · ${Math.round(batchDownload.currentPercent)}%`
+                    : ''}{' '}
+                  — {batchDownload.currentTitle.slice(0, 22)}
                 </span>
                 <button
                   type="button"
@@ -289,10 +293,19 @@ export function HistoryAndCratesTab({
         ) : null}
 
         {batchDownload && batchDownload.status === 'done' ? (
-          <p className="text-[11px] text-live truncate">
-            Descarga completada: {batchDownload.completed} archivos guardados en{' '}
-            {batchDownload.outputDir} (agregados a Biblioteca Local)
-          </p>
+          <div className="flex flex-col gap-0.5 text-[11px]">
+            {batchDownload.completed > 0 ? (
+              <p className="text-live truncate">
+                Descarga completada: {batchDownload.completed} archivos guardados en {batchDownload.outputDir}{' '}
+                (agregados a Biblioteca Local)
+              </p>
+            ) : null}
+            {batchDownload.failed > 0 ? (
+              <p className="text-danger-soft truncate" title={batchDownload.errors.join('\n')}>
+                {batchDownload.failed} no se pudieron descargar: {batchDownload.errors[0] ?? ''}
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
         {exportNote ? <p className="text-[11px] text-live truncate">{exportNote}</p> : null}

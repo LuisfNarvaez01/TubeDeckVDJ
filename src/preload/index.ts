@@ -21,6 +21,7 @@ import type {
   TrackMetadataRecord,
   UpdateStatus,
   YouTubeAccessStatus,
+  NetworkStatus,
   YouTubeTrack,
   YtDlpStatus
 } from '../shared/types';
@@ -86,6 +87,9 @@ export interface TubeDeckAPI {
   connectYouTube: () => Promise<Result<YouTubeAccessStatus>>;
   disconnectYouTube: () => Promise<Result<YouTubeAccessStatus>>;
   onYouTubeAccess: (cb: (status: YouTubeAccessStatus) => void) => () => void;
+  getNetworkStatus: () => Promise<Result<NetworkStatus>>;
+  checkNetwork: () => Promise<Result<NetworkStatus>>;
+  onNetworkStatus: (cb: (status: NetworkStatus) => void) => () => void;
   getHistoryTasteProfile: () => Promise<Result<HistoryTasteProfile>>;
   startBatchDownload: (
     sessionId: string,
@@ -177,6 +181,9 @@ const api: TubeDeckAPI = {
   connectYouTube: () => ipcRenderer.invoke(IPC_CHANNELS.YT_ACCESS_CONNECT),
   disconnectYouTube: () => ipcRenderer.invoke(IPC_CHANNELS.YT_ACCESS_DISCONNECT),
   onYouTubeAccess: (cb) => subscribeChannel(IPC_CHANNELS.YT_ACCESS_EVENT, cb),
+  getNetworkStatus: () => ipcRenderer.invoke(IPC_CHANNELS.NET_STATUS),
+  checkNetwork: () => ipcRenderer.invoke(IPC_CHANNELS.NET_CHECK),
+  onNetworkStatus: (cb) => subscribeChannel(IPC_CHANNELS.NET_EVENT, cb),
   getHistoryTasteProfile: () => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_TASTE_PROFILE),
   startBatchDownload: (sessionId, format) =>
     ipcRenderer.invoke(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD, sessionId, format),

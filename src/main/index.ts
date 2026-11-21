@@ -1,10 +1,11 @@
-import { app, BrowserWindow, session } from 'electron';
+import { app, BrowserWindow, net, session } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc/registerHandlers';
 import { AutoUpdaterService } from './services/AutoUpdaterService';
 import { BatchDownloadService } from './services/BatchDownloadService';
+import { createFetchProbe, NetworkMonitor } from './services/NetworkMonitor';
 import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { HistoryAndCratesService } from './services/HistoryAndCratesService';
@@ -177,6 +178,14 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send(IPC_CHANNELS.YT_ACCESS_EVENT, status);
     }
   });
+  const network = new NetworkMonitor(
+    createFetchProbe((url, init) => net.fetch(url, init)),
+    (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.NET_EVENT, status);
+      }
+    }
+  );
   const resolver = new StreamResolverService(ytRunner);
   const proxy = new RamStreamProxy(resolver);
   await proxy.start();
@@ -198,6 +207,10 @@ app.whenReady().then(async () => {
   recordingService = recordings;
   const batchDownloader = new BatchDownloadService({
     binaryManager: ytDlp,
+    runnerOptions: {
+      getCookieFile: () => ytAuth.getCookieFilePath(),
+      nodeRuntimePath: process.execPath
+    },
     localLibrary,
     onProgress: (progress) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -231,6 +244,7 @@ app.whenReady().then(async () => {
     taste,
     recommender,
     recordings,
+    network,
     youtubeAccess: {
       monitor: ytAccess,
       connect: async () => {
@@ -251,6 +265,7 @@ app.whenReady().then(async () => {
 
   mainWindow = createMainWindow();
   updater.scheduleStartupCheck(8000);
+  network.start();
   // Re-export cookies (Google rotates them) and find out early if YouTube is blocking us.
   setTimeout(() => {
     void ytAuth

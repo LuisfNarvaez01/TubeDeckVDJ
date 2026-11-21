@@ -210,6 +210,8 @@ export interface BatchDownloadProgress {
   completed: number;
   failed: number;
   currentTitle: string;
+  /** Progress of the file being downloaded right now, 0-100. */
+  currentPercent?: number;
   outputDir: string | null;
   errors: string[];
 }
@@ -253,6 +255,13 @@ export interface SmartCrateTrack extends YouTubeTrack {
 }
 
 export type YouTubeAccessState = 'unknown' | 'checking' | 'ok' | 'blocked' | 'offline';
+
+export interface NetworkStatus {
+  online: boolean;
+  checkedAtMs: number | null;
+  /** When the current outage started (null while online). */
+  offlineSinceMs: number | null;
+}
 
 export interface YouTubeAccessStatus {
   state: YouTubeAccessState;

@@ -45,9 +45,40 @@ export interface AutomixCallbacks {
   onTrackSkipped: (item: QueueItem, reason: string) => void;
   fetchSuggestedTracks?: (seedVideoId: string, excludeIds: string[]) => Promise<YouTubeTrack[]>;
   onRadioQueued?: (track: YouTubeTrack) => void;
+  /** True while the computer has no internet: failed loads wait instead of being skipped. */
+  isOffline?: () => boolean;
+  /** Radio found nothing new from any seed this round (shown to the DJ). */
+  onRadioEmpty?: () => void;
 }
 
 const RADIO_RETRY_COOLDOWN_MS = 8000;
+/** A deck load (resolve + buffer) slower than this is treated as failed so Automix keeps going. */
+export const LOAD_TIMEOUT_MS = 60_000;
+const FETCH_TIMEOUT_MS = 20_000;
+const MAX_EXCLUDE_IDS = 300;
+const MAX_RECENT_SEEDS = 12;
+
+const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+export function isYouTubeVideoId(id: string | null | undefined): id is string {
+  return Boolean(id && YOUTUBE_ID_RE.test(id));
+}
+
+export class AutomixTimeoutError extends Error {
+  constructor(label: string, ms: number) {
+    super(`${label}: tardó más de ${Math.round(ms / 1000)} s`);
+    this.name = 'AutomixTimeoutError';
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new AutomixTimeoutError(label, ms)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 
 /** Marks a deck the DJ loaded by hand: Automix must not overwrite it and will mix into it. */
 export const MANUAL_DECK_CLAIM = 'manual';
@@ -78,6 +109,12 @@ export class QueueAndAutomixEngine {
   private radioSeedVideoId: string | null = null;
   private radioPool: YouTubeTrack[] = [];
   private lastRadioFetchMs = -Infinity;
+  /** Consecutive radio rounds that found nothing new: rotates to another seed song. */
+  private radioMissCount = 0;
+  /** YouTube songs that played recently, newest last: fallback radio seeds. */
+  private recentSeedIds: string[] = [];
+  /** Deck that was on air at the previous tick (to notice manual crossfader moves). */
+  private lastActiveDeck: DeckId | null = null;
   private idCounter = 0;
 
   private nextId(): string {
@@ -175,10 +212,18 @@ export class QueueAndAutomixEngine {
   recordPlayed(videoId: string, title?: string): void {
     if (videoId) {
       this.playedVideoIds.add(videoId);
+      if (isYouTubeVideoId(videoId)) {
+        this.recentSeedIds = [...this.recentSeedIds.filter((id) => id !== videoId), videoId].slice(
+          -MAX_RECENT_SEEDS
+        );
+      }
     }
     if (title) {
       const key = looseSongKey(title);
-      if (key) this.playedSongKeys.add(key);
+      if (key) {
+        this.playedSongKeys.add(key);
+        if (videoId) this.titleKeys.set(videoId, key);
+      }
     }
   }
 
@@ -272,6 +317,47 @@ export class QueueAndAutomixEngine {
     this.radioPool = [];
     this.radioSeedVideoId = null;
     this.lastRadioFetchMs = -Infinity;
+    this.radioMissCount = 0;
+  }
+
+  /**
+   * Seeds to ask the radio with, best first: the song on air, the other deck, then the
+   * songs that played before. Local files cannot seed YouTube, so they are skipped.
+   */
+  radioSeedCandidates(context: Pick<AutomixTickContext, 'activeVideoId' | 'otherDeckVideoId'>): string[] {
+    const ordered = [context.activeVideoId, context.otherDeckVideoId, ...[...this.recentSeedIds].reverse()];
+    const out: string[] = [];
+    for (const id of ordered) {
+      if (isYouTubeVideoId(id) && !out.includes(id) && !this.dismissedVideoIds.has(id)) out.push(id);
+    }
+    return out;
+  }
+
+  /**
+   * Queue items that say they sit on a deck but no deck claims them any more (the DJ mixed
+   * by hand, or the deck was reloaded) already played: drop them so the queue view moves on.
+   * Pending copies of the song on air leave too.
+   */
+  pruneStale(activeVideoId: string | null): boolean {
+    const claimed = new Set(Object.values(this.preloadedForDeck));
+    const before = this.queue.length;
+    const activeKey = activeVideoId ? this.titleKeyOf(activeVideoId) : '';
+    this.queue = this.queue.filter((q) => {
+      if ((q.status === 'loaded' || q.status === 'preloading') && !claimed.has(q.queueId)) return false;
+      if (activeVideoId && q.status !== 'loaded' && q.status !== 'preloading') {
+        if (q.track.videoId === activeVideoId) return false;
+        if (activeKey && looseSongKey(q.track.title) === activeKey) return false;
+      }
+      return true;
+    });
+    return this.queue.length !== before;
+  }
+
+  /** Song key of every track that was loaded, to match re-uploads of the song on air. */
+  private readonly titleKeys = new Map<string, string>();
+
+  private titleKeyOf(videoId: string): string {
+    return this.titleKeys.get(videoId) ?? '';
   }
 
   markDeckChanged(deck: DeckId): void {
@@ -279,14 +365,19 @@ export class QueueAndAutomixEngine {
     this.transitionedForDeck[deck] = false;
   }
 
-  private collectExcludeIds(context: AutomixTickContext): string[] {
+  private collectExcludeIds(context: AutomixTickContext): Set<string> {
     const excluded = new Set<string>([...this.playedVideoIds, ...this.dismissedVideoIds]);
     if (context.activeVideoId) excluded.add(context.activeVideoId);
     if (context.otherDeckVideoId) excluded.add(context.otherDeckVideoId);
     for (const item of this.queue) {
       excluded.add(item.track.videoId);
     }
-    return Array.from(excluded);
+    return excluded;
+  }
+
+  /** What is sent to the recommender: YouTube ids only, newest last, capped. */
+  private excludeIdsForRequest(excluded: Set<string>): string[] {
+    return Array.from(excluded).filter(isYouTubeVideoId).slice(-MAX_EXCLUDE_IDS);
   }
 
   private async ensureRadioSuggestionQueued(
@@ -294,32 +385,47 @@ export class QueueAndAutomixEngine {
     callbacks: AutomixCallbacks,
     nowMs: number
   ): Promise<void> {
-    if (!callbacks.fetchSuggestedTracks || !context.activeVideoId) return;
-    const excluded = new Set(this.collectExcludeIds(context));
+    if (!callbacks.fetchSuggestedTracks) return;
+    const seeds = this.radioSeedCandidates(context);
+    if (seeds.length === 0) return;
+    const excluded = this.collectExcludeIds(context);
+    const isFresh = (t: YouTubeTrack): boolean => !excluded.has(t.videoId) && !this.isQueuedOrPlayedSong(t);
 
-    // Drop any cached radio candidates that were already played or queued
-    if (this.radioSeedVideoId !== context.activeVideoId) {
-      this.radioPool = [];
-      this.radioSeedVideoId = context.activeVideoId;
-    } else {
-      this.radioPool = this.radioPool.filter((t) => !excluded.has(t.videoId) && !this.isQueuedOrPlayedSong(t));
-    }
+    this.radioPool = this.radioPool.filter(isFresh);
 
     if (this.radioPool.length === 0) {
-      if (nowMs - this.lastRadioFetchMs < RADIO_RETRY_COOLDOWN_MS) {
-        return;
-      }
+      if (nowMs - this.lastRadioFetchMs < RADIO_RETRY_COOLDOWN_MS) return;
+      if (callbacks.isOffline?.()) return;
       this.lastRadioFetchMs = nowMs;
+      // Same seed while it keeps giving songs; rotate to the next one each time it runs dry.
+      const seed = seeds[this.radioMissCount % seeds.length];
+      this.radioSeedVideoId = seed;
+      let fetched: YouTubeTrack[] = [];
       try {
-        const fetched = await callbacks.fetchSuggestedTracks(
-          context.activeVideoId,
-          Array.from(excluded)
+        fetched = await withTimeout(
+          callbacks.fetchSuggestedTracks(seed, this.excludeIdsForRequest(excluded)),
+          FETCH_TIMEOUT_MS,
+          'Radio YT'
         );
-        this.radioPool = fetched.filter((t) => !excluded.has(t.videoId) && !this.isQueuedOrPlayedSong(t));
       } catch {
-        this.radioPool = [];
+        fetched = [];
+      }
+      const seen = new Set<string>();
+      this.radioPool = fetched.filter((t) => {
+        if (!isFresh(t)) return false;
+        const key = looseSongKey(t.title) || t.videoId;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (this.radioPool.length === 0) {
+        this.radioMissCount += 1;
+        // Try the next seed right away on the next tick instead of waiting the full cooldown.
+        if (this.radioMissCount % seeds.length !== 0) this.lastRadioFetchMs = -Infinity;
+        else callbacks.onRadioEmpty?.();
         return;
       }
+      this.radioMissCount = 0;
     }
 
     const nextSuggested = this.radioPool.shift();
@@ -356,8 +462,19 @@ export class QueueAndAutomixEngine {
       if (context.activeVideoId) {
         this.playedVideoIds.add(context.activeVideoId);
       }
-      // The deck on air can never be "the next one": forget stale claims on it.
+      // The deck on air can never be "the next one": forget stale claims on it, and any queue
+      // item that was sitting there is now playing (the DJ may have mixed into it by hand).
+      if (this.lastActiveDeck !== activeDeck) {
+        // A deck that just came on air (Automix or the DJ's fader) is ready to mix out again.
+        this.transitionedForDeck[activeDeck] = false;
+        this.lastActiveDeck = activeDeck;
+      }
+      const onAirClaim = this.preloadedForDeck[activeDeck];
       delete this.preloadedForDeck[activeDeck];
+      if (onAirClaim && onAirClaim !== MANUAL_DECK_CLAIM) {
+        this.queue = this.queue.filter((q) => q.queueId !== onAirClaim);
+      }
+      this.pruneStale(context.activeVideoId);
 
       const mode = options.preloadMode ?? 'immediate';
       const leadSec =
@@ -388,7 +505,7 @@ export class QueueAndAutomixEngine {
 
           nextPending.status = 'preloading';
           try {
-            await callbacks.loadDeck(inactiveDeck, nextPending.track);
+            await withTimeout(callbacks.loadDeck(inactiveDeck, nextPending.track), LOAD_TIMEOUT_MS, 'Carga');
             if (this.preloadedForDeck[inactiveDeck] === MANUAL_DECK_CLAIM) {
               nextPending.status = 'pending';
               break;
@@ -399,6 +516,11 @@ export class QueueAndAutomixEngine {
           } catch (err) {
             if (isSuperseded(err)) {
               // The DJ loaded something else on that deck meanwhile: keep this song waiting.
+              nextPending.status = 'pending';
+              break;
+            }
+            if (callbacks.isOffline?.()) {
+              // No internet: the song is not at fault. Keep it and retry when the link is back.
               nextPending.status = 'pending';
               break;
             }
@@ -423,12 +545,21 @@ export class QueueAndAutomixEngine {
           this.recordPlayed(loadedItem.track.videoId, loadedItem.track.title);
         }
         this.transitionedForDeck[activeDeck] = true;
-        await callbacks.startTransition(
-          activeDeck,
-          inactiveDeck,
-          options.crossfadeDurationSec,
-          options.fadeType
-        );
+        let started = true;
+        try {
+          await withTimeout(
+            callbacks.startTransition(activeDeck, inactiveDeck, options.crossfadeDurationSec, options.fadeType),
+            options.crossfadeDurationSec * 1000 + 15_000,
+            'Transición'
+          );
+        } catch {
+          // A hung transition must not freeze Automix: try again on the next tick.
+          started = false;
+        }
+        if (!started) {
+          this.transitionedForDeck[activeDeck] = false;
+          return;
+        }
         this.queue = this.queue.filter((q) => q.queueId !== loadedQueueId);
         delete this.preloadedForDeck[inactiveDeck];
         this.transitionedForDeck[inactiveDeck] = false;
