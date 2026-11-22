@@ -201,8 +201,8 @@ app.whenReady().then(async () => {
   });
   const mediaCache = new MediaCache(path.join(userDataDir, 'media-cache'), {
     maxBytes: cacheSettings.maxGb * 1024 ** 3,
-    saveVideo: cacheSettings.saveVideo,
-    fetchImpl: (url, init) => net.fetch(String(url), init)
+    // Node's fetch, like the stream proxy: Electron's net.fetch rejected these media downloads.
+    saveVideo: cacheSettings.saveVideo
   });
   mediaCache.onChange(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {

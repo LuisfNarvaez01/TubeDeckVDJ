@@ -230,25 +230,45 @@ export function buildYtDlpArgs(videoId: string, opts: { cookieFile?: string | nu
   return args;
 }
 
+export const YTDLP_TIMEOUT_MS = 60_000;
+
+/** A readable reason instead of "Command failed: <long command line>". */
+export function describeYtDlpFailure(err: unknown): Error {
+  const e = err as { killed?: boolean; signal?: string | null; stderr?: unknown; code?: unknown; message?: string };
+  if (e && (e.killed || e.signal === 'SIGTERM')) {
+    return new Error(`yt-dlp tardó más de ${YTDLP_TIMEOUT_MS / 1000} s (conexión lenta o YouTube no respondió)`);
+  }
+  const stderr = typeof e?.stderr === 'string' ? e.stderr.trim() : '';
+  const lines = stderr.split(/\r?\n/).filter(Boolean);
+  const lastError = lines.filter((l) => /ERROR/i.test(l)).pop() ?? lines.pop() ?? '';
+  if (lastError) return new Error(`yt-dlp: ${lastError.slice(0, 400)}`);
+  return new Error(`yt-dlp terminó sin respuesta (código ${String(e?.code ?? '?')})`);
+}
+
 export function createDefaultYtDlpRunner(
   binaryManager: YtDlpBinaryManager,
   options: YtDlpRunnerOptions = {}
 ): YtDlpRunner {
   return async (videoId: string): Promise<YtDlpInfoJson> => {
     const binPath = await binaryManager.ensureInstalled();
-    const { stdout } = await execFileAsync(
-      binPath,
-      buildYtDlpArgs(videoId, {
-        cookieFile: options.getCookieFile?.() ?? null,
-        nodeRuntimePath: options.nodeRuntimePath
-      }),
-      {
-        timeout: 25_000,
+    const args = buildYtDlpArgs(videoId, {
+      cookieFile: options.getCookieFile?.() ?? null,
+      nodeRuntimePath: options.nodeRuntimePath
+    });
+    const env = options.nodeRuntimePath ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env;
+    // YouTube's player challenge (solved in Node) plus several API calls can take 30 s or more on
+    // a slow venue connection; 25 s used to kill resolves that were about to succeed.
+    try {
+      const { stdout } = await execFileAsync(binPath, args, {
+        timeout: YTDLP_TIMEOUT_MS,
         maxBuffer: 12 * 1024 * 1024,
-        env: options.nodeRuntimePath ? { ...process.env, ELECTRON_RUN_AS_NODE: '1' } : process.env
-      }
-    );
-    return JSON.parse(stdout) as YtDlpInfoJson;
+        env,
+        windowsHide: true
+      });
+      return JSON.parse(stdout) as YtDlpInfoJson;
+    } catch (err) {
+      throw describeYtDlpFailure(err);
+    }
   };
 }
 
