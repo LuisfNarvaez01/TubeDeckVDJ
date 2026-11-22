@@ -1,5 +1,8 @@
 appId: com.tubedeck.vdj
-productName: Proyecta
+productName: Lantify Proyecta
+# The app calls itself Proyecta inside; Windows lists it as Lantify Proyecta. Keep the exe name.
+executableName: Proyecta
+copyright: Copyright © Lantify
 directories:
   output: dist
   buildResources: build
@@ -36,7 +39,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Proyecta
+  shortcutName: Lantify Proyecta
+  uninstallDisplayName: Lantify Proyecta
   artifactName: Proyecta-Setup-${version}.${ext}
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico

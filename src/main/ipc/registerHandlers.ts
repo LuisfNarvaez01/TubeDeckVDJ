@@ -1,4 +1,5 @@
 import { app, dialog, ipcMain, shell } from 'electron';
+import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
@@ -96,6 +97,8 @@ export interface MainServices {
   localLibrary?: LocalLibraryService;
   recordings?: MixRecordingService;
   network?: NetworkMonitor;
+  /** Proyecta's own folder for session batch downloads (one subfolder per session). */
+  sessionDownloadsDir?: string;
   youtubeAccess?: {
     monitor: YouTubeAccessMonitor;
     connect: () => Promise<YouTubeAccessStatus>;
@@ -530,14 +533,12 @@ export function registerIpcHandlers(services: MainServices): void {
         if (tracks.length === 0) {
           throw new Error('No hay videos de YouTube en el historial de esta sesión');
         }
-        const { canceled, filePaths } = await dialog.showOpenDialog({
-          title: 'Elegir carpeta para descargar videos de la sesión',
-          properties: ['openDirectory', 'createDirectory']
-        });
-        if (canceled || !filePaths[0]) {
-          return null;
-        }
-        const targetDir = filePaths[0];
+        const session = services.history.listSessions().find((s) => s.id === sessionId);
+        const targetDir = sessionDownloadFolder(
+          services.sessionDownloadsDir ?? path.join(app.getPath('music'), 'Proyecta', 'Sesiones descargadas'),
+          session?.title ?? '',
+          session?.startedAt ?? Date.now()
+        );
         void services.batchDownloader.startBatch(tracks, targetDir, format).catch(() => {});
         return services.batchDownloader.getProgress();
       })
@@ -545,6 +546,22 @@ export function registerIpcHandlers(services: MainServices): void {
 
   ipcMain.handle(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD_CANCEL, () =>
     wrapResult(() => services.batchDownloader?.cancel() ?? false)
+  );
+
+  ipcMain.handle(IPC_CHANNELS.HISTORY_BATCH_OPEN_FOLDER, (_event, rawPath: unknown) =>
+    wrapResult(async () => {
+      const base = services.sessionDownloadsDir;
+      if (!base) throw new Error('Carpeta de descargas no disponible');
+      fs.mkdirSync(base, { recursive: true });
+      let target = base;
+      if (typeof rawPath === 'string' && rawPath.trim()) {
+        const wanted = path.resolve(rawPath.trim());
+        const rel = path.relative(path.resolve(base), wanted);
+        if (!rel.startsWith('..') && !path.isAbsolute(rel) && fs.existsSync(wanted)) target = wanted;
+      }
+      const err = await shell.openPath(target);
+      if (err) throw new Error(err);
+    })
   );
 
   ipcMain.handle(IPC_CHANNELS.LOCAL_LIST_LIBRARY, () =>
@@ -665,6 +682,19 @@ export function registerIpcHandlers(services: MainServices): void {
   ipcMain.handle(IPC_CHANNELS.LOCAL_LIST_PLACES, () =>
     wrapResult(async (): Promise<LocalPlace[]> => {
       const quick: LocalPlace[] = [];
+      if (services.sessionDownloadsDir) {
+        try {
+          fs.mkdirSync(services.sessionDownloadsDir, { recursive: true });
+          quick.push({
+            kind: 'folder',
+            label: 'Sesiones descargadas',
+            path: services.sessionDownloadsDir,
+            detail: 'Descargas en lote de Proyecta'
+          });
+        } catch {
+          // folder could not be created (permissions); skip the shortcut
+        }
+      }
       const named: [Parameters<typeof app.getPath>[0], string][] = [
         ['music', 'Música'],
         ['videos', 'Videos'],
@@ -720,4 +750,19 @@ export function registerIpcHandlers(services: MainServices): void {
       };
     })
   );
+}
+
+/** `<base>/<YYYY-MM-DD HHmm> <title>` with characters Windows rejects removed. */
+export function sessionDownloadFolder(base: string, title: string, startedAtMs: number): string {
+  const d = new Date(startedAtMs);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const clean = title
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')
+    .slice(0, 60);
+  const name = clean && !clean.startsWith('Sesión') ? `${stamp} ${clean}` : stamp;
+  return path.join(base, name);
 }

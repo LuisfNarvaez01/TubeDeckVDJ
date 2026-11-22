@@ -176,3 +176,24 @@
     font-weight: 600;
   }
 }
+
+/* Custom title bar: the header drags the window; Windows draws the caption buttons to its
+   right (titleBarOverlay), so the header stops where they begin. */
+.app-titlebar {
+  -webkit-app-region: drag;
+  app-region: drag;
+  margin-right: max(
+    0px,
+    calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 146px)) - 8px)
+  );
+}
+.app-titlebar button,
+.app-titlebar select,
+.app-titlebar input,
+.app-titlebar a,
+.app-titlebar label,
+.app-titlebar [role='button'],
+.app-titlebar [role='switch'] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}

@@ -96,6 +96,8 @@ export interface TubeDeckAPI {
     format: 'video' | 'audio'
   ) => Promise<Result<BatchDownloadProgress | null>>;
   cancelBatchDownload: () => Promise<Result<boolean>>;
+  /** Opens Proyecta's session-downloads folder (or one session folder inside it) in Explorer. */
+  openSessionDownloads: (dirPath?: string) => Promise<Result<void>>;
   onBatchDownloadProgress: (cb: (progress: BatchDownloadProgress) => void) => () => void;
   listLocalLibrary: () => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
   pickLocalFiles: () => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
@@ -188,6 +190,7 @@ const api: TubeDeckAPI = {
   startBatchDownload: (sessionId, format) =>
     ipcRenderer.invoke(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD, sessionId, format),
   cancelBatchDownload: () => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD_CANCEL),
+  openSessionDownloads: (dirPath) => ipcRenderer.invoke(IPC_CHANNELS.HISTORY_BATCH_OPEN_FOLDER, dirPath),
   onBatchDownloadProgress: (cb) => subscribeChannel(IPC_CHANNELS.HISTORY_BATCH_DOWNLOAD_PROGRESS, cb),
   listLocalLibrary: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_LIST_LIBRARY),
   pickLocalFiles: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_PICK_FILES),

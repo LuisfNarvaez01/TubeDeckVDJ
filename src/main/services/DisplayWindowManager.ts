@@ -70,7 +70,8 @@ function defaultOutputWindowFactory(options: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: true
+      webSecurity: true,
+      backgroundThrottling: false
     }
   });
 }

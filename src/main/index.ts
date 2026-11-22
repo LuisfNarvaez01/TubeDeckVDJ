@@ -124,12 +124,18 @@ function createMainWindow(): BrowserWindow {
     backgroundColor: '#0B0E14',
     title: 'Proyecta',
     autoHideMenuBar: true,
+    // Dark custom title bar: the app header is the drag area and Windows draws its own
+    // minimize/maximize/close buttons (with Snap Layouts) in the app's colors.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#000000', symbolColor: '#c9c9cf', height: 48 },
     webPreferences: {
       preload: path.join(moduleDir, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: true
+      webSecurity: true,
+      // Keep the mix engine (crossfades, Automix) running at full pace when minimized.
+      backgroundThrottling: false
     }
   });
 
@@ -245,6 +251,7 @@ app.whenReady().then(async () => {
     recommender,
     recordings,
     network,
+    sessionDownloadsDir: path.join(app.getPath('music'), 'Proyecta', 'Sesiones descargadas'),
     youtubeAccess: {
       monitor: ytAccess,
       connect: async () => {

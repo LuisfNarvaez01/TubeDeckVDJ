@@ -254,12 +254,15 @@ export function SettingsTab({
         <div className="flex items-center justify-between">
           <h3 className="inline-flex items-center gap-1.5 font-semibold text-ink">
             <CloudDownload className="h-4 w-4 text-muted" />
-            Actualizaciones (GitHub Releases)
+            Acerca de Proyecta
           </h3>
           <span className="rounded border border-white/[0.06] bg-raised px-2 py-0.5 font-mono-tabular text-[11px] text-ink-soft">
-            v{upd?.currentVersion ?? '2.2.0'}
+            {upd?.currentVersion ? `v${upd.currentVersion}` : '—'}
           </span>
         </div>
+        <p className="text-[11px] text-muted">
+          Proyecta es parte del ecosistema <span className="font-semibold text-ink">Lantify</span>.
+        </p>
 
         <div className="text-[11px] text-muted">
           Estado:{' '}

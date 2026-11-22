@@ -51,3 +51,14 @@ describe('recommendation exclude ids', () => {
     expect(out[out.length - 1]).toBe(many[499]);
   });
 });
+
+describe('session download folder', () => {
+  it('names the folder by date and title, without characters Windows rejects', async () => {
+    const { sessionDownloadFolder } = await import('../../../src/main/ipc/registerHandlers');
+    const at = new Date(2026, 10, 22, 21, 5).getTime();
+    const out = sessionDownloadFolder('C:/base', 'Boda: Ana/Leo?', at);
+    const norm = (p: string): string => p.split('\\').join('/');
+    expect(norm(out)).toBe('C:/base/2026-11-22 2105 Boda Ana Leo');
+    expect(norm(sessionDownloadFolder('C:/base', 'Sesión 22/11/2026', at))).toBe('C:/base/2026-11-22 2105');
+  });
+});

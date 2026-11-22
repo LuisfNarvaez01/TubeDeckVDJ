@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactElement } from 'react';
-import { History, FolderPlus, Download, ListPlus, HardDriveDownload, X, Sparkles } from 'lucide-react';
+import { History, FolderPlus, FolderOpen, Download, ListPlus, HardDriveDownload, X, Sparkles } from 'lucide-react';
 import type {
   Crate,
   DeckId,
@@ -289,15 +289,32 @@ export function HistoryAndCratesTab({
                 Descargar Lote ({entries.length})
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => void window.tubedeckAPI?.openSessionDownloads?.()}
+              title="Abrir en el Explorador la carpeta de sesiones descargadas"
+              aria-label="Abrir carpeta de sesiones descargadas"
+              className="inline-flex items-center rounded border border-white/[0.1] bg-raised p-1 text-ink-soft hover:bg-raised-2 hover:text-ink cursor-pointer"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+            </button>
           </div>
         ) : null}
 
         {batchDownload && batchDownload.status === 'done' ? (
           <div className="flex flex-col gap-0.5 text-[11px]">
             {batchDownload.completed > 0 ? (
-              <p className="text-live truncate">
-                Descarga completada: {batchDownload.completed} archivos guardados en {batchDownload.outputDir}{' '}
-                (agregados a Biblioteca Local)
+              <p className="flex items-center gap-1.5 text-live">
+                <span className="truncate" title={batchDownload.outputDir ?? ''}>
+                  Descarga completada: {batchDownload.completed} archivos en Local → Sesiones descargadas
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void window.tubedeckAPI?.openSessionDownloads?.(batchDownload.outputDir ?? undefined)}
+                  className="shrink-0 underline underline-offset-2 hover:text-ink cursor-pointer"
+                >
+                  Abrir carpeta
+                </button>
               </p>
             ) : null}
             {batchDownload.failed > 0 ? (

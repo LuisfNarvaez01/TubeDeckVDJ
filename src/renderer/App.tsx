@@ -1185,11 +1185,25 @@ export function App(): ReactElement {
         });
       }
 
-      rafId = requestAnimationFrame(tick);
     };
 
-    rafId = requestAnimationFrame(tick);
+    // rAF stops completely while the window is minimized or covered, which used to freeze
+    // crossfades and Automix (music stopped with songs still queued). A timer keeps the same
+    // loop running whenever frames stop arriving; the main process disables background
+    // throttling so this timer keeps its pace.
+    let lastFrameMs = 0;
+    const frame = (now: number) => {
+      lastFrameMs = performance.now();
+      tick(now);
+      rafId = requestAnimationFrame(frame);
+    };
+    rafId = requestAnimationFrame(frame);
+    const backgroundTimer = window.setInterval(() => {
+      const t = performance.now();
+      if (t - lastFrameMs > 200) tick(t);
+    }, 40);
     return () => {
+      window.clearInterval(backgroundTimer);
       cancelAnimationFrame(rafId);
       routerRef.current?.dispose();
       decksSyncRef.current?.A.dispose();
@@ -1943,7 +1957,7 @@ export function App(): ReactElement {
       />
 
       {/* Top Pro Hardware Obsidian Header Bar */}
-      <header className="flex h-10 shrink-0 items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-surface px-3 text-xs">
+      <header className="app-titlebar flex h-10 shrink-0 items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-surface px-3 text-xs">
         <div className="flex shrink-0 items-center gap-2">
           <BrandMark className="h-5 w-5" />
           <span className="text-[13px] font-bold tracking-tight text-ink">Proyecta</span>

@@ -30,6 +30,7 @@ export const IPC_CHANNELS = {
   HISTORY_TASTE_PROFILE: 'history:taste-profile',
   HISTORY_BATCH_DOWNLOAD: 'history:batch-download',
   HISTORY_BATCH_DOWNLOAD_CANCEL: 'history:batch-download-cancel',
+  HISTORY_BATCH_OPEN_FOLDER: 'history:batch-open-folder',
   HISTORY_BATCH_DOWNLOAD_PROGRESS: 'history:batch-download-progress',
   TASTE_FEEDBACK: 'taste:feedback',
   TASTE_GET_SEEDS: 'taste:get-seeds',
