@@ -26,6 +26,7 @@ export class CueLoopTempoController {
   private rollSavedLoop: LoopState | null = null;
   private rollStartWallMs = 0;
   private rollStartTrackSec = 0;
+  private rollActive = false;
 
   constructor(
     deckId: DeckId,
@@ -216,12 +217,16 @@ export class CueLoopTempoController {
     const outSec = Number((inSec + beats * beatSec).toFixed(4));
     this.rollSavedLoop = this.loop ? { ...this.loop } : null;
     this.rollStartWallMs = nowMs;
+    this.rollActive = true;
     this.rollStartTrackSec = inSec;
     this.loop = { active: true, inSec, outSec, beats };
     return this.getLoop()!;
   }
 
   async endLoopRoll(nowMs = Date.now()): Promise<LoopState | null> {
+    // Releasing (or just hovering off) a pad that never started a roll must not move the track.
+    if (!this.rollActive) return this.getLoop();
+    this.rollActive = false;
     const elapsedSec = Math.max(0, (nowMs - this.rollStartWallMs) / 1000);
     this.loop = this.rollSavedLoop ? { ...this.rollSavedLoop } : null;
     this.rollSavedLoop = null;

@@ -265,6 +265,16 @@ export function App(): ReactElement {
   const lastLoggedTrackRef = useRef<Record<DeckId, string>>({ A: '', B: '' });
 
   const dspRef = useRef<AudioDspEngine | null>(null);
+  // Echo time and flanger sweep follow each deck's tempo (detected, tapped, halved/doubled).
+  useEffect(
+    () =>
+      useDeckStore.subscribe((st, prev) => {
+        for (const d of ['A', 'B'] as const) {
+          if (st.decks[d].bpm !== prev.decks[d].bpm) dspRef.current?.setDeckFxTempo(d, st.decks[d].bpm);
+        }
+      }),
+    []
+  );
   const routerRef = useRef<AudioOutputRouter | null>(null);
   const decksSyncRef = useRef<Record<DeckId, DualDeckMediaSync> | null>(null);
   const cueCtrlsRef = useRef<Record<DeckId, CueLoopTempoController> | null>(null);

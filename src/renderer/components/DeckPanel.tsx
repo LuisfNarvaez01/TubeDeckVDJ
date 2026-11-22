@@ -1,4 +1,5 @@
 import { useEffect, useState, type MutableRefObject, type ReactElement } from 'react';
+import { FxRow } from './ui/FxRow';
 import {
   Play,
   Pause,
@@ -875,52 +876,20 @@ export function DeckPanel({
         ) : null}
 
         {padMode === 'audio-fx' ? (
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="flex flex-col gap-1">
             {(['echo', 'reverb', 'flanger'] as AudioFxId[]).map((fx) => {
               const st = deck.audioFx[fx];
               return (
-                <div
+                <FxRow
                   key={fx}
-                  className="flex h-11 items-center gap-1.5 rounded-md border border-white/[0.06] bg-raised px-2"
-                >
-                  <button
-                    type="button"
-                    onClick={() => onDeckFxChange(deckId, fx, !st.enabled, st.wet, st.beatDiv)}
-                    className={`inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase cursor-pointer ${
-                      st.enabled
-                        ? 'border-live/60 bg-live/15 text-live'
-                        : 'border-white/[0.06] bg-ground text-muted'
-                    }`}
-                  >
-                    <Sparkles className="h-2.5 w-2.5" />
-                    {fx}
-                  </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={st.wet}
-                    onChange={(e) =>
-                      onDeckFxChange(deckId, fx, st.enabled, Number(e.target.value), st.beatDiv)
-                    }
-                    aria-label={`${fx} Mix Deck ${deckId}`}
-                    className="w-full accent-ink-2 cursor-pointer"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const divs = ['1/4', '1/2', '3/4', '1/1'] as const;
-                      const next = divs[(divs.indexOf(st.beatDiv) + 1) % divs.length];
-                      onDeckFxChange(deckId, fx, st.enabled, st.wet, next);
-                    }}
-                    aria-label={`Tiempo de ${fx} Deck ${deckId}: ${st.beatDiv} de beat`}
-                    title="Tiempo del efecto en beats (clic para cambiar)"
-                    className="shrink-0 rounded border border-white/[0.06] bg-ground px-1 py-0.5 font-mono-tabular text-[10px] text-ink-soft hover:text-ink cursor-pointer"
-                  >
-                    {st.beatDiv}
-                  </button>
-                </div>
+                  deckId={deckId}
+                  fx={fx}
+                  enabled={st.enabled}
+                  wet={st.wet}
+                  beatDiv={st.beatDiv}
+                  accent={accent}
+                  onChange={onDeckFxChange}
+                />
               );
             })}
           </div>

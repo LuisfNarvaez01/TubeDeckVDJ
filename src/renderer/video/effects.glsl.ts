@@ -33,45 +33,60 @@ vec2 applyPixelateUv(vec2 uv, float amount) {
   return floor(uv * blocks) / blocks;
 }
 
-vec3 hueShift(vec3 col, float angle) {
-  const vec3 k = vec3(0.57735, 0.57735, 0.57735);
-  float cosAngle = cos(angle);
-  return vec3(
-    col * cosAngle +
-    cross(k, col) * sin(angle) +
-    k * dot(k, col) * (1.0 - cosAngle)
-  );
+float fxHash(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
 }
 
+/** Duotone in the Proyecta colors (deep magenta shadows, cyan highlights), drifting slowly. */
+vec3 duotone(vec3 rgb, float amount) {
+  float lum = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+  float drift = 0.5 + 0.5 * sin(u_time * 0.25);
+  vec3 shadow = mix(vec3(0.22, 0.02, 0.18), vec3(0.02, 0.06, 0.22), drift);
+  vec3 light = mix(vec3(0.13, 0.88, 0.94), vec3(1.0, 0.31, 0.66), drift);
+  vec3 tone = mix(shadow, light, smoothstep(0.05, 0.95, lum));
+  tone *= 1.0 + u_audioBands.x * 0.25;
+  return mix(rgb, tone, clamp(amount, 0.0, 1.0));
+}
+
+/** Film black and white: S-curve contrast, moving grain, soft vignette. */
+vec3 filmMono(vec3 rgb, vec2 uv, float amount) {
+  float lum = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+  lum = smoothstep(0.04, 0.96, lum);
+  lum = lum * lum * (3.0 - 2.0 * lum);
+  float grain = (fxHash(uv * 900.0 + fract(u_time * 23.0)) - 0.5) * 0.09;
+  float vig = 1.0 - smoothstep(0.35, 1.15, length(uv - 0.5) * 1.6);
+  vec3 mono = vec3(clamp(lum + grain, 0.0, 1.0) * mix(0.55, 1.0, vig));
+  return mix(rgb, mono, clamp(amount, 0.0, 1.0));
+}
+
+/** Edge glow that breathes with the bass, color drifting between the two deck colors. */
 vec4 applyAudioShader(vec2 uv, vec4 baseColor) {
   if (u_fxAudioShader <= 0.01) return baseColor;
-  vec2 p = uv * 2.0 - 1.0;
-  float dist = length(p);
-  float wave = sin(dist * 14.0 - u_time * 4.5 + u_audioBands.x * 6.0) * 0.5 + 0.5;
-  float rings = smoothstep(0.35, 0.95, wave) * (0.25 + u_audioBands.x * 0.75);
-  vec3 reactive = vec3(
-    0.05 + rings * (0.3 + u_audioBands.y),
-    0.25 + rings * 0.75,
-    0.45 + u_audioBands.z * 0.55
-  );
-  return mix(baseColor, vec4(max(baseColor.rgb, reactive), 1.0), clamp(u_fxAudioShader, 0.0, 1.0));
+  float amt = clamp(u_fxAudioShader, 0.0, 1.0);
+  float bass = smoothstep(0.25, 0.85, u_audioBands.x);
+  float d = length((uv - 0.5) * vec2(1.25, 1.0));
+  vec3 glowCol = mix(vec3(0.13, 0.88, 0.94), vec3(1.0, 0.31, 0.66), 0.5 + 0.5 * sin(u_time * 0.6));
+  float edge = smoothstep(0.32, 0.78, d) * (0.15 + bass * 0.85);
+  vec3 rgb = baseColor.rgb * (1.0 + bass * 0.18 * amt);
+  rgb = mix(rgb, rgb * 0.55 + glowCol * 0.9, edge * amt);
+  return vec4(clamp(rgb, 0.0, 1.0), baseColor.a);
 }
 
 vec4 applyPostFx(vec4 color, vec2 uv) {
   vec3 rgb = color.rgb;
   if (u_fxHue > 0.01) {
-    rgb = clamp(hueShift(rgb, u_fxHue * 6.2831853), 0.0, 1.0);
+    rgb = duotone(rgb, u_fxHue);
   }
   if (u_fxBw > 0.01) {
-    float lum = dot(rgb, vec3(0.299, 0.587, 0.114));
-    float hi = smoothstep(0.18, 0.86, lum);
-    rgb = mix(rgb, vec3(hi), clamp(u_fxBw, 0.0, 1.0));
+    rgb = filmMono(rgb, uv, u_fxBw);
   }
   vec4 outCol = applyAudioShader(uv, vec4(rgb, color.a));
   if (u_fxStrobe > 0.01) {
-    outCol.rgb = mix(outCol.rgb, vec3(1.0), clamp(u_fxStrobe, 0.0, 1.0));
+    // Exposure flash on the beat (keeps the picture) instead of a flat white frame.
+    outCol.rgb = mix(outCol.rgb, min(vec3(1.0), outCol.rgb * 1.9 + 0.22), clamp(u_fxStrobe, 0.0, 1.0));
   }
   return outCol;
 }
 `;
-

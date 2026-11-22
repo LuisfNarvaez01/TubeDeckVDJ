@@ -3,7 +3,7 @@ import { Sparkles, Disc3 } from 'lucide-react';
 import type { DeckId } from '../../shared/types';
 import type { AudioFxId, FxBeatDivision, SamplerPadId } from '../audio/AudioDspEngine';
 import { useDeckStore } from '../store/useDeckStore';
-import { RotaryKnob } from './ui/RotaryKnob';
+import { FxRow } from './ui/FxRow';
 
 interface DeckFxSamplerModuleProps {
   deckId: DeckId;
@@ -23,7 +23,6 @@ const FX_SLOTS: Array<{ id: AudioFxId; label: string }> = [
   { id: 'flanger', label: 'FLANGER' }
 ];
 
-const BEAT_DIVS: FxBeatDivision[] = ['1/4', '1/2', '3/4', '1/1'];
 
 const SAMPLER_PADS: Array<{ id: SamplerPadId; label: string }> = [
   { id: 'airhorn', label: 'Airhorn' },
@@ -74,57 +73,21 @@ export function DeckFxSamplerModule({
         </span>
       </header>
 
-      {/* 3 Hardware Audio FX Slots */}
-      <div className="grid grid-cols-3 gap-1.5">
-        {FX_SLOTS.map(({ id, label }) => {
+      {/* Audio FX: on/off, amount, beat time (room size for the reverb) */}
+      <div className="flex flex-col gap-1">
+        {FX_SLOTS.map(({ id }) => {
           const st = audioFx[id];
           return (
-            <div
+            <FxRow
               key={id}
-              className="flex flex-col items-center gap-1.5 rounded-lg border border-white/[0.06] bg-ground p-1.5"
-            >
-              <button
-                type="button"
-                aria-label={`${label} Deck ${deckId}`}
-                onClick={() => onDeckFxChange(deckId, id, !st.enabled, st.wet, st.beatDiv)}
-                className={`w-full rounded border py-0.5 text-[10px] font-bold tracking-wide cursor-pointer ${
-                  st.enabled
-                    ? 'border-live/60 bg-live/15 text-live'
-                    : 'border-white/[0.06] bg-raised text-muted hover:bg-raised-2 hover:text-ink'
-                }`}
-              >
-                {label}
-              </button>
-
-              <RotaryKnob
-                label="DRY/WET"
-                value={st.wet}
-                min={0}
-                max={1}
-                defaultValue={0.45}
-                accentColor={st.enabled ? accent : '#E6E6E9'}
-                size={34}
-                formatValue={(v) => `${Math.round(v * 100)}%`}
-                onChange={(v) => onDeckFxChange(deckId, id, st.enabled, v, st.beatDiv)}
-              />
-
-              <div className="grid w-full grid-cols-4 gap-0.5">
-                {BEAT_DIVS.map((div) => (
-                  <button
-                    key={div}
-                    type="button"
-                    onClick={() => onDeckFxChange(deckId, id, st.enabled, st.wet, div)}
-                    className={`rounded py-0.5 font-mono-tabular text-[10px] cursor-pointer ${
-                      st.beatDiv === div
-                        ? 'bg-raised-2 text-ink ring-1 ring-white/[0.14]'
-                        : 'bg-raised text-faint hover:text-muted'
-                    }`}
-                  >
-                    {div}
-                  </button>
-                ))}
-              </div>
-            </div>
+              deckId={deckId}
+              fx={id}
+              enabled={st.enabled}
+              wet={st.wet}
+              beatDiv={st.beatDiv}
+              accent={accent}
+              onChange={onDeckFxChange}
+            />
           );
         })}
       </div>

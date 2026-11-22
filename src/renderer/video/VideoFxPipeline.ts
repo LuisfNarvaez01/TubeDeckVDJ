@@ -45,7 +45,8 @@ export class VideoFxPipeline {
     const safeBpm = Math.max(40, Math.min(220, bpm || 120));
     const beatPeriod = 60 / safeBpm;
     const phase = (timeSec % beatPeriod) / beatPeriod;
-    return phase < 0.18 ? Math.min(1, Math.max(0, intensity)) : 0;
+    // Sharp attack on the beat, fast fade: reads as a flash, not a blinking light.
+    return (phase < 0.45 ? Math.min(1, Math.max(0, intensity)) * Math.exp(-phase * 9) : 0);
   }
 
   extractAudioBands(analyser: AnalyserNode | null): { low: number; mid: number; high: number } {

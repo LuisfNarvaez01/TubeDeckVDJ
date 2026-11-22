@@ -53,12 +53,12 @@ const TRANSITIONS: Array<{ id: VideoTransitionId; label: string }> = [
 
 const FX_BUTTONS: Array<{ id: VideoFxId; label: string }> = [
   { id: 'blur', label: 'Blur' },
-  { id: 'strobe', label: 'Strobe' },
+  { id: 'strobe', label: 'Flash' },
   { id: 'mirror', label: 'Mirror' },
-  { id: 'hue-tint', label: 'Hue' },
-  { id: 'bw-contrast', label: 'B&W' },
+  { id: 'hue-tint', label: 'Duotono' },
+  { id: 'bw-contrast', label: 'Cine B/N' },
   { id: 'pixelate', label: 'Pixel' },
-  { id: 'audio-shader', label: 'Shader' }
+  { id: 'audio-shader', label: 'Pulso' }
 ];
 
 export function VideoPreviewBar({

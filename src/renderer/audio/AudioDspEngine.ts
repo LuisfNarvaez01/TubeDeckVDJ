@@ -21,6 +21,39 @@ const FX_BEAT_DIV_MULT: Record<FxBeatDivision, number> = {
   '1/1': 1
 };
 
+/** Reverb tail length for each time setting: room, plate, hall, cathedral. */
+const REVERB_SIZE_SEC: Record<FxBeatDivision, number> = {
+  '1/4': 0.9,
+  '1/2': 1.7,
+  '3/4': 2.6,
+  '1/1': 4
+};
+
+/**
+ * Hall impulse response: noise with an exponential decay that also gets darker over time
+ * (high frequencies die first, like a real room), different on each side for a wide image.
+ */
+export function buildReverbImpulse(ctx: BaseAudioContext, seconds: number): AudioBuffer {
+  const rate = ctx.sampleRate || 44100;
+  const len = Math.max(1, Math.floor(rate * seconds));
+  const ir = ctx.createBuffer(2, len, rate);
+  for (let ch = 0; ch < 2; ch += 1) {
+    const data = ir.getChannelData(ch);
+    let lp = 0;
+    for (let i = 0; i < len; i += 1) {
+      const t = i / len;
+      const decay = Math.exp(-6.2 * t);
+      // One-pole low-pass whose cutoff falls along the tail.
+      const coeff = 0.18 + 0.75 * t;
+      const noise = Math.random() * 2 - 1;
+      lp += (noise - lp) * (1 - coeff);
+      const early = i < rate * 0.08 && Math.random() < 0.004 ? (Math.random() * 2 - 1) * 0.8 : 0;
+      data[i] = (lp * 1.6 + early) * decay;
+    }
+  }
+  return ir;
+}
+
 interface DeckChannelNodes {
   trimGain: GainNode;
   autoGain: GainNode;
@@ -41,9 +74,17 @@ interface DeckChannelNodes {
   cueToggleGain: GainNode;
   echoSendGain: GainNode | null;
   echoDelay: DelayNode | null;
+  /** Right side of the ping-pong echo (left and right repeat in turn). */
+  echoDelayR: DelayNode | null;
   reverbSendGain: GainNode | null;
+  reverbConv: ConvolverNode | null;
+  reverbSizeSec: number;
   flangerSendGain: GainNode | null;
   flangerLfo: OscillatorNode | null;
+  /** Dry level: dips a little while the flanger is on so the sweep is heard, not just added. */
+  fxDry: GainNode | null;
+  /** Last known tempo, so beat-synced FX follow BPM changes. */
+  fxBpm: number;
   fxState: Record<AudioFxId, { enabled: boolean; wet: number }>;
   fxBeatDiv: Record<AudioFxId, FxBeatDivision>;
   eqValuesDb: Record<EqBand, number>;
@@ -295,66 +336,104 @@ export class AudioDspEngine {
     eqMid.connect(eqHigh);
     eqHigh.connect(colorFilter);
     colorFilter.connect(keyShiftFilter);
-    keyShiftFilter.connect(analyser);
+    const fxDry = ctx.createGain();
+    fxDry.gain.value = 1;
+    keyShiftFilter.connect(fxDry);
+    fxDry.connect(analyser);
 
+    // ECHO: stereo ping-pong. The send is high-passed so repeats never muddy the bass, and
+    // each repeat is darker than the last (tape-style damping).
     let echoSendGain: GainNode | null = null;
     let echoDelay: DelayNode | null = null;
+    let echoDelayR: DelayNode | null = null;
     if (typeof ctx.createDelay === 'function') {
       echoSendGain = ctx.createGain();
       echoSendGain.gain.value = 0;
-      echoDelay = ctx.createDelay(2.0);
+      const echoHp = ctx.createBiquadFilter();
+      echoHp.type = 'highpass';
+      echoHp.frequency.value = 140;
+      echoDelay = ctx.createDelay(4.0);
       echoDelay.delayTime.value = 0.375;
-      const echoFb = ctx.createGain();
-      echoFb.gain.value = 0.42;
-      const echoDamp = ctx.createBiquadFilter();
-      echoDamp.type = 'lowpass';
-      echoDamp.frequency.value = 3400;
+      echoDelayR = ctx.createDelay(4.0);
+      echoDelayR.delayTime.value = 0.375;
+      const dampL = ctx.createBiquadFilter();
+      dampL.type = 'lowpass';
+      dampL.frequency.value = 4200;
+      const dampR = ctx.createBiquadFilter();
+      dampR.type = 'lowpass';
+      dampR.frequency.value = 4200;
+      const fbL = ctx.createGain();
+      fbL.gain.value = 0.5;
+      const fbR = ctx.createGain();
+      fbR.gain.value = 0.5;
 
       colorFilter.connect(echoSendGain);
-      echoSendGain.connect(echoDelay);
-      echoDelay.connect(echoDamp);
-      echoDamp.connect(echoFb);
-      echoFb.connect(echoDelay);
-      echoDelay.connect(analyser);
+      echoSendGain.connect(echoHp);
+      echoHp.connect(echoDelay);
+      echoDelay.connect(dampL);
+      dampL.connect(fbL);
+      fbL.connect(echoDelayR);
+      echoDelayR.connect(dampR);
+      dampR.connect(fbR);
+      fbR.connect(echoDelay);
+      if (typeof ctx.createChannelMerger === 'function') {
+        const echoOut = ctx.createChannelMerger(2);
+        echoDelay.connect(echoOut, 0, 0);
+        echoDelayR.connect(echoOut, 0, 1);
+        echoOut.connect(analyser);
+      } else {
+        echoDelay.connect(analyser);
+        echoDelayR.connect(analyser);
+      }
     }
 
+    // REVERB: pre-delayed hall with a decorrelated stereo tail; size follows the time setting.
     let reverbSendGain: GainNode | null = null;
+    let reverbConv: ConvolverNode | null = null;
     if (typeof ctx.createConvolver === 'function' && typeof ctx.createBuffer === 'function') {
       reverbSendGain = ctx.createGain();
       reverbSendGain.gain.value = 0;
-      const conv = ctx.createConvolver();
-      const sampleRate = ctx.sampleRate || 44100;
-      const len = Math.floor(sampleRate * 1.4);
-      const ir = ctx.createBuffer(2, len, sampleRate);
-      for (let ch = 0; ch < 2; ch += 1) {
-        const data = ir.getChannelData(ch);
-        for (let i = 0; i < len; i += 1) {
-          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.4);
-        }
-      }
-      conv.buffer = ir;
+      const revHp = ctx.createBiquadFilter();
+      revHp.type = 'highpass';
+      revHp.frequency.value = 240;
+      reverbConv = ctx.createConvolver();
+      reverbConv.buffer = buildReverbImpulse(ctx, REVERB_SIZE_SEC['3/4']);
       colorFilter.connect(reverbSendGain);
-      reverbSendGain.connect(conv);
-      conv.connect(analyser);
+      reverbSendGain.connect(revHp);
+      if (typeof ctx.createDelay === 'function') {
+        const preDelay = ctx.createDelay(0.2);
+        preDelay.delayTime.value = 0.025;
+        revHp.connect(preDelay);
+        preDelay.connect(reverbConv);
+      } else {
+        revHp.connect(reverbConv);
+      }
+      reverbConv.connect(analyser);
     }
 
+    // FLANGER: short modulated delay with feedback (the jet sweep), LFO locked to the beat.
     let flangerSendGain: GainNode | null = null;
     let flangerLfo: OscillatorNode | null = null;
     if (typeof ctx.createDelay === 'function' && typeof ctx.createOscillator === 'function') {
       flangerSendGain = ctx.createGain();
       flangerSendGain.gain.value = 0;
-      const flangerDelay = ctx.createDelay(0.1);
-      flangerDelay.delayTime.value = 0.006;
+      const flangerDelay = ctx.createDelay(0.05);
+      flangerDelay.delayTime.value = 0.004;
       const lfoDepth = ctx.createGain();
-      lfoDepth.gain.value = 0.003;
+      lfoDepth.gain.value = 0.0028;
+      const flangerFb = ctx.createGain();
+      flangerFb.gain.value = 0.62;
       flangerLfo = ctx.createOscillator();
-      flangerLfo.frequency.value = 0.45;
+      flangerLfo.type = 'triangle';
+      flangerLfo.frequency.value = 0.25;
       flangerLfo.connect(lfoDepth);
       lfoDepth.connect(flangerDelay.delayTime);
       flangerLfo.start();
 
       colorFilter.connect(flangerSendGain);
       flangerSendGain.connect(flangerDelay);
+      flangerDelay.connect(flangerFb);
+      flangerFb.connect(flangerDelay);
       flangerDelay.connect(analyser);
     }
 
@@ -384,9 +463,14 @@ export class AudioDspEngine {
       cueToggleGain,
       echoSendGain,
       echoDelay,
+      echoDelayR,
       reverbSendGain,
+      reverbConv,
+      reverbSizeSec: REVERB_SIZE_SEC['3/4'],
       flangerSendGain,
       flangerLfo,
+      fxDry,
+      fxBpm: 120,
       fxState: {
         echo: { enabled: false, wet: 0.45 },
         reverb: { enabled: false, wet: 0.45 },
@@ -491,32 +575,60 @@ export class AudioDspEngine {
     if (beatDiv) {
       d.fxBeatDiv[fx] = beatDiv;
     }
-    const divMult = FX_BEAT_DIV_MULT[d.fxBeatDiv[fx]];
-    const activeLevel = enabled ? clampedWet : 0;
+    if (bpm && bpm > 40) d.fxBpm = bpm;
+    this.applyDeckFx(d, fx);
+  }
+
+  /** Beat-synced FX follow the deck tempo (BPM detected, tapped or halved/doubled). */
+  setDeckFxTempo(deck: DeckId, bpm: number | null): void {
+    if (!this.decks || !bpm || bpm <= 40) return;
+    const d = this.decks[deck];
+    if (Math.abs(d.fxBpm - bpm) < 0.05) return;
+    d.fxBpm = bpm;
+    this.applyDeckFx(d, 'echo');
+    this.applyDeckFx(d, 'flanger');
+  }
+
+  private applyDeckFx(d: DeckChannelNodes, fx: AudioFxId): void {
+    const { enabled, wet } = d.fxState[fx];
+    const div = d.fxBeatDiv[fx];
+    const divMult = FX_BEAT_DIV_MULT[div];
+    const level = enabled ? wet : 0;
+    const beatSec = 60 / (d.fxBpm > 40 ? d.fxBpm : 120);
 
     if (fx === 'echo') {
-      if (d.echoDelay) {
-        const effBpm = bpm && bpm > 40 ? bpm : 120;
-        d.echoDelay.delayTime.value = clamp((60 / effBpm) * divMult, 0.06, 1.5);
-      }
-      if (d.echoSendGain) {
-        d.echoSendGain.gain.value = activeLevel * 0.65;
-      }
+      const t = clamp(beatSec * divMult, 0.05, 3.5);
+      this.rampParam(d.echoDelay?.delayTime, t, 0.05);
+      this.rampParam(d.echoDelayR?.delayTime, t, 0.05);
+      // Equal-ish loudness: the send rises faster at the start of the knob travel.
+      this.rampParam(d.echoSendGain?.gain, Math.sqrt(level) * 0.8);
       return;
     }
 
     if (fx === 'reverb') {
-      if (d.reverbSendGain) {
-        d.reverbSendGain.gain.value = activeLevel * Math.min(0.85, 0.45 + divMult * 0.35);
+      const size = REVERB_SIZE_SEC[div];
+      if (d.reverbConv && this.ctx && size !== d.reverbSizeSec) {
+        d.reverbConv.buffer = buildReverbImpulse(this.ctx, size);
+        d.reverbSizeSec = size;
       }
+      this.rampParam(d.reverbSendGain?.gain, Math.sqrt(level) * 0.9);
       return;
     }
 
-    if (d.flangerLfo) {
-      d.flangerLfo.frequency.value = clamp(0.45 / divMult, 0.15, 2.5);
-    }
-    if (d.flangerSendGain) {
-      d.flangerSendGain.gain.value = activeLevel * 0.6;
+    // Flanger: one full sweep every 2 (1/4) to 8 (1/1) beats.
+    const cycleSec = beatSec * divMult * 8;
+    this.rampParam(d.flangerLfo?.frequency, clamp(1 / cycleSec, 0.05, 4), 0.05);
+    this.rampParam(d.flangerSendGain?.gain, level * 0.85);
+    this.rampParam(d.fxDry?.gain, 1 - level * 0.35);
+  }
+
+  /** Smooth parameter moves (no zipper noise or clicks while turning a control). */
+  private rampParam(param: AudioParam | undefined, value: number, timeConstant = 0.025): void {
+    if (!param) return;
+    if (this.ctx && typeof param.setTargetAtTime === 'function') {
+      param.setTargetAtTime(value, this.ctx.currentTime, timeConstant);
+    } else {
+      param.value = value;
     }
   }
 
