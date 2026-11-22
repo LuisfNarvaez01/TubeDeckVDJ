@@ -172,6 +172,16 @@ function reportImplicitFeedback(track: YouTubeTrack, audibleSec: number): void {
   }
 }
 
+/** What the media cache needs to list a YouTube song when it is played offline. */
+function cacheMetaOf(track: YouTubeTrack): { title: string; channel: string; durationSec: number; thumbnailUrl: string } {
+  return {
+    title: track.title,
+    channel: track.channel ?? '',
+    durationSec: track.durationSec ?? 0,
+    thumbnailUrl: track.thumbnailUrl ?? ''
+  };
+}
+
 export function App(): ReactElement {
   const [activeTab, setActiveTab] = useState<BrowserTab>('search');
   // On-air state per deck (re-renders only when the A/B membership changes)
@@ -429,7 +439,7 @@ export function App(): ReactElement {
         const streamRes =
           track.source === 'local' && track.localFilePath && window.tubedeckAPI.resolveLocalFile
             ? await window.tubedeckAPI.resolveLocalFile(track.localFilePath)
-            : await window.tubedeckAPI.resolveStream(track.videoId);
+            : await window.tubedeckAPI.resolveStream(track.videoId, cacheMetaOf(track));
 
         if (useLibraryStore.getState().previewingVideoId !== track.videoId) {
           return;
@@ -541,6 +551,19 @@ export function App(): ReactElement {
       void api.listCrates().then((res) => {
         if (res.success) setCrates(res.data);
       });
+      void api.getSetting?.<string>('automixSourceMode', 'youtube').then((res) => {
+        const mode = res?.success ? res.data : 'youtube';
+        if (mode === 'local' || mode === 'youtube' || mode === 'autopilot') {
+          useLibraryStore.setState({ automixSourceMode: mode });
+        }
+      });
+      const refreshCached = (): void => {
+        void api.getCachedTracks?.().then((res) => {
+          if (res?.success) useLibraryStore.getState().setCachedTracks(res.data);
+        });
+      };
+      refreshCached();
+      api.onMediaCacheChanged?.(refreshCached);
       // Frames, logo, marquee and OSD survive restarts (the webcam always starts off).
       void api.getSetting?.<Partial<OverlayConfig> | null>(OVERLAY_SETTING_KEY, null).then((res) => {
         if (!res?.success || !res.data) return;
@@ -682,7 +705,7 @@ export function App(): ReactElement {
       const resolvePromise =
         track.source === 'local' && track.localFilePath && window.tubedeckAPI.resolveLocalFile
           ? window.tubedeckAPI.resolveLocalFile(track.localFilePath)
-          : window.tubedeckAPI.resolveStream(track.videoId);
+          : window.tubedeckAPI.resolveStream(track.videoId, cacheMetaOf(track));
 
       const [streamRes, metaRes] = await Promise.all([
         resolvePromise,
@@ -1062,7 +1085,9 @@ export function App(): ReactElement {
                   remainingSec,
                   isActivePlaying: deckState.playing,
                   isActiveEnded: isEnded,
-                  isTransitioning
+                  isTransitioning,
+                  activeTitle: deckState.track.title,
+                  activeChannel: deckState.track.channel
                 },
                 {
                   enabled: true,
@@ -1071,7 +1096,8 @@ export function App(): ReactElement {
                   crossfadeDurationSec: lib.automixFadeDurationSec,
                   outroTriggerSec: Math.min(lib.automixFadeDurationSec, 12),
                   autoRadioEnabled: lib.autoRadioEnabled,
-                  fadeType: lib.automixFadeType
+                  fadeType: lib.automixFadeType,
+                  sourceMode: lib.automixSourceMode
                 },
                 {
                   loadDeck: async (targetDeck, track) => {
@@ -1104,6 +1130,28 @@ export function App(): ReactElement {
                     return res?.success ? res.data : [];
                   },
                   isOffline: () => offlineRef.current,
+                  getFallbackTracks: () => {
+                    const l = useLibraryStore.getState();
+                    return [...l.localTracks, ...l.cachedTracks];
+                  },
+                  canPlayOffline: (t) =>
+                    useLibraryStore.getState().cachedTracks.some((c) => c.videoId === t.videoId),
+                  onFallbackQueued: (track, reason) => {
+                    const why =
+                      reason === 'offline'
+                        ? 'Sin internet'
+                        : reason === 'empty'
+                          ? 'Cola vacía'
+                          : reason === 'failed'
+                            ? 'Falló la canción'
+                            : reason === 'local-mode'
+                              ? 'Modo local'
+                              : 'Autopilot';
+                    useLibraryStore
+                      .getState()
+                      .setAutomixStatusNote(`${why}: sigue "${track.title}" (${track.source === 'local' ? 'local' : 'guardada'})`);
+                    useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue());
+                  },
                   onRadioEmpty: () => {
                     useLibraryStore
                       .getState()
@@ -1374,7 +1422,7 @@ export function App(): ReactElement {
       lib.setAutomixStatusNote('Internet de vuelta: retomando el automix.');
       reloadErroredDecks();
     } else {
-      lib.setAutomixStatusNote('Sin internet: el automix espera a que vuelva la conexión.');
+      lib.setAutomixStatusNote('Sin internet: el automix sigue con canciones locales y guardadas.');
     }
   });
   const mixRecorderRef = useRef<MixRecorder | null>(null);

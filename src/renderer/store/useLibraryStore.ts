@@ -4,7 +4,7 @@ import type {
   HistoryTasteProfile,
   YouTubeTrack
 } from '../../shared/types';
-import type { AutomixFadeType, PreloadMode, QueueItem } from '../dj/QueueAndAutomixEngine';
+import type { AutomixFadeType, AutomixSourceMode, PreloadMode, QueueItem } from '../dj/QueueAndAutomixEngine';
 
 interface LibraryStore {
   queue: QueueItem[];
@@ -14,6 +14,12 @@ interface LibraryStore {
   automixFadeDurationSec: number;
   preloadMode: PreloadMode;
   automixStatusNote: string | null;
+  /** Where Automix finds songs: local only, YouTube (local backup), or Autopilot (both). */
+  automixSourceMode: AutomixSourceMode;
+  setAutomixSourceMode: (mode: AutomixSourceMode) => void;
+  /** YouTube songs saved on disk (play instantly and offline). */
+  cachedTracks: YouTubeTrack[];
+  setCachedTracks: (tracks: YouTubeTrack[]) => void;
   setQueue: (items: QueueItem[]) => void;
   setAutomixEnabled: (enabled: boolean) => void;
   setAutoRadioEnabled: (enabled: boolean) => void;
@@ -50,6 +56,13 @@ export const useLibraryStore = create<LibraryStore>((set) => ({
   automixFadeDurationSec: 8,
   preloadMode: 'immediate',
   automixStatusNote: null,
+  automixSourceMode: 'youtube',
+  setAutomixSourceMode: (automixSourceMode) => {
+    set({ automixSourceMode });
+    void window.tubedeckAPI?.setSetting?.('automixSourceMode', automixSourceMode);
+  },
+  cachedTracks: [],
+  setCachedTracks: (cachedTracks) => set({ cachedTracks }),
   setQueue: (queue) => set({ queue }),
   setAutomixEnabled: (automixEnabled) => set({ automixEnabled }),
   setAutoRadioEnabled: (autoRadioEnabled) => set({ autoRadioEnabled }),

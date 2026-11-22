@@ -1,6 +1,7 @@
 import { app, dialog, ipcMain, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import type { MediaCache, MediaCacheEntry } from '../services/MediaCache';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type {
@@ -40,6 +41,16 @@ export function parseExcludeIds(raw: unknown, max = 400): string[] {
   return Array.from(new Set(valid)).slice(-max);
 }
 const NonEmptyStringSchema = z.string().trim().min(1).max(500);
+const CaptureMetaSchema = z.object({
+  title: z.string().max(500),
+  channel: z.string().max(300),
+  durationSec: z.number().min(0).max(24 * 3600),
+  thumbnailUrl: z.string().max(1000)
+});
+const MediaCacheSettingsSchema = z.object({
+  maxGb: z.number().min(0.5).max(200),
+  saveVideo: z.boolean()
+});
 const FeedbackSchema = z.object({
   track: z.object({
     videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/),
@@ -99,6 +110,7 @@ export interface MainServices {
   network?: NetworkMonitor;
   /** Proyecta's own folder for session batch downloads (one subfolder per session). */
   sessionDownloadsDir?: string;
+  mediaCache?: MediaCache;
   youtubeAccess?: {
     monitor: YouTubeAccessMonitor;
     connect: () => Promise<YouTubeAccessStatus>;
@@ -107,6 +119,44 @@ export interface MainServices {
   batchDownloader?: BatchDownloadService;
   taste?: TasteFeedbackService;
   recommender?: RecommendationEngine;
+}
+
+/** Endpoints served from the media cache through the local proxy (no network needed). */
+function buildCachedEndpoints(proxy: RamStreamProxy, cache: MediaCache, e: MediaCacheEntry): DeckStreamEndpoints {
+  const far = Date.now() + 30 * 24 * 3600 * 1000;
+  if (e.muxed) {
+    return {
+      videoId: e.videoId,
+      mode: 'muxed',
+      muxedUrl: proxy.registerLocalFile(cache.abs(e.muxed)).url,
+      sourceType: 'youtube',
+      mediaKind: 'video',
+      expiresAtMs: far
+    };
+  }
+  const audioUrl = e.audio ? proxy.registerLocalFile(cache.abs(e.audio)).url : undefined;
+  if (e.video && audioUrl) {
+    return {
+      videoId: e.videoId,
+      mode: 'dash-split',
+      videoUrl: proxy.registerLocalFile(cache.abs(e.video)).url,
+      audioUrl,
+      videoQualityUrls: {},
+      sourceType: 'youtube',
+      mediaKind: 'video',
+      expiresAtMs: far
+    };
+  }
+  if (!audioUrl) throw new Error('Canción en caché incompleta');
+  return {
+    videoId: e.videoId,
+    mode: 'muxed',
+    muxedUrl: audioUrl,
+    audioUrl,
+    sourceType: 'youtube',
+    mediaKind: 'audio',
+    expiresAtMs: far
+  };
 }
 
 function buildEndpoints(
@@ -228,18 +278,53 @@ export function registerIpcHandlers(services: MainServices): void {
     })
   );
 
-  ipcMain.handle(IPC_CHANNELS.STREAM_RESOLVE, (_event, rawVideoId: unknown) =>
+  ipcMain.handle(IPC_CHANNELS.STREAM_RESOLVE, (_event, rawVideoId: unknown, rawMeta: unknown) =>
     wrapResult(async () => {
       const videoId = VideoIdSchema.parse(rawVideoId);
+      const cache = services.mediaCache;
+      const hit = cache?.get(videoId) ?? null;
+      // Saved with picture and sound: no YouTube round trip at all (instant, works offline).
+      if (cache && hit && cache.isComplete(hit)) return buildCachedEndpoints(services.proxy, cache, hit);
+      if (cache && hit && services.network?.getStatus().online === false) {
+        return buildCachedEndpoints(services.proxy, cache, hit);
+      }
       try {
         const resolved = await services.resolver.resolve(videoId);
         services.youtubeAccess?.monitor.reportPlaybackOk();
+        const meta = CaptureMetaSchema.safeParse(rawMeta);
+        if (cache && meta.success) cache.capture(videoId, resolved, meta.data);
         return buildEndpoints(services.proxy, resolved);
       } catch (err) {
         services.youtubeAccess?.monitor.reportPlaybackError(err instanceof Error ? err.message : String(err));
         void services.network?.check();
+        // Only the sound is saved: still better than silence.
+        if (cache && hit) return buildCachedEndpoints(services.proxy, cache, hit);
         throw err;
       }
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MEDIA_CACHE_LIST, () =>
+    wrapResult(() => services.mediaCache?.list() ?? [])
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MEDIA_CACHE_USAGE, () =>
+    wrapResult(() => services.mediaCache?.usage() ?? { bytes: 0, maxBytes: 0, songs: 0, withVideo: 0 })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MEDIA_CACHE_CLEAR, () =>
+    wrapResult(() => {
+      services.mediaCache?.clear();
+      return services.mediaCache?.usage() ?? { bytes: 0, maxBytes: 0, songs: 0, withVideo: 0 };
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.MEDIA_CACHE_CONFIGURE, (_event, raw: unknown) =>
+    wrapResult(() => {
+      const settings = MediaCacheSettingsSchema.parse(raw);
+      services.db.setSetting('mediaCache', settings);
+      services.mediaCache?.configure({ maxBytes: settings.maxGb * 1024 ** 3, saveVideo: settings.saveVideo });
+      return services.mediaCache?.usage() ?? { bytes: 0, maxBytes: 0, songs: 0, withVideo: 0 };
     })
   );
 

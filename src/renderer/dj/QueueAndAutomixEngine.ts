@@ -1,9 +1,15 @@
 import { looseSongKey } from '../../shared/songIdentity';
+import { pickSimilarTrack } from './localFallback';
 import type { DeckId, YouTubeTrack } from '../../shared/types';
 
 export type QueueSource = 'user' | 'youtube-radio' | 'local';
 export type AutomixFadeType = 'smart-crossfade' | 'fade-out-in' | 'cut' | 'backspin';
 export type PreloadMode = 'immediate' | '90s' | '60s' | '30s';
+/**
+ * Where Automix finds songs when the queue runs dry: only the local library, YouTube radio
+ * (with local songs as backup), or Autopilot, which mixes both and picks what fits.
+ */
+export type AutomixSourceMode = 'youtube' | 'local' | 'autopilot';
 
 export interface QueueItem {
   queueId: string;
@@ -21,6 +27,7 @@ export interface AutomixOptions {
   outroTriggerSec: number;
   autoRadioEnabled: boolean;
   fadeType: AutomixFadeType;
+  sourceMode?: AutomixSourceMode;
 }
 
 export interface AutomixTickContext {
@@ -32,6 +39,9 @@ export interface AutomixTickContext {
   isActivePlaying: boolean;
   isActiveEnded: boolean;
   isTransitioning?: boolean;
+  /** On-air song text, used to find a similar backup song. */
+  activeTitle?: string;
+  activeChannel?: string;
 }
 
 export interface AutomixCallbacks {
@@ -49,7 +59,18 @@ export interface AutomixCallbacks {
   isOffline?: () => boolean;
   /** Radio found nothing new from any seed this round (shown to the DJ). */
   onRadioEmpty?: () => void;
+  /**
+   * Songs that play without internet: the local library plus YouTube songs saved in the
+   * media cache. Used as backup so the music never stops.
+   */
+  getFallbackTracks?: () => YouTubeTrack[];
+  /** True when a YouTube song is saved in the media cache and can play offline. */
+  canPlayOffline?: (track: YouTubeTrack) => boolean;
+  /** A backup song was queued (offline, a failure, or the queue ran out). */
+  onFallbackQueued?: (track: YouTubeTrack, reason: FallbackReason) => void;
 }
+
+export type FallbackReason = 'offline' | 'empty' | 'failed' | 'local-mode' | 'autopilot';
 
 const RADIO_RETRY_COOLDOWN_MS = 8000;
 /** A deck load (resolve + buffer) slower than this is treated as failed so Automix keeps going. */
@@ -111,6 +132,9 @@ export class QueueAndAutomixEngine {
   private lastRadioFetchMs = -Infinity;
   /** Consecutive radio rounds that found nothing new: rotates to another seed song. */
   private radioMissCount = 0;
+  /** Autopilot alternates sources; this is the one it will try next. */
+  private autopilotNext: 'local' | 'youtube' = 'youtube';
+  random: () => number = Math.random;
   /** YouTube songs that played recently, newest last: fallback radio seeds. */
   private recentSeedIds: string[] = [];
   /** Deck that was on air at the previous tick (to notice manual crossfader moves). */
@@ -435,6 +459,76 @@ export class QueueAndAutomixEngine {
     }
   }
 
+  private playsOffline(track: YouTubeTrack, callbacks: AutomixCallbacks): boolean {
+    return track.source === 'local' || Boolean(callbacks.canPlayOffline?.(track));
+  }
+
+  /**
+   * Queues the most similar backup song (local library, or cached YouTube songs) ahead of
+   * anything still waiting, and returns it; null when there is nothing left to play.
+   */
+  queueFallback(
+    context: AutomixTickContext,
+    callbacks: AutomixCallbacks,
+    reason: FallbackReason,
+    offlineOnly = true,
+    localOnly = false
+  ): QueueItem | null {
+    const pool = (callbacks.getFallbackTracks?.() ?? []).filter((t) =>
+      localOnly ? t.source === 'local' : !offlineOnly || this.playsOffline(t, callbacks)
+    );
+    if (pool.length === 0) return null;
+    const excluded = this.collectExcludeIds(context);
+    const onAir = new Set([context.activeVideoId, context.otherDeckVideoId]);
+    const seed = context.activeTitle ? { title: context.activeTitle, channel: context.activeChannel ?? '' } : null;
+    let pick = pickSimilarTrack(
+      seed,
+      pool,
+      (t) => onAir.has(t.videoId) || excluded.has(t.videoId) || this.isQueuedOrPlayedSong(t),
+      this.random
+    );
+    if (!pick) {
+      // Everything already played tonight: repeat the oldest rather than going silent.
+      pick = pickSimilarTrack(seed, pool, (t) => onAir.has(t.videoId) || this.isDismissed(t), this.random);
+    }
+    if (!pick) return null;
+    const item = this.enqueue(pick, pick.source === 'local' ? 'local' : 'user');
+    // Play it before songs that are waiting for the internet.
+    this.queue = [item, ...this.queue.filter((q) => q.queueId !== item.queueId)];
+    callbacks.onFallbackQueued?.(pick, reason);
+    return item;
+  }
+
+  /** Fills an empty queue according to the Automix source mode. */
+  private async ensureAutoSuggestionQueued(
+    context: AutomixTickContext,
+    options: AutomixOptions,
+    callbacks: AutomixCallbacks,
+    nowMs: number
+  ): Promise<void> {
+    const mode = options.sourceMode ?? 'youtube';
+    const offline = callbacks.isOffline?.() ?? false;
+    if (mode === 'local') {
+      this.queueFallback(context, callbacks, 'local-mode', true, true);
+      return;
+    }
+    if (offline) {
+      this.queueFallback(context, callbacks, 'offline');
+      return;
+    }
+    if (mode === 'autopilot' && this.autopilotNext === 'local') {
+      this.autopilotNext = 'youtube';
+      if (this.queueFallback(context, callbacks, 'autopilot', true, true)) return;
+    } else if (mode === 'autopilot') {
+      this.autopilotNext = 'local';
+    }
+    const before = this.queue.length;
+    await this.ensureRadioSuggestionQueued(context, callbacks, nowMs);
+    if (this.queue.length === before && mode === 'autopilot') {
+      this.queueFallback(context, callbacks, 'autopilot', true, true);
+    }
+  }
+
   private isQueuedOrPlayedSong(track: YouTubeTrack): boolean {
     if (this.wasSongPlayed(track) || this.isDismissed(track)) return true;
     const key = looseSongKey(track.title);
@@ -489,11 +583,24 @@ export class QueueAndAutomixEngine {
         let safetyIterations = 0;
         while (safetyIterations < 6) {
           safetyIterations += 1;
-          let nextPending = this.queue.find((q) => q.status === 'pending');
+          const offline = callbacks.isOffline?.() ?? false;
+          const findPlayable = (): QueueItem | undefined =>
+            this.queue.find((q) => q.status === 'pending' && (!offline || this.playsOffline(q.track, callbacks)));
+          let nextPending = findPlayable();
 
           if (!nextPending && options.autoRadioEnabled) {
-            await this.ensureRadioSuggestionQueued(context, callbacks, nowMs);
-            nextPending = this.queue.find((q) => q.status === 'pending');
+            await this.ensureAutoSuggestionQueued(context, options, callbacks, nowMs);
+            nextPending = findPlayable();
+          }
+
+          // Never let the music stop: offline with only YouTube songs waiting, or nothing left
+          // as the song ends -> a similar song from the library (or the cache) plays next.
+          const songEnding =
+            context.isActiveEnded || remainingSec <= options.outroTriggerSec + 20;
+          const waitingOnInternet = offline && this.queue.some((q) => q.status === 'pending');
+          if (!nextPending && (waitingOnInternet || songEnding)) {
+            nextPending =
+              this.queueFallback(context, callbacks, waitingOnInternet ? 'offline' : 'empty', offline) ?? undefined;
           }
 
           if (!nextPending) break;

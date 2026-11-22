@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import type {
+  MediaCacheSettings,
+  MediaCacheUsage,
   BatchDownloadProgress,
   Crate,
   DeckStreamEndpoints,
@@ -43,7 +45,17 @@ export interface TubeDeckAPI {
   getTasteSummary: () => Promise<Result<TasteSummary>>;
   unblockChannel: (name: string) => Promise<Result<boolean>>;
   resetTasteFeedback: () => Promise<Result<boolean>>;
-  resolveStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
+  /** `meta` lets the main process save the song in the media cache after it resolves. */
+  resolveStream: (
+    videoId: string,
+    meta?: { title: string; channel: string; durationSec: number; thumbnailUrl: string }
+  ) => Promise<Result<DeckStreamEndpoints>>;
+  getCachedTracks: () => Promise<Result<YouTubeTrack[]>>;
+  getMediaCacheUsage: () => Promise<Result<MediaCacheUsage>>;
+  clearMediaCache: () => Promise<Result<MediaCacheUsage>>;
+  configureMediaCache: (settings: MediaCacheSettings) => Promise<Result<MediaCacheUsage>>;
+  getMediaCacheSettings: () => Promise<Result<MediaCacheSettings>>;
+  onMediaCacheChanged: (cb: () => void) => () => void;
   invalidateStream: (videoId: string) => Promise<Result<DeckStreamEndpoints>>;
   getYtDlpStatus: () => Promise<Result<YtDlpStatus>>;
   ensureYtDlp: () => Promise<Result<YtDlpStatus>>;
@@ -134,7 +146,13 @@ const api: TubeDeckAPI = {
   getTasteSummary: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_SUMMARY),
   unblockChannel: (name) => ipcRenderer.invoke(IPC_CHANNELS.TASTE_UNBLOCK_CHANNEL, name),
   resetTasteFeedback: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_RESET),
-  resolveStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_RESOLVE, videoId),
+  resolveStream: (videoId, meta) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_RESOLVE, videoId, meta),
+  getCachedTracks: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_CACHE_LIST),
+  getMediaCacheUsage: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_CACHE_USAGE),
+  clearMediaCache: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_CACHE_CLEAR),
+  configureMediaCache: (settings) => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_CACHE_CONFIGURE, settings),
+  getMediaCacheSettings: () => ipcRenderer.invoke(IPC_CHANNELS.DB_GET_SETTING, 'mediaCache', { maxGb: 5, saveVideo: true }),
+  onMediaCacheChanged: (cb) => subscribeChannel(IPC_CHANNELS.MEDIA_CACHE_EVENT, cb),
   invalidateStream: (videoId) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_INVALIDATE, videoId),
   getYtDlpStatus: () => ipcRenderer.invoke(IPC_CHANNELS.YTDLP_STATUS),
   ensureYtDlp: () => ipcRenderer.invoke(IPC_CHANNELS.YTDLP_ENSURE),

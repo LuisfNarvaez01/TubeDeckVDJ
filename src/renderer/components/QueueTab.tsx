@@ -72,6 +72,10 @@ export function QueueTab({
   const automixFadeType = useLibraryStore((s) => s.automixFadeType);
   const automixFadeDurationSec = useLibraryStore((s) => s.automixFadeDurationSec);
   const preloadMode = useLibraryStore((s) => s.preloadMode);
+  const sourceMode = useLibraryStore((s) => s.automixSourceMode);
+  const setSourceMode = useLibraryStore((s) => s.setAutomixSourceMode);
+  const localCount = useLibraryStore((s) => s.localTracks.length);
+  const cachedCount = useLibraryStore((s) => s.cachedTracks.length);
   const statusNote = useLibraryStore((s) => s.automixStatusNote);
   const playedVideoIds = useLibraryStore((s) => s.playedVideoIds);
 
@@ -171,6 +175,37 @@ export function QueueTab({
           id="upnext-options"
           className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-ground p-2"
         >
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] text-faint">Fuente del Automix</span>
+            <div role="radiogroup" aria-label="Fuente del Automix" className="grid grid-cols-3 gap-1">
+              {(
+                [
+                  ['local', 'Local', 'Solo canciones de tu biblioteca local'],
+                  ['youtube', 'YouTube', 'Radio de YouTube; si falla o no hay internet, sigue con canciones locales'],
+                  ['autopilot', 'Autopilot', 'Mezcla local y YouTube eligiendo lo que mejor encaja con lo que suena']
+                ] as const
+              ).map(([id, label, hint]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  aria-checked={sourceMode === id}
+                  title={hint}
+                  onClick={() => setSourceMode(id)}
+                  className={`rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors duration-150 cursor-pointer ${
+                    sourceMode === id
+                      ? 'border-live/50 bg-live/12 text-live'
+                      : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-faint">
+              Respaldo sin internet: {localCount} locales · {cachedCount} guardadas de YouTube
+            </span>
+          </div>
           <div className="grid grid-cols-3 gap-1.5">
             <label className="flex flex-col gap-0.5 text-[10px] text-faint">
               Precarga

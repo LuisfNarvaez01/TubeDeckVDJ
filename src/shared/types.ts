@@ -256,6 +256,18 @@ export interface SmartCrateTrack extends YouTubeTrack {
 
 export type YouTubeAccessState = 'unknown' | 'checking' | 'ok' | 'blocked' | 'offline';
 
+export interface MediaCacheUsage {
+  bytes: number;
+  maxBytes: number;
+  songs: number;
+  withVideo: number;
+}
+
+export interface MediaCacheSettings {
+  maxGb: number;
+  saveVideo: boolean;
+}
+
 export interface NetworkStatus {
   online: boolean;
   checkedAtMs: number | null;

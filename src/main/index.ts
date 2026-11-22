@@ -5,6 +5,7 @@ import { IPC_CHANNELS } from '../shared/ipcChannels';
 import { registerIpcHandlers } from './ipc/registerHandlers';
 import { AutoUpdaterService } from './services/AutoUpdaterService';
 import { BatchDownloadService } from './services/BatchDownloadService';
+import { MediaCache } from './services/MediaCache';
 import { createFetchProbe, NetworkMonitor } from './services/NetworkMonitor';
 import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
@@ -193,6 +194,20 @@ app.whenReady().then(async () => {
     }
   );
   const resolver = new StreamResolverService(ytRunner);
+  const cacheSettings = db.getSetting<{ maxGb: number; saveVideo: boolean }>('mediaCache', {
+    maxGb: 5,
+    saveVideo: true
+  });
+  const mediaCache = new MediaCache(path.join(userDataDir, 'media-cache'), {
+    maxBytes: cacheSettings.maxGb * 1024 ** 3,
+    saveVideo: cacheSettings.saveVideo,
+    fetchImpl: (url, init) => net.fetch(String(url), init)
+  });
+  mediaCache.onChange(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.MEDIA_CACHE_EVENT);
+    }
+  });
   const proxy = new RamStreamProxy(resolver);
   await proxy.start();
   ramProxy = proxy;
@@ -251,6 +266,7 @@ app.whenReady().then(async () => {
     recommender,
     recordings,
     network,
+    mediaCache,
     sessionDownloadsDir: path.join(app.getPath('music'), 'Proyecta', 'Sesiones descargadas'),
     youtubeAccess: {
       monitor: ytAccess,
