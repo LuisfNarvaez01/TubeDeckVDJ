@@ -6,6 +6,7 @@ import { registerIpcHandlers } from './ipc/registerHandlers';
 import { AutoUpdaterService } from './services/AutoUpdaterService';
 import { BatchDownloadService } from './services/BatchDownloadService';
 import { MediaCache } from './services/MediaCache';
+import { DjSuggestionService } from './services/DjSuggestionService';
 import { createFetchProbe, NetworkMonitor } from './services/NetworkMonitor';
 import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
@@ -267,6 +268,7 @@ app.whenReady().then(async () => {
     recordings,
     network,
     mediaCache,
+    djSuggestions: new DjSuggestionService(db, () => taste.getSnapshot()),
     sessionDownloadsDir: path.join(app.getPath('music'), 'Proyecta', 'Sesiones descargadas'),
     youtubeAccess: {
       monitor: ytAccess,

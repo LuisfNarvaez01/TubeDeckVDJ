@@ -2,6 +2,7 @@ import { app, dialog, ipcMain, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import type { MediaCache, MediaCacheEntry } from '../services/MediaCache';
+import type { DjSuggestionService } from '../services/DjSuggestionService';
 import { z } from 'zod';
 import { IPC_CHANNELS } from '../../shared/ipcChannels';
 import type {
@@ -46,6 +47,13 @@ const CaptureMetaSchema = z.object({
   channel: z.string().max(300),
   durationSec: z.number().min(0).max(24 * 3600),
   thumbnailUrl: z.string().max(1000)
+});
+const DjSuggestionRequestSchema = z.object({
+  onAirVideoId: z.string().max(64).nullish(),
+  onAirChannel: z.string().max(300).nullish(),
+  onAirKey: z.string().max(8).nullish(),
+  onAirBpm: z.number().min(0).max(400).nullish(),
+  excludeVideoIds: z.array(z.string().max(64)).max(2000).optional()
 });
 const MediaCacheSettingsSchema = z.object({
   maxGb: z.number().min(0.5).max(200),
@@ -111,6 +119,7 @@ export interface MainServices {
   /** Proyecta's own folder for session batch downloads (one subfolder per session). */
   sessionDownloadsDir?: string;
   mediaCache?: MediaCache;
+  djSuggestions?: DjSuggestionService;
   youtubeAccess?: {
     monitor: YouTubeAccessMonitor;
     connect: () => Promise<YouTubeAccessStatus>;
@@ -301,6 +310,13 @@ export function registerIpcHandlers(services: MainServices): void {
         if (cache && hit) return buildCachedEndpoints(services.proxy, cache, hit);
         throw err;
       }
+    })
+  );
+
+  ipcMain.handle(IPC_CHANNELS.DJ_SUGGESTIONS, (_event, raw: unknown) =>
+    wrapResult(() => {
+      if (!services.djSuggestions) return { suggestions: [], typicalBpm: null, historySize: 0 };
+      return services.djSuggestions.suggest(DjSuggestionRequestSchema.parse(raw ?? {}));
     })
   );
 

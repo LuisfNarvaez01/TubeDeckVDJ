@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
 import type {
+  DjSuggestionRequest,
+  DjSuggestions,
   MediaCacheSettings,
   MediaCacheUsage,
   BatchDownloadProgress,
@@ -51,6 +53,7 @@ export interface TubeDeckAPI {
     meta?: { title: string; channel: string; durationSec: number; thumbnailUrl: string }
   ) => Promise<Result<DeckStreamEndpoints>>;
   getCachedTracks: () => Promise<Result<YouTubeTrack[]>>;
+  getDjSuggestions: (request: DjSuggestionRequest) => Promise<Result<DjSuggestions>>;
   getMediaCacheUsage: () => Promise<Result<MediaCacheUsage>>;
   clearMediaCache: () => Promise<Result<MediaCacheUsage>>;
   configureMediaCache: (settings: MediaCacheSettings) => Promise<Result<MediaCacheUsage>>;
@@ -148,6 +151,7 @@ const api: TubeDeckAPI = {
   resetTasteFeedback: () => ipcRenderer.invoke(IPC_CHANNELS.TASTE_RESET),
   resolveStream: (videoId, meta) => ipcRenderer.invoke(IPC_CHANNELS.STREAM_RESOLVE, videoId, meta),
   getCachedTracks: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_CACHE_LIST),
+  getDjSuggestions: (request) => ipcRenderer.invoke(IPC_CHANNELS.DJ_SUGGESTIONS, request),
   getMediaCacheUsage: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_CACHE_USAGE),
   clearMediaCache: () => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_CACHE_CLEAR),
   configureMediaCache: (settings) => ipcRenderer.invoke(IPC_CHANNELS.MEDIA_CACHE_CONFIGURE, settings),

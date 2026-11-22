@@ -59,6 +59,7 @@ export const IPC_CHANNELS = {
   NET_CHECK: 'net:check',
   NET_EVENT: 'net:event',
   MEDIA_CACHE_LIST: 'media-cache:list',
+  DJ_SUGGESTIONS: 'dj:suggestions',
   MEDIA_CACHE_USAGE: 'media-cache:usage',
   MEDIA_CACHE_CLEAR: 'media-cache:clear',
   MEDIA_CACHE_CONFIGURE: 'media-cache:configure',

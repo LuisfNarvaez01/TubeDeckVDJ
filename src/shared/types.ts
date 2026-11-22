@@ -256,6 +256,33 @@ export interface SmartCrateTrack extends YouTubeTrack {
 
 export type YouTubeAccessState = 'unknown' | 'checking' | 'ok' | 'blocked' | 'offline';
 
+/** Why a song is suggested (shown as small labels to the DJ). */
+export type DjSuggestionReason = 'follows' | 'this-hour' | 'key' | 'bpm' | 'liked' | 'favorite' | 'forgotten';
+
+export interface DjSuggestionRequest {
+  onAirVideoId?: string | null;
+  onAirChannel?: string | null;
+  onAirKey?: string | null;
+  onAirBpm?: number | null;
+  /** Already queued, loaded or played this session. */
+  excludeVideoIds?: string[];
+}
+
+export interface DjSuggestion extends YouTubeTrack {
+  score: number;
+  reasons: DjSuggestionReason[];
+  bpm: number | null;
+  musicalKey: string | null;
+  playCount: number;
+}
+
+export interface DjSuggestions {
+  suggestions: DjSuggestion[];
+  /** Median BPM of what the DJ usually plays at this hour (null with little history). */
+  typicalBpm: number | null;
+  historySize: number;
+}
+
 export interface MediaCacheUsage {
   bytes: number;
   maxBytes: number;

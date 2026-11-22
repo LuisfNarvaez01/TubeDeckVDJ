@@ -51,6 +51,7 @@ import { MixerCenter } from './components/MixerCenter';
 import { OverlayControls } from './components/OverlayControls';
 import { QueueTab } from './components/QueueTab';
 import { SearchBrowserTab } from './components/SearchBrowserTab';
+import { SuggestionsTab } from './components/SuggestionsTab';
 import { SettingsTab } from './components/SettingsTab';
 import { type RgbWaveSample } from './components/ui/RgbWaveformStrip';
 import { VideoPreviewBar } from './components/VideoPreviewBar';
@@ -97,7 +98,7 @@ import {
   type VideoTransitionId
 } from './video/WebGLVideoCompositor';
 
-type BrowserTab = 'search' | 'local' | 'history';
+type BrowserTab = 'search' | 'local' | 'suggest' | 'history';
 
 const DOCK_HEIGHT_STORAGE_KEY = 'tubedeck.dockHeight';
 const DOCK_MIN_HEIGHT = 120;
@@ -105,6 +106,7 @@ const DOCK_MIN_HEIGHT = 120;
 const BROWSER_TABS: Array<{ id: BrowserTab; getLabel: (localCount: number, qCount: number) => string }> = [
   { id: 'search', getLabel: () => 'Buscador YouTube' },
   { id: 'local', getLabel: (localCount) => `Biblioteca Local (${localCount})` },
+  { id: 'suggest', getLabel: () => 'Sugerencias' },
   { id: 'history', getLabel: () => 'Historial & Crates' }
 ];
 
@@ -2465,12 +2467,12 @@ export function App(): ReactElement {
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(300px,340px)] gap-2.5 2xl:grid-cols-[minmax(0,1fr)_380px]">
         <div className="flex min-h-0 min-w-0 flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-        <nav className="relative grid w-fit grid-cols-3 rounded-lg border border-white/[0.06] bg-ground p-0.5 text-xs">
+        <nav className="relative grid w-fit grid-cols-4 rounded-lg border border-white/[0.06] bg-ground p-0.5 text-xs">
           <span
             aria-hidden="true"
             className="pointer-events-none absolute inset-y-0.5 left-0.5 rounded-md bg-raised-2 ring-1 ring-white/[0.12] transition-transform duration-150 ease-[cubic-bezier(0.16,1,0.3,1)]"
             style={{
-              width: 'calc(33.333% - 2px)',
+              width: 'calc(25% - 1px)',
               transform: `translateX(${activeTabIndex * 100}%)`
             }}
           />
@@ -2549,6 +2551,18 @@ export function App(): ReactElement {
               onLoadToDeck={handleLoadToDeck}
               onAddToQueue={(tracks) => {
                 queueEngineRef.current.enqueueMany(tracks, 'local');
+                libraryStore.setQueue(queueEngineRef.current.getQueue());
+              }}
+              onPlayNextInQueue={handlePlayNextInQueue}
+              onCuePreview={handleCuePreview}
+            />
+          ) : null}
+
+          {activeTab === 'suggest' ? (
+            <SuggestionsTab
+              onLoadToDeck={handleLoadToDeck}
+              onAddToQueue={(tracks) => {
+                queueEngineRef.current.enqueueMany(tracks, 'user');
                 libraryStore.setQueue(queueEngineRef.current.getQueue());
               }}
               onPlayNextInQueue={handlePlayNextInQueue}
