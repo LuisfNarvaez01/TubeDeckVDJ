@@ -79,6 +79,8 @@ import {
   QueueAndAutomixEngine
 } from './dj/QueueAndAutomixEngine';
 import { useDeckStore } from './store/useDeckStore';
+import { useShallow } from 'zustand/react/shallow';
+import { isTrackDrag, readDraggedTrack } from './dnd/trackDrag';
 import { useLibraryStore } from './store/useLibraryStore';
 import { useMixerStore } from './store/useMixerStore';
 import { useSettingsStore } from './store/useSettingsStore';
@@ -319,9 +321,36 @@ export function App(): ReactElement {
   const activeDominantDeckRef = useRef<DeckId>('A');
 
   const setDeckPatch = useDeckStore((s) => s.setDeckPatch);
-  const mixerStore = useMixerStore();
-  const settings = useSettingsStore();
-  const libraryStore = useLibraryStore();
+  // The whole app re-rendered on every crossfade frame and every Automix tick because it
+  // subscribed to entire stores. It now listens only to what it shows; fast-changing values
+  // (crossfader, video mix, search text, download progress) are read by the components that
+  // display them.
+  const mixerStore = useMixerStore.getState();
+  const settings = useSettingsStore(
+    useShallow((s) => {
+      const { videoMix: _videoMix, ...rest } = s;
+      return rest;
+    })
+  );
+  const libraryStore = useLibraryStore(
+    useShallow((s) => ({
+      queue: s.queue,
+      automixEnabled: s.automixEnabled,
+      autoRadioEnabled: s.autoRadioEnabled,
+      recentOnAir: s.recentOnAir,
+      previewingVideoId: s.previewingVideoId,
+      localTracks: s.localTracks,
+      setQueue: s.setQueue,
+      setAutomixStatusNote: s.setAutomixStatusNote,
+      setLocalLibrary: s.setLocalLibrary,
+      setPreloadMode: s.setPreloadMode,
+      setBatchDownload: s.setBatchDownload,
+      setAutomixFadeType: s.setAutomixFadeType,
+      setAutomixFadeDurationSec: s.setAutomixFadeDurationSec,
+      setAutomixEnabled: s.setAutomixEnabled,
+      setAutoRadioEnabled: s.setAutoRadioEnabled
+    }))
+  );
   const recentOnAir = libraryStore.recentOnAir;
   const deckATrackId = useDeckStore((st) => st.decks.A.track?.videoId ?? null);
   const deckBTrackId = useDeckStore((st) => st.decks.B.track?.videoId ?? null);
@@ -1802,7 +1831,6 @@ export function App(): ReactElement {
       rightWing={wings?.right}
           masterCanvasRef={masterCanvasRef}
       attachPreviewContainer={attachPreviewContainer}
-      videoMix={settings.videoMode === 'linked' ? mixerStore.crossfader : settings.videoMix}
       videoMode={settings.videoMode}
       autoDurationSec={settings.autoDurationSec}
       transition={settings.transition}
@@ -1858,7 +1886,38 @@ export function App(): ReactElement {
     />
   );
 
+  // Drag a song from the browser lists onto a deck (loads it) or onto Siguiente (queues it).
+  const [trackDropTarget, setTrackDropTarget] = useState<DeckId | 'queue' | null>(null);
+  const trackDropProps = (target: DeckId | 'queue') => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!isTrackDrag(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setTrackDropTarget((cur) => (cur === target ? cur : target));
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      const next = e.relatedTarget as Node | null;
+      if (!next || !(e.currentTarget as HTMLElement).contains(next)) {
+        setTrackDropTarget((cur) => (cur === target ? null : cur));
+      }
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!isTrackDrag(e)) return;
+      e.preventDefault();
+      setTrackDropTarget(null);
+      const track = readDraggedTrack(e);
+      if (!track) return;
+      if (target === 'queue') {
+        queueEngineRef.current.enqueue(track, 'user');
+        libraryStore.setQueue(queueEngineRef.current.getQueue());
+      } else {
+        void handleLoadToDeck(target, track);
+      }
+    }
+  });
+
   const renderDeck = (deckId: DeckId, layout: 'full' | 'strip' | 'controls' = 'full') => (
+    <div className="contents" {...trackDropProps(deckId)}>
     <DeckPanel
       layout={layout}
       onAir={decksPlayingKey.includes(deckId) && audibleKey.includes(deckId)}
@@ -1982,6 +2041,7 @@ export function App(): ReactElement {
       }}
       onSync={handleSync}
     />
+    </div>
   );
 
   const upd = settings.updaterStatus;
@@ -2217,6 +2277,17 @@ export function App(): ReactElement {
         </div>
       </header>
 
+      {trackDropTarget ? (
+        <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full border border-white/15 bg-raised-2/95 px-4 py-1.5 text-xs font-semibold shadow-lg">
+          {trackDropTarget === 'queue' ? (
+            <span className="text-ink">Soltar para agregar a la cola</span>
+          ) : (
+            <span className={trackDropTarget === 'A' ? 'text-deck-a' : 'text-deck-b'}>
+              Soltar para cargar en el Deck {trackDropTarget}
+            </span>
+          )}
+        </div>
+      ) : null}
       <NetworkBanner status={network.status} onRecheck={network.recheck} />
 
       <YouTubeBlockedBanner
@@ -2378,7 +2449,7 @@ export function App(): ReactElement {
         ref={dockSectionRef}
         style={dockHeight === null ? undefined : { height: dockHeight }}
         className={`flex min-h-0 flex-col gap-2 rounded-xl border border-white/[0.06] bg-surface p-2.5 ${
-          dockHeight === null ? 'min-h-[150px] flex-1 [@media(min-height:900px)]:min-h-[220px]' : 'shrink-0'
+          dockHeight === null ? 'min-h-[clamp(200px,34vh,260px)] flex-1 [@media(min-height:900px)]:min-h-[240px]' : 'shrink-0'
         }`}
       >
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(300px,340px)] gap-2.5 2xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -2518,6 +2589,7 @@ export function App(): ReactElement {
 
         <aside
           ref={upNextRef}
+          {...trackDropProps('queue')}
           tabIndex={-1}
           aria-label="Siguiente"
           className="flex min-h-0 min-w-0 flex-col rounded-lg focus:outline-none focus-visible:ring-1 focus-visible:ring-white/25"

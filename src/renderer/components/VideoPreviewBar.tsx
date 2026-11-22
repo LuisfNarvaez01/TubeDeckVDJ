@@ -1,5 +1,7 @@
 import { useCallback, type ReactElement, type ReactNode } from 'react';
 import { Monitor, ArrowLeftRight, Sparkles, Frame, Link2, Tv } from 'lucide-react';
+import { useMixerStore } from '../store/useMixerStore';
+import { useSettingsStore } from '../store/useSettingsStore';
 import type { DeckId, DisplayInfo, VideoQualityTier } from '../../shared/types';
 import type { VideoFxId } from '../video/VideoFxPipeline';
 import type { VideoCrossfaderMode, VideoTransitionId } from '../video/WebGLVideoCompositor';
@@ -7,7 +9,6 @@ import type { VideoCrossfaderMode, VideoTransitionId } from '../video/WebGLVideo
 interface VideoPreviewBarProps {
   masterCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   attachPreviewContainer: (deck: DeckId, container: HTMLDivElement | null) => void;
-  videoMix: number;
   videoMode: VideoCrossfaderMode;
   autoDurationSec: number;
   transition: VideoTransitionId;
@@ -63,7 +64,6 @@ const FX_BUTTONS: Array<{ id: VideoFxId; label: string }> = [
 export function VideoPreviewBar({
   masterCanvasRef,
   attachPreviewContainer,
-  videoMix,
   videoMode,
   autoDurationSec,
   transition,
@@ -92,6 +92,10 @@ export function VideoPreviewBar({
   leftWing,
   rightWing
 }: VideoPreviewBarProps): ReactElement {
+  // Read here (not passed from App) so a crossfade only re-renders this bar.
+  const crossfader = useMixerStore((st) => st.crossfader);
+  const manualMix = useSettingsStore((st) => st.videoMix);
+  const videoMix = videoMode === 'linked' ? crossfader : manualMix;
   const refA = useCallback(
     (el: HTMLDivElement | null) => attachPreviewContainer('A', el),
     [attachPreviewContainer]

@@ -48,6 +48,24 @@ interface LibraryStore {
   setPreviewState: (videoId: string | null, loading?: boolean) => void;
 }
 
+export function sameQueue(a: QueueItem[], b: QueueItem[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.queueId !== y.queueId ||
+      x.status !== y.status ||
+      x.errorMessage !== y.errorMessage ||
+      x.source !== y.source ||
+      x.track !== y.track
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export const useLibraryStore = create<LibraryStore>((set) => ({
   queue: [],
   automixEnabled: false,
@@ -63,7 +81,8 @@ export const useLibraryStore = create<LibraryStore>((set) => ({
   },
   cachedTracks: [],
   setCachedTracks: (cachedTracks) => set({ cachedTracks }),
-  setQueue: (queue) => set({ queue }),
+  // Automix publishes the queue 4 times a second; only notify when something visible changed.
+  setQueue: (queue) => set((st) => (sameQueue(st.queue, queue) ? st : { queue })),
   setAutomixEnabled: (automixEnabled) => set({ automixEnabled }),
   setAutoRadioEnabled: (autoRadioEnabled) => set({ autoRadioEnabled }),
   setAutomixFadeType: (automixFadeType) => set({ automixFadeType }),

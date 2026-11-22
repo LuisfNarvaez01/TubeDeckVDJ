@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactElement } from 'react';
+import { trackDragProps } from '../dnd/trackDrag';
 import {
   ArrowUpToLine,
   Clock,
@@ -96,6 +97,7 @@ export function SearchBrowserTab({
   const results = useLibraryStore((s) => s.searchResults);
   const setResults = useLibraryStore((s) => s.setSearchResults);
   const playedVideoIds = useLibraryStore((s) => s.playedVideoIds);
+  const playedSet = useMemo(() => new Set(playedVideoIds), [playedVideoIds]);
   const previewingVideoId = useLibraryStore((s) => s.previewingVideoId);
   const previewLoading = useLibraryStore((s) => s.previewLoading);
 
@@ -345,10 +347,10 @@ export function SearchBrowserTab({
             } [&>li]:transition-opacity [&>li]:duration-200 [&:has(>li:hover)>li:not(:hover)]:opacity-55 [&:has(>li:focus-within)>li:not(:focus-within)]:opacity-55`}
           >
             {filteredResults.map((track) => {
-              const wasPlayed = playedVideoIds.includes(track.videoId);
+              const wasPlayed = playedSet.has(track.videoId);
               const isPreviewing = previewingVideoId === track.videoId;
               return (
-                <li key={track.videoId} className="group flex min-w-0 flex-col gap-1.5">
+                <li key={track.videoId} {...trackDragProps(track)} className="group flex min-w-0 flex-col gap-1.5 cursor-grab active:cursor-grabbing">
                   <div className="relative aspect-video overflow-hidden rounded-lg bg-raised ring-0 ring-live/70 transition-[box-shadow,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:-translate-y-0.5 group-hover:shadow-[0_16px_32px_-14px_rgba(0,0,0,0.85)] group-hover:ring-2 group-focus-within:-translate-y-0.5 group-focus-within:ring-2">
                     <img
                       src={track.thumbnailUrl}
@@ -463,12 +465,13 @@ export function SearchBrowserTab({
         ) : (
           <ul className="flex flex-col">
             {filteredResults.map((track) => {
-              const wasPlayed = playedVideoIds.includes(track.videoId);
+              const wasPlayed = playedSet.has(track.videoId);
               const isPreviewing = previewingVideoId === track.videoId;
               return (
                 <li
                   key={track.videoId}
-                  className="group flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors duration-150 hover:bg-raised focus-within:bg-raised"
+                  {...trackDragProps(track)}
+                  className="group flex items-center gap-3 rounded-md px-2 py-1.5 cursor-grab active:cursor-grabbing transition-colors duration-150 hover:bg-raised focus-within:bg-raised"
                 >
                   <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded bg-raised">
                     <img

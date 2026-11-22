@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useIncrementalList } from '../hooks/useIncrementalList';
+import { trackDragProps } from '../dnd/trackDrag';
 import {
   FolderPlus,
   FilePlus,
@@ -159,6 +161,9 @@ export function LocalLibraryTab({
         (t.localFilePath?.toLowerCase().includes(q) ?? false)
     );
   }, [sourceTracks, q]);
+  const { visible: visibleTracks, hasMore: hasMoreTracks, sentinelRef: tracksSentinelRef } =
+    useIncrementalList(filteredTracks);
+  const playedSet = useMemo(() => new Set(playedVideoIds), [playedVideoIds]);
   const filteredFolders = useMemo(() => {
     const list = dirPath ? (listing?.folders ?? []) : [];
     return q ? list.filter((f) => f.name.toLowerCase().includes(q)) : list;
@@ -467,13 +472,15 @@ export function LocalLibraryTab({
           ) : null}
 
           {!dirError &&
-            filteredTracks.map((track) => {
-              const wasPlayed = playedVideoIds.includes(track.videoId);
+            visibleTracks.map((track) => {
+              const wasPlayed = playedSet.has(track.videoId);
               const isPreviewing = previewingVideoId === track.videoId;
               return (
                 <div
                   key={track.localFilePath ?? track.videoId}
-                  className="group flex items-center justify-between gap-3 px-3 py-1.5 hover:bg-raised/70"
+                  {...trackDragProps(track)}
+                  title="Arrastra a un deck o a la cola"
+                  className="group flex items-center justify-between gap-3 px-3 py-1.5 hover:bg-raised/70 cursor-grab active:cursor-grabbing [content-visibility:auto] [contain-intrinsic-size:auto_44px]"
                 >
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="flex h-8 w-12 shrink-0 items-center justify-center rounded border border-white/[0.06] bg-raised">
@@ -557,6 +564,7 @@ export function LocalLibraryTab({
                 </div>
               );
             })}
+          {!dirError && hasMoreTracks ? <div ref={tracksSentinelRef} className="h-8" aria-hidden /> : null}
         </div>
       </div>
     </div>
