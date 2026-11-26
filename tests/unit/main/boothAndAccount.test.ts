@@ -261,3 +261,51 @@ describe('Lantify account', () => {
     expect(settings.getSetting('lantify.account', 'x')).toBeNull();
   });
 });
+
+describe('Lantify account without the business code (v3.7 cloud)', () => {
+  it('signs in with username or email and password only: no tenantCode is sent', async () => {
+    const { svc, calls } = account(() => ({ status: 200, body: { license: license() } }));
+    const status = await svc.signIn({ username: '  Duena@Nativos.co ', password: 'Clave-Segura-1' });
+    expect(status).toMatchObject({ state: 'signed-in', business: { code: 'BAR-AB12' }, businessChoices: null });
+    expect(calls[0].body.username).toBe('duena@nativos.co');
+    expect('tenantCode' in calls[0].body).toBe(false);
+    const empty = account(() => ({ status: 200, body: { license: license() } }));
+    await empty.svc.signIn({ tenantCode: '  ', username: 'duena', password: 'x' });
+    expect('tenantCode' in empty.calls[0].body).toBe(false);
+  });
+
+  it('lists the businesses when the account opens several, then signs in with the one picked', async () => {
+    const { svc, calls } = account((_url, body) =>
+      body.tenantCode
+        ? { status: 200, body: { license: license({ tcode: body.tenantCode, tname: 'Bar Centro' }) } }
+        : {
+            status: 409,
+            body: {
+              code: 'CLOUD_TENANT_REQUIRED',
+              businesses: [{ code: 'bar-ab12', name: 'Bar Nativos' }, { code: 'CEN-9X', name: 'Bar Centro' }, { code: 'x' }, { code: 'CEN-9X' }]
+            }
+          }
+    );
+    const first = await svc.signIn({ username: 'duena', password: 'x' });
+    expect(first).toMatchObject({ state: 'signed-out', error: null });
+    expect(first.businessChoices).toEqual([
+      { code: 'BAR-AB12', name: 'Bar Nativos' },
+      { code: 'CEN-9X', name: 'Bar Centro' }
+    ]);
+    const second = await svc.signIn({ tenantCode: 'CEN-9X', username: 'duena', password: 'x' });
+    expect(calls[1].body).toMatchObject({ tenantCode: 'CEN-9X', username: 'duena' });
+    expect(second).toMatchObject({ state: 'signed-in', business: { code: 'CEN-9X', name: 'Bar Centro' }, businessChoices: null });
+  });
+
+  it('explains the new errors', async () => {
+    const wrong = account(() => ({ status: 401, body: { code: 'AUTH_INVALID_CREDENTIALS' } }));
+    await expect(wrong.svc.signIn({ username: 'duena', password: 'x' })).rejects.toThrow(
+      'El usuario (o correo) o la contraseña no coinciden.'
+    );
+    const loyalty = account(() => ({ status: 402, body: { code: 'CLOUD_PLAN_LOYALTY_ONLY' } }));
+    await expect(loyalty.svc.signIn({ username: 'duena', password: 'x' })).rejects.toThrow(/no incluye Proyecta/);
+    const badList = account(() => ({ status: 409, body: { code: 'CLOUD_TENANT_REQUIRED', businesses: [] } }));
+    await expect(badList.svc.signIn({ username: 'duena', password: 'x' })).rejects.toThrow();
+    await expect(account(() => ({ status: 200 })).svc.signIn({ username: '', password: 'x' })).rejects.toThrow(/usuario \(o correo\)/);
+  });
+});

@@ -491,7 +491,7 @@ export function registerIpcHandlers(services: MainServices): void {
   ipcMain.handle(IPC_CHANNELS.ACCOUNT_SIGN_IN, (_event, raw: unknown) =>
     wrapResult(() =>
       requireAccount().signIn(
-        z.object({ tenantCode: z.string().max(40), username: z.string().max(64), password: z.string().max(256) }).parse(raw)
+        z.object({ tenantCode: z.string().max(40).optional(), username: z.string().max(120), password: z.string().max(256) }).parse(raw)
       )
     )
   );

@@ -385,6 +385,11 @@ export interface AccountStatus {
   /** Signed in through Lantify POS on this computer. */
   viaPos: boolean;
   error: string | null;
+  /**
+   * The same username (or email) and password open several businesses: the person picks
+   * one and signs in again with its code. Null otherwise.
+   */
+  businessChoices: Array<{ code: string; name: string }> | null;
 }
 
 /** Autopilot set from Lantify POS; Proyecta applies it only while no DJ is in the booth. */

@@ -162,7 +162,7 @@ export interface TubeDeckAPI {
   /** Lantify account (Proyecta opens with it). */
   accountStatus: () => Promise<Result<AccountStatus>>;
   onAccountEvent: (cb: (status: AccountStatus) => void) => () => void;
-  signIn: (input: { tenantCode: string; username: string; password: string }) => Promise<Result<AccountStatus>>;
+  signIn: (input: { tenantCode?: string; username: string; password: string }) => Promise<Result<AccountStatus>>;
   signInWithLocalPos: () => Promise<Result<AccountStatus>>;
   signOut: () => Promise<Result<AccountStatus>>;
   openProyectaSignup: () => Promise<Result<void>>;

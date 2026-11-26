@@ -1,6 +1,6 @@
 /**
  * Proyecta account = the business's Lantify account (v3.5). Proyecta is part of the Lantify
- * ecosystem: it opens with the same business code, username and password as Lantify POS,
+ * ecosystem: it opens with the same username (or email) and password as Lantify POS,
  * or by itself when Lantify POS runs on this same computer (the POS hands over a Proyecta
  * licence for its signed-in user). A business that only pays for Proyecta has its own
  * "Proyecta" plan, created at lantifypos.com/registro?producto=proyecta.
@@ -10,7 +10,10 @@
  * offline window (`olu`, 72 h after it was issued) and renews itself while online.
  *
  * Contract (cloud/api-worker in Lantify POS):
- *   POST {api}/v1/auth/login        { app:'proyecta', tenantCode, username, password, device }
+ *   POST {api}/v1/auth/login        { app:'proyecta', tenantCode?, username, password, device }
+ *     tenantCode is optional (v3.7): the cloud finds the account by username or email. When
+ *     the same credentials open several businesses it answers 409 CLOUD_TENANT_REQUIRED with
+ *     `businesses: [{ code, name }]` and Proyecta asks which one, then retries with its code.
  *   POST {api}/v1/license/refresh   Bearer licence
  *   POST {pos}/api/cloud/proyecta-handoff { device }  (Lantify POS on 127.0.0.1, this computer only)
  *
@@ -92,7 +95,9 @@ interface StoredLicense {
 export function accountErrorText(code: string | undefined, extra: Record<string, unknown> = {}): string {
   switch (code) {
     case 'AUTH_INVALID_CREDENTIALS':
-      return 'El código del negocio, el usuario o la contraseña no coinciden.';
+      return 'El usuario (o correo) o la contraseña no coinciden.';
+    case 'CLOUD_PLAN_LOYALTY_ONLY':
+      return 'El plan del negocio no incluye Proyecta.';
     case 'CLOUD_LOCKED':
       return 'Demasiados intentos. Espera 15 minutos e intenta de nuevo.';
     case 'CLOUD_USER_DISABLED':
@@ -118,6 +123,19 @@ export function accountErrorText(code: string | undefined, extra: Record<string,
   }
 }
 
+/** The 409 body's business list, cleaned (null when it is not a usable list). */
+export function parseBusinessChoices(raw: unknown): Array<{ code: string; name: string }> | null {
+  if (!Array.isArray(raw)) return null;
+  const out: Array<{ code: string; name: string }> = [];
+  for (const b of raw.slice(0, 20)) {
+    const code = typeof b?.code === 'string' ? b.code.trim().toUpperCase().slice(0, 40) : '';
+    if (code.length < 3 || out.some((o) => o.code === code)) continue;
+    const name = typeof b?.name === 'string' && b.name.trim() ? b.name.trim().slice(0, 80) : code;
+    out.push({ code, name });
+  }
+  return out.length > 0 ? out : null;
+}
+
 const b64urlJson = (part: string): unknown => JSON.parse(Buffer.from(part, 'base64url').toString('utf-8'));
 
 export class LantifyAccountService {
@@ -131,6 +149,7 @@ export class LantifyAccountService {
   private claims: LicenseClaims | null = null;
   private busy = false;
   private error: string | null = null;
+  private businessChoices: Array<{ code: string; name: string }> | null = null;
   private timer: unknown = null;
 
   constructor(private readonly deps: AccountDeps) {
@@ -196,7 +215,8 @@ export class LantifyAccountService {
       subscription: c && signedIn ? c.subStatus : null,
       offlineUntil: c && signedIn ? new Date(c.olu * 1000).toISOString() : null,
       viaPos: signedIn ? Boolean(this.stored?.viaPos) : false,
-      error: this.error
+      error: this.error,
+      businessChoices: signedIn || !this.businessChoices ? null : this.businessChoices.map((b) => ({ ...b }))
     };
   }
 
@@ -218,14 +238,19 @@ export class LantifyAccountService {
     return this.getStatus();
   }
 
-  async signIn(input: { tenantCode: string; username: string; password: string }): Promise<AccountStatus> {
-    const tenantCode = input.tenantCode.trim().toUpperCase().slice(0, 40);
-    const username = input.username.trim().toLowerCase().slice(0, 64);
-    if (tenantCode.length < 3 || !username || !input.password) throw new Error('Escribe el código del negocio, tu usuario y tu contraseña.');
+  /**
+   * Username (or email) and password; the business code only when the person picked one
+   * (several businesses) or typed it. Several businesses → resolves with `businessChoices`.
+   */
+  async signIn(input: { tenantCode?: string; username: string; password: string }): Promise<AccountStatus> {
+    const tenantCode = (input.tenantCode ?? '').trim().toUpperCase().slice(0, 40);
+    const username = input.username.trim().toLowerCase().slice(0, 120);
+    if (!username || !input.password) throw new Error('Escribe tu usuario (o correo) y tu contraseña.');
+    if (tenantCode && tenantCode.length < 3) throw new Error('El código del negocio no es válido.');
     return this.run(() =>
       this.post(`${this.apiBase}/v1/auth/login`, {
         app: 'proyecta',
-        tenantCode,
+        ...(tenantCode ? { tenantCode } : {}),
         username,
         password: input.password.slice(0, 256),
         device: { fingerprint: this.deviceFingerprint(), name: this.deps.deviceName.slice(0, 80) }
@@ -300,6 +325,7 @@ export class LantifyAccountService {
     if (this.busy) throw new Error('Ya estamos entrando. Espera un momento.');
     this.busy = true;
     this.error = null;
+    this.businessChoices = null;
     this.emit();
     try {
       let res: AccountHttpResponse;
@@ -309,6 +335,14 @@ export class LantifyAccountService {
         throw new Error(viaPos ? 'No se encontró Lantify POS abierto en este computador.' : 'No hay conexión a internet. Revisa la red e intenta de nuevo.');
       }
       const body = (await res.json().catch(() => null)) as ({ license?: unknown; code?: string } & Record<string, unknown>) | null;
+      if (res.status === 409 && body?.code === 'CLOUD_TENANT_REQUIRED') {
+        const choices = parseBusinessChoices(body.businesses);
+        if (choices) {
+          this.businessChoices = choices; // not an error: the sign-in card asks which one
+          this.busy = false;
+          return this.getStatus();
+        }
+      }
       if (res.status !== 200 || typeof body?.license !== 'string') {
         throw new Error(accountErrorText(body?.code, body ?? {}));
       }
