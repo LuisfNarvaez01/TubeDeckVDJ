@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { Check, Film, Inbox, LoaderCircle, QrCode, RefreshCw, Settings2, X } from 'lucide-react';
+import { Check, Film, Inbox, LoaderCircle, MessageSquare, QrCode, RefreshCw, Send, Settings2, X } from 'lucide-react';
 import type { SongRequest } from '../../shared/types';
 import { currentCandidate } from '../dj/SongRequestBridge';
-import { tableLabel, useSongRequestStore } from '../store/useSongRequestStore';
+import { activeQr, tableLabel, useSongRequestStore } from '../store/useSongRequestStore';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { formatTrackDuration } from './SearchBrowserTab';
 
@@ -16,6 +16,8 @@ interface RequestsTabProps {
   tableCountFor: (table: string) => number;
   onToggleAutoApprove: (enabled: boolean) => void;
   onOpenSettings: () => void;
+  /** Sends a message to the Lantify POS staff; resolves with an error text or null. */
+  onSendChat: (text: string) => Promise<string | null>;
 }
 
 const controlBtn =
@@ -42,12 +44,23 @@ export function RequestsTab({
   conflictFor,
   tableCountFor,
   onToggleAutoApprove,
-  onOpenSettings
+  onOpenSettings,
+  onSendChat
 }: RequestsTabProps): ReactElement {
   const snapshot = useSongRequestStore((s) => s.snapshot);
   const note = useSongRequestStore((s) => s.note);
-  const { mode, prefs, lantify, local, requests } = snapshot;
+  const { mode, prefs, page, cloud, local, requests, chat } = snapshot;
+  const qr = activeQr(snapshot);
   const [showQr, setShowQr] = useState(false);
+  const [view, setView] = useState<'requests' | 'chat'>('requests');
+  const [chatText, setChatText] = useState('');
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [seenChat, setSeenChat] = useState(0);
+  const chatEnabled = mode === 'cloud' && Boolean(cloud.business);
+  const unreadChat = chat.slice(seenChat).filter((m) => m.from === 'pos').length;
+  useEffect(() => {
+    if (view === 'chat') setSeenChat(chat.length);
+  }, [view, chat.length]);
   // Re-render when the queue changes: the "ya está en la cola" hints depend on it.
   useLibraryStore((s) => s.queue);
   const [now, setNow] = useState(() => Date.now());
@@ -70,24 +83,18 @@ export function RequestsTab({
     mode === 'off'
       ? {
           title: 'Pedidos de canciones desde el celular',
-          text: 'Actívalos en Ajustes: con el QR de las mesas de Lantify POS o con el QR propio de Proyecta, sin nada más.',
+          text: 'Actívalos en Ajustes: por internet (solo o con Lantify POS) o en la red del local.',
           action: 'Activar en Ajustes'
         }
-      : mode === 'lantify' && !lantify.paired
-        ? lantify.connection === 'revoked'
-          ? {
-              title: 'Lantify desvinculó Proyecta',
-              text: 'Vincula de nuevo con un código nuevo de Lantify → Mi página → Pedir canciones.',
-              action: 'Vincula de nuevo'
-            }
-          : {
-              title: 'Falta vincular Lantify POS',
-              text: 'Escribe en Ajustes el código de Lantify → Mi página → Pedir canciones.',
-              action: 'Vincular en Ajustes'
-            }
+      : mode === 'cloud' && !cloud.registered
+        ? {
+            title: cloud.connection === 'revoked' ? 'Lantify desconectó este Proyecta' : 'Falta activar los pedidos por internet',
+            text: 'En Ajustes: «Usar Proyecta solo» o «Vincular con Lantify POS».',
+            action: 'Abrir Ajustes'
+          }
         : mode === 'local' && (!local.running || !local.url)
           ? {
-              title: 'El QR propio no está listo',
+              title: 'El QR de la red del local no está listo',
               text: local.error ?? 'Abriendo el QR en la red del local…',
               action: 'Revisar en Ajustes'
             }
@@ -122,24 +129,36 @@ export function RequestsTab({
         <p className="min-w-0 truncate text-[11px] text-muted">
           {mode === 'local' ? (
             <>
-              QR propio
-              <span className="text-faint">{local.settings.venueName ? ` · ${local.settings.venueName}` : ' · red del local'}</span>
+              Red del local
+              <span className="text-faint">{page.venueName ? ` · ${page.venueName}` : ''}</span>
             </>
           ) : (
             <>
-              {lantify.business?.name ?? 'Lantify'}
-              {lantify.connection === 'retrying' ? (
-                <span className="text-ink-soft">
-                  {' '}
-                  · sin conexión, reintenta en {Math.round(lantify.pollDelayMs / 1000)} s
-                </span>
-              ) : (
-                <span className="text-faint"> · conectado</span>
-              )}
+              {cloud.business?.name ?? (page.venueName || 'Por internet')}
+              <span className={cloud.connection === 'online' ? 'text-faint' : 'text-ink-soft'}>
+                {cloud.connection === 'online' ? ' · conectado' : cloud.connection === 'connecting' ? ' · conectando…' : ' · sin conexión'}
+              </span>
             </>
           )}
         </p>
-        {mode === 'local' && local.qrSvgDataUrl ? (
+        {chatEnabled ? (
+          <button
+            type="button"
+            onClick={() => setView((v) => (v === 'chat' ? 'requests' : 'chat'))}
+            aria-pressed={view === 'chat'}
+            aria-label={unreadChat > 0 ? `Mensajes de Lantify: ${unreadChat} nuevos` : 'Mensajes de Lantify'}
+            title="Mensajes con la caja (Lantify POS)"
+            className={`${controlBtn} relative shrink-0 ${view === 'chat' ? 'text-ink' : ''}`}
+          >
+            <MessageSquare className="h-3 w-3" />
+            {unreadChat > 0 ? (
+              <span className="absolute -right-1 -top-1 min-w-[16px] rounded-full bg-live px-1 text-center font-mono-tabular text-[10px] font-bold leading-4 text-ground">
+                {unreadChat}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
+        {qr?.svg ? (
           <button
             type="button"
             onClick={() => setShowQr((v) => !v)}
@@ -167,14 +186,75 @@ export function RequestsTab({
         </button>
       </div>
 
-      {showQr && mode === 'local' && local.qrSvgDataUrl ? (
+      {showQr && qr?.svg ? (
         <div className="flex items-center gap-3 rounded-lg bg-surface p-2">
-          <img src={local.qrSvgDataUrl} alt="QR para pedir canciones" className="h-28 w-28 shrink-0 rounded bg-ink p-1" />
+          <img src={qr.svg} alt="QR para pedir canciones" className="h-28 w-28 shrink-0 rounded bg-ink p-1" />
           <p className="min-w-0 text-[11px] leading-snug text-muted">
-            Escanéalo con un celular conectado al WiFi
-            {local.settings.wifiName ? ` «${local.settings.wifiName}»` : ' del local'}.
-            <span className="mt-1 block break-all font-mono-tabular text-[10px] text-faint">{local.url}</span>
+            {mode === 'local'
+              ? `Escanéalo con un celular conectado al WiFi${page.wifiName ? ` «${page.wifiName}»` : ' del local'}.`
+              : 'Escanéalo desde cualquier celular, con datos o WiFi.'}
+            <span className="mt-1 block break-all font-mono-tabular text-[10px] text-faint">{qr.url}</span>
           </p>
+        </div>
+      ) : null}
+
+      {view === 'chat' && chatEnabled ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2 rounded-lg bg-surface p-2">
+          <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto" aria-label="Mensajes con la caja" aria-live="polite">
+            {chat.length === 0 ? (
+              <li className="text-[11px] text-muted">Aún no hay mensajes. Aquí hablas con la caja de {cloud.business?.name}.</li>
+            ) : (
+              chat.map((m) => (
+                <li key={m.id} className={`flex flex-col ${m.from === 'dj' ? 'items-end' : 'items-start'}`}>
+                  <p
+                    className={`max-w-[85%] rounded-lg px-2 py-1 text-xs leading-snug ${
+                      m.from === 'dj' ? 'bg-raised-2 text-ink' : 'border border-white/[0.08] bg-ground text-ink'
+                    }`}
+                  >
+                    {m.text}
+                  </p>
+                  <span className="mt-0.5 font-mono-tabular text-[10px] text-faint">
+                    {m.from === 'dj' ? 'Tú' : m.author} ·{' '}
+                    {new Date(m.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </li>
+              ))
+            )}
+          </ul>
+          <form
+            className="flex items-center gap-1"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const text = chatText.trim();
+              if (!text) return;
+              void onSendChat(text).then((err) => {
+                setChatError(err);
+                if (!err) setChatText('');
+              });
+            }}
+          >
+            <input
+              value={chatText}
+              maxLength={280}
+              onChange={(e) => setChatText(e.target.value)}
+              placeholder={cloud.connection === 'online' ? 'Mensaje para la caja' : 'Sin conexión con Lantify'}
+              aria-label="Mensaje para la caja"
+              className="min-w-0 flex-1 rounded-md border border-white/[0.08] bg-ground px-2 py-1 text-[11px] text-ink caret-deck-a placeholder:text-faint focus:border-white/25 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!chatText.trim() || cloud.connection !== 'online'}
+              aria-label="Enviar mensaje"
+              className={controlBtn}
+            >
+              <Send className="h-3 w-3" />
+            </button>
+          </form>
+          {chatError ? (
+            <p role="alert" className="text-[11px] text-danger-soft">
+              {chatError}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -184,7 +264,7 @@ export function RequestsTab({
         </p>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+      <div className={`min-h-0 flex-1 overflow-y-auto pr-0.5 ${view === 'chat' && chatEnabled ? 'hidden' : ''}`}>
         {open.length === 0 ? (
           <div className="flex flex-col items-start gap-1 rounded-lg bg-surface p-3">
             <Inbox className="h-4 w-4 text-faint" aria-hidden="true" />

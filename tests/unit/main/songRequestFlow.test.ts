@@ -1,16 +1,16 @@
 /**
- * Request flow end to end, without Electron: hub (main) + connector + queue engine +
- * bridge (renderer). Runs once against a simulated Lantify Cloud and once against
- * Proyecta's own QR server, which is the stand-alone module.
+ * Request flow end to end, without Electron: hub (main) + transport + queue engine +
+ * bridge (renderer). Runs against a simulated Lantify Música relay ("Por internet") and
+ * against Proyecta's own WiFi server ("Solo red del local").
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import type { YouTubeTrack } from '../../../src/shared/types';
-import { LantifyRequestsService } from '../../../src/main/services/LantifyRequestsService';
+import type { SongRequestsSnapshot, YouTubeTrack } from '../../../src/shared/types';
+import { CloudMusicConnector } from '../../../src/main/services/CloudMusicConnector';
 import { LocalRequestServer } from '../../../src/main/services/LocalRequestServer';
 import { QueueAndAutomixEngine } from '../../../src/renderer/dj/QueueAndAutomixEngine';
 import { ON_AIR_SETTLE_MS, SongRequestBridge } from '../../../src/renderer/dj/SongRequestBridge';
 import type { SongRequestsService } from '../../../src/main/services/SongRequestsService';
-import { fakeCloud, flush, makeHub, MemorySettings } from './songRequestsTestKit';
+import { fakeCloud, FakeSocket, flush, makeHub, MemorySettings } from './songRequestsTestKit';
 
 const SONG: YouTubeTrack = {
   videoId: 'bichota0001',
@@ -48,11 +48,22 @@ function wireBridge(hub: SongRequestsService) {
     clock += ON_AIR_SETTLE_MS + 1;
     return bridge.observeOnAir(t, clock);
   };
-  const snapshot = () => ({
+  const snapshot = (): SongRequestsSnapshot => ({
     mode: hub.getMode(),
     prefs: hub.getPrefs(),
+    page: hub.getPageSettings(),
     requests: hub.getRequests(),
-    lantify: { paired: true, business: null, connection: 'ok' as const, lastError: null, pollDelayMs: 5000 },
+    chat: [],
+    cloud: {
+      registered: true,
+      venueId: 'ab12cd34',
+      business: null,
+      connection: 'online',
+      url: null,
+      qrSvgDataUrl: null,
+      qrPngDataUrl: null,
+      error: null
+    },
     local: {
       running: true,
       url: null,
@@ -61,31 +72,40 @@ function wireBridge(hub: SongRequestsService) {
       qrSvgDataUrl: null,
       qrPngDataUrl: null,
       error: null,
-      settings: { venueName: '', wifiName: '', address: '', qrOnScreen: true }
+      settings: { address: '' }
     }
   });
   return { engine, bridge, settle, snapshot, advance: (ms: number) => (clock += ms) };
 }
 
-const REQ = { id: 'r1', table: '7', guest: 'Ana', query: 'bichota', createdAt: '2026-11-25T22:00:00Z' };
-
-function lantifySetup(items: Array<Record<string, unknown>>) {
-  let served = false;
-  const { http, calls } = fakeCloud((c) => {
-    if (c.path === '/v1/proyecta/pair') return { status: 200, body: { token: 'tok-abcdefgh', business: { name: 'Bar X', slug: 'bar-x' } } };
-    if (c.method === 'GET') {
-      const out = served ? [] : items;
-      served = true;
-      return { status: 200, body: { items: out, cursor: 'c1' } };
-    }
-    return { status: 200 };
-  });
+async function cloudSetup(search: (q: string) => Promise<YouTubeTrack[]> = async () => [SONG]) {
   const settings = new MemorySettings();
-  const { hub } = makeHub({ settings, search: async () => [SONG] });
-  const lantify = new LantifyRequestsService({ http, settings, hub, setTimer: () => 0, clearTimer: () => undefined });
-  const posts = () => calls.filter((c) => c.method === 'POST' && c.path.startsWith('/v1/proyecta/requests/'));
-  const puts = () => calls.filter((c) => c.method === 'PUT');
-  return { hub, lantify, posts, puts, ...wireBridge(hub) };
+  const { hub, gateway } = makeHub({ settings, search });
+  const { http } = fakeCloud(() => ({ status: 201, body: { venueId: 'ab12cd34', hostSecret: 'secret-secret-secret-123' } }));
+  let socket: FakeSocket | null = null;
+  const cloud = new CloudMusicConnector({
+    hub,
+    gateway,
+    settings,
+    http,
+    openSocket: (url) => (socket = new FakeSocket(url)),
+    setTimer: () => 0,
+    clearTimer: () => undefined
+  });
+  await cloud.register();
+  hub.setMode('cloud');
+  cloud.setActive(true);
+  await flush();
+  socket!.open();
+  socket!.push({ t: 'ready', v: 1, chat: [] });
+  const relay = socket!;
+  /** A phone's request as the Durable Object forwards it. */
+  const phone = async (rid: string, body: Record<string, unknown>) => {
+    relay.push({ t: 'req', rid, op: 'request', body, clientKey: `key-${rid}` });
+    await flush();
+    return relay.last('res') as { status: number; body: { id: string; state: string } };
+  };
+  return { hub, relay, phone, ...wireBridge(hub) };
 }
 
 const servers: LocalRequestServer[] = [];
@@ -93,50 +113,40 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.stop()));
 });
 
-describe('song request flow with Lantify POS', () => {
-  it('approve → QUEUED → PLAYING → PLAYED, with now-playing on each change', async () => {
-    const { hub, lantify, engine, bridge, posts, puts, settle } = lantifySetup([REQ]);
-    await lantify.pair('AB12CD34');
-    await lantify.pollOnce();
+describe('song request flow "Por internet" (Lantify Música relay)', () => {
+  it('approve → QUEUED → PLAYING → PLAYED; the phone reads each state from the relay cache', async () => {
+    const { hub, relay, phone, engine, bridge, settle, snapshot } = await cloudSetup();
+    const created = await phone('r1', { client: 'phone-aaaaaaaa', table: '7', guest: 'Ana', query: 'bichota' });
+    expect(created.status).toBe(201);
+    await flush();
+    await bridge.sync(snapshot());
 
     const req = hub.getRequests()[0];
     expect(await bridge.approve(req)).toBe('queued');
-    const [item] = engine.getQueue();
-    expect(item).toMatchObject({ source: 'request', request: { requestId: 'lantify:r1', table: '7', guest: 'Ana' } });
-    await flush();
-    expect(posts().at(-1)).toMatchObject({
-      path: '/v1/proyecta/requests/r1',
-      body: { status: 'QUEUED', title: SONG.title, artist: 'KarolG', videoId: SONG.videoId }
-    });
+    expect(engine.getQueue()[0]).toMatchObject({ source: 'request', request: { table: '7', guest: 'Ana' } });
+    expect(relay.last('view')).toMatchObject({ view: { id: created.body.id, state: 'queued', title: SONG.title } });
 
-    await bridge.sync(lantifySnapshot(hub));
-    engine.dequeueById(item.queueId); // Automix takes it onto a deck
+    engine.dequeueById(engine.getQueue()[0].queueId); // Automix (or request auto-play) takes it
     expect(settle(SONG)).toMatchObject({ table: '7' }); // → "Pedida por la mesa 7" on Screen 2
-    await flush();
-    expect(posts().at(-1)?.body).toEqual({ status: 'PLAYING' });
-    expect(puts().at(-1)?.body).toEqual({ title: SONG.title, artist: 'KarolG', videoId: SONG.videoId });
+    expect(relay.last('view')).toMatchObject({ view: { state: 'playing' } });
+    expect(relay.last('info')).toMatchObject({ info: { nowPlaying: { title: SONG.title, artist: 'KarolG' } } });
 
-    expect(settle(OTHER)).toBeNull();
-    await flush();
-    expect(posts().at(-1)?.body).toEqual({ status: 'PLAYED' });
-    expect(puts().at(-1)?.body).toMatchObject({ title: OTHER.title, videoId: OTHER.videoId });
+    settle(OTHER);
+    expect(relay.last('view')).toMatchObject({ view: { state: 'played' } });
     expect(hub.getRequests()[0].state).toBe('played');
   });
 
   it('rejects ALREADY_PLAYED when the song played in the last 60 minutes or is queued', async () => {
-    const { hub, lantify, engine, bridge, posts, advance } = lantifySetup([
-      REQ,
-      { ...REQ, id: 'r2', table: '3' },
-      { ...REQ, id: 'r3', table: '4' }
-    ]);
-    await lantify.pair('AB12CD34');
-    await lantify.pollOnce();
+    const { hub, relay, phone, engine, bridge, advance } = await cloudSetup();
+    await phone('r1', { client: 'phone-aaaaaaa1', table: '7', query: 'bichota' });
+    await phone('r2', { client: 'phone-aaaaaaa2', table: '3', query: 'bichota' });
+    await phone('r3', { client: 'phone-aaaaaaa3', table: '4', query: 'bichota' });
+    await flush();
     const [r1, r2, r3] = hub.getRequests();
 
-    engine.recordPlayed('otherupload', 'Bichota (Letra)', 1_000_000); // another upload, same song
+    engine.recordPlayed('otherupload', 'Bichota (Letra)', 1_000_000);
     expect(await bridge.approve(r1)).toBe('already-played');
-    await flush();
-    expect(posts().at(-1)).toMatchObject({ path: '/v1/proyecta/requests/r1', body: { status: 'REJECTED', reason: 'ALREADY_PLAYED' } });
+    expect(relay.last('view')).toMatchObject({ view: { state: 'rejected', reason: expect.stringMatching(/ya sonó/) } });
 
     advance(61 * 60 * 1000);
     expect(await bridge.approve(r2)).toBe('queued');
@@ -144,14 +154,12 @@ describe('song request flow with Lantify POS', () => {
   });
 
   it('auto-approve respects the per-table limit and leaves the rest to the DJ', async () => {
-    const songs = [SONG, { ...SONG, videoId: 'song2000002', title: 'Song Two' }, { ...SONG, videoId: 'song3000003', title: 'Song Three' }];
-    let n = 0;
-    const settings = new MemorySettings();
-    const { hub } = makeHub({ settings, search: async () => [songs[n++]] });
-    const { bridge, snapshot } = wireBridge(hub);
-    hub.setMode('local');
+    const byQuery = (q: string): YouTubeTrack[] => [{ ...SONG, videoId: `${q}`.padEnd(11, '0'), title: `Song ${q}` }];
+    const { hub, phone, bridge, snapshot } = await cloudSetup(async (q) => byQuery(q));
     hub.setPrefs({ autoApprove: true, maxPerTable: 2 });
-    await hub.ingest('local', ['a', 'b', 'c'].map((q, i) => ({ externalId: `t${i}`, table: '7', guest: '', query: q, createdAt: 'x' })));
+    let n = 0;
+    for (const q of ['aa', 'bb', 'cc']) await phone(`r${n}`, { client: `phone-aaaaaaa${n++}`, table: '7', query: q });
+    await flush();
     await bridge.sync(snapshot());
     expect(hub.getRequests().map((r) => r.state)).toEqual(['queued', 'queued', 'pending']);
   });
@@ -167,16 +175,12 @@ describe('song request flow with Lantify POS', () => {
   });
 });
 
-function lantifySnapshot(hub: SongRequestsService) {
-  return { ...wireBridge(hub).snapshot(), mode: 'lantify' as const };
-}
-
-describe('song request flow stand-alone (own QR, no Lantify)', () => {
-  it('a phone on the WiFi asks for a song, the DJ approves it and the phone sees it play', async () => {
+describe('song request flow "Solo red del local" (no internet, no Lantify)', () => {
+  it('a phone on the WiFi picks a video, the DJ approves it and the phone sees it play', async () => {
     const settings = new MemorySettings();
-    const { hub } = makeHub({ settings, search: async () => [SONG] });
+    const { hub, gateway } = makeHub({ settings, search: async () => [SONG] });
     hub.setMode('local');
-    const server = new LocalRequestServer({ hub, settings, host: '127.0.0.1', port: 0, getAddresses: () => ['127.0.0.1'] });
+    const server = new LocalRequestServer({ hub, gateway, settings, host: '127.0.0.1', port: 0, getAddresses: () => ['127.0.0.1'] });
     servers.push(server);
     const status = await server.start();
     const key = new URL(status.url!).searchParams.get('k')!;
@@ -187,11 +191,10 @@ describe('song request flow stand-alone (own QR, no Lantify)', () => {
         body: body ? JSON.stringify(body) : undefined
       }).then((r) => r.json() as Promise<{ id: string; state: string; title?: string }>);
 
-    const created = await call('/api/requests', { table: '5', guest: 'Leo', query: 'bichota' });
-    await flush();
+    await call('/api/search?q=bichota');
+    const created = await call('/api/requests', { client: 'phone-aaaaaaaa', table: '5', guest: 'Leo', videoId: SONG.videoId });
     const { engine, bridge, settle, snapshot } = wireBridge(hub);
-    const req = hub.getRequests()[0];
-    expect(await bridge.approve(req)).toBe('queued');
+    expect(await bridge.approve(hub.getRequests()[0])).toBe('queued');
     expect((await call(`/api/requests/${created.id}`)).state).toBe('queued');
 
     await bridge.sync(snapshot());

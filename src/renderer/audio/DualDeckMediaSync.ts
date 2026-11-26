@@ -47,6 +47,34 @@ function waitForCanPlay(el: HTMLMediaElement, timeoutMs = 4500): Promise<void> {
   });
 }
 
+/** True once the element knows the duration (metadata) and has not failed. */
+export function hasMediaData(el: HTMLMediaElement): boolean {
+  return Boolean(el.src) && !el.error && el.readyState >= 1 && Number.isFinite(el.duration) && el.duration > 0;
+}
+
+/** Waits until the element has metadata, fails, or the time runs out. */
+export function waitForMediaData(el: HTMLMediaElement, timeoutMs: number): Promise<boolean> {
+  if (hasMediaData(el)) return Promise.resolve(true);
+  if (!el.src || el.error) return Promise.resolve(false);
+  return new Promise<boolean>((resolve) => {
+    const finish = (): void => {
+      el.removeEventListener('loadedmetadata', onMeta);
+      el.removeEventListener('durationchange', onMeta);
+      el.removeEventListener('error', onError);
+      clearTimeout(timer);
+      resolve(hasMediaData(el));
+    };
+    const onMeta = (): void => {
+      if (hasMediaData(el)) finish();
+    };
+    const onError = (): void => finish();
+    const timer = setTimeout(finish, timeoutMs);
+    el.addEventListener('loadedmetadata', onMeta);
+    el.addEventListener('durationchange', onMeta);
+    el.addEventListener('error', onError, { once: true });
+  });
+}
+
 function setElementPreservesPitch(el: HTMLMediaElement, enabled: boolean): void {
   const target = el as HTMLMediaElement & {
     preservesPitch?: boolean;
@@ -216,6 +244,20 @@ export class DualDeckMediaSync {
       audioSourceEl: this.getAudioElement(),
       videoEl: this.videoEl
     };
+  }
+
+  /** The element that carries the sound of the loaded stream. */
+  private primaryElement(): HTMLMediaElement {
+    if (this.mediaKind === 'audio' || this.mode === 'dash-split') return this.audioEl;
+    return this.videoEl;
+  }
+
+  /**
+   * After load(): true when the stream really delivered data. A load can "finish" on the
+   * canplay timeout with nothing received, which left the deck at 00:00.
+   */
+  waitUntilReady(timeoutMs: number): Promise<boolean> {
+    return waitForMediaData(this.primaryElement(), timeoutMs);
   }
 
   setPreferredQuality(pref: VideoQualityPreference): VideoQualityTier | null {

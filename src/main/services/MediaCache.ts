@@ -43,7 +43,16 @@ export interface MediaCacheOptions {
   /** Bytes per second for video downloads (audio is not throttled). */
   videoBytesPerSec?: number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Wait after a song is loaded before saving it. Saving right away competed with the
+   * deck's own first chunks from the same YouTube servers, and the first load of a song
+   * stayed at 00:00 until it was loaded again.
+   */
+  captureDelayMs?: number;
 }
+
+/** Default wait before saving a song that just started (see `captureDelayMs`). */
+export const CAPTURE_DELAY_MS = 30_000;
 
 export type CaptureMeta = Pick<YouTubeTrack, 'title' | 'channel' | 'durationSec' | 'thumbnailUrl'>;
 
@@ -63,7 +72,8 @@ function extFor(mime: string): string {
 
 export class MediaCache {
   private entries = new Map<string, MediaCacheEntry>();
-  private queue: Array<{ videoId: string; resolved: ResolvedStream; meta: CaptureMeta }> = [];
+  private queue: Array<{ videoId: string; resolved: ResolvedStream; meta: CaptureMeta; readyAtMs: number }> = [];
+  private readonly captureDelayMs: number;
   private running = false;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private maxBytes: number;
@@ -84,6 +94,7 @@ export class MediaCache {
     this.now = options.now ?? Date.now;
     this.videoBytesPerSec = options.videoBytesPerSec ?? 1_500_000;
     this.sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.captureDelayMs = options.captureDelayMs ?? CAPTURE_DELAY_MS;
     fs.mkdirSync(dir, { recursive: true });
     this.loadIndex();
   }
@@ -160,7 +171,7 @@ export class MediaCache {
     const existing = this.entries.get(videoId);
     if (existing && (this.isComplete(existing) || !this.saveVideo)) return;
     if (this.queue.some((j) => j.videoId === videoId)) return;
-    this.queue.push({ videoId, resolved, meta });
+    this.queue.push({ videoId, resolved, meta, readyAtMs: this.now() + this.captureDelayMs });
     if (!this.running) void this.drain();
   }
 
@@ -174,6 +185,8 @@ export class MediaCache {
     try {
       while (this.queue.length > 0) {
         const job = this.queue.shift()!;
+        const wait = job.readyAtMs - this.now();
+        if (wait > 0) await this.sleep(wait);
         try {
           await this.captureNow(job.videoId, job.resolved, job.meta);
         } catch {
@@ -203,7 +216,8 @@ export class MediaCache {
       return;
     }
     if (!entry.audio && r.audioUrl) {
-      entry.audio = await this.download(r.audioUrl, `${videoId}.audio`, r.mimeTypes.audio ?? 'audio/mp4', false);
+      // Throttled too: a full-speed download stole bandwidth from the decks.
+      entry.audio = await this.download(r.audioUrl, `${videoId}.audio`, r.mimeTypes.audio ?? 'audio/mp4', true);
       this.commit(entry);
     }
     if (this.saveVideo && !entry.video) {

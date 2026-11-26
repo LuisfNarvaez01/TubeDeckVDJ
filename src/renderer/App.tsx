@@ -52,7 +52,7 @@ import { OverlayControls } from './components/OverlayControls';
 import { QueueTab } from './components/QueueTab';
 import { RequestsTab } from './components/RequestsTab';
 import { currentCandidate, SongRequestBridge } from './dj/SongRequestBridge';
-import { pendingRequestCount, tableLabel, useSongRequestStore } from './store/useSongRequestStore';
+import { activeQr, pendingRequestCount, tableLabel, useSongRequestStore } from './store/useSongRequestStore';
 import { SearchBrowserTab } from './components/SearchBrowserTab';
 import { SuggestionsTab } from './components/SuggestionsTab';
 import { SettingsTab } from './components/SettingsTab';
@@ -151,6 +151,9 @@ function NextCountdown(): ReactElement | null {
     </span>
   );
 }
+
+/** How long a loaded deck may take to receive its first data before it is retried. */
+const LOAD_DATA_WAIT_MS = 15_000;
 
 type FeedbackTrack = Pick<YouTubeTrack, 'videoId' | 'title' | 'channel' | 'artists'>;
 
@@ -329,11 +332,11 @@ export function App(): ReactElement {
   );
   const [upNextTab, setUpNextTab] = useState<'queue' | 'requests'>('queue');
   const requestMode = useSongRequestStore((s) => s.snapshot.mode);
-  const lantifyStatus = useSongRequestStore((s) => s.snapshot.lantify);
+  const cloudConnection = useSongRequestStore((s) => s.snapshot.cloud.connection);
   const hasRequests = useSongRequestStore((s) => s.snapshot.requests.length > 0);
   const pendingRequests = useSongRequestStore((s) => pendingRequestCount(s.snapshot.requests));
   const requestQrPng = useSongRequestStore((s) =>
-    s.snapshot.mode === 'local' && s.snapshot.local.settings.qrOnScreen ? s.snapshot.local.qrPngDataUrl : null
+    s.snapshot.page.qrOnScreen ? (activeQr(s.snapshot)?.png ?? null) : null
   );
   const showRequestsTab = requestMode !== 'off' || hasRequests;
   /** Mirrors the network banner for the Automix engine (read inside the render loop). */
@@ -825,17 +828,38 @@ export function App(): ReactElement {
       }
 
       const preferredQuality = useSettingsStore.getState().videoQuality;
+      const loadEndpoints = (endpoints: typeof streamRes.data) =>
+        decks[deck].load({
+          ...endpoints,
+          preferredQuality,
+          mediaKind: track.mediaKind ?? endpoints.mediaKind ?? 'video',
+          onQualityDowngraded: (tier, reason) => {
+            const st = useSettingsStore.getState();
+            st.setActiveDeckQuality(deck, tier);
+            st.setQualityNotice(`Deck ${deck}: ${reason}`);
+          }
+        });
       try {
-        await decks[deck].load({
-        ...streamRes.data,
-        preferredQuality,
-        mediaKind: track.mediaKind ?? streamRes.data.mediaKind ?? 'video',
-        onQualityDowngraded: (tier, reason) => {
-          const st = useSettingsStore.getState();
-          st.setActiveDeckQuality(deck, tier);
-          st.setQualityNotice(`Deck ${deck}: ${reason}`);
+        await loadEndpoints(streamRes.data);
+        if (isStale()) throw new DeckLoadSupersededError(deck);
+        // The first load of a song used to "finish" with no data and stay at 00:00 until it
+        // was loaded again. Wait for real data; if none comes, retry once with a fresh URL.
+        let ready = await decks[deck].waitUntilReady(LOAD_DATA_WAIT_MS);
+        if (!ready && !isStale() && track.source !== 'local') {
+          await window.tubedeckAPI.invalidateStream(track.videoId);
+          const retry = await window.tubedeckAPI.resolveStream(track.videoId, cacheMetaOf(track));
+          if (isStale()) throw new DeckLoadSupersededError(deck);
+          if (retry.success) {
+            await loadEndpoints(retry.data);
+            ready = await decks[deck].waitUntilReady(LOAD_DATA_WAIT_MS);
+          }
         }
-      });
+        if (isStale()) throw new DeckLoadSupersededError(deck);
+        if (!ready) {
+          const message = 'La canción no respondió a tiempo. Toca Reintentar o carga otra.';
+          setDeckPatch(deck, { loading: false, error: message });
+          throw new Error(message);
+        }
       } catch (err) {
         if (isStale()) throw new DeckLoadSupersededError(deck);
         throw err;
@@ -1198,7 +1222,12 @@ export function App(): ReactElement {
             }
           }
 
-          if (lib.automixEnabled && deckState.track && deckState.durationSec > 0) {
+          // Guest requests play on their own even with Automix off (Ajustes → Pedidos).
+          const requestsOnly =
+            !lib.automixEnabled &&
+            useSongRequestStore.getState().snapshot.prefs.autoPlay &&
+            queueEngineRef.current.nextIsRequest();
+          if ((lib.automixEnabled || requestsOnly) && deckState.track && deckState.durationSec > 0) {
             void queueEngineRef.current
               .tick(
                 {
@@ -1219,9 +1248,10 @@ export function App(): ReactElement {
                   preloadMode: lib.preloadMode,
                   crossfadeDurationSec: lib.automixFadeDurationSec,
                   outroTriggerSec: Math.min(lib.automixFadeDurationSec, 12),
-                  autoRadioEnabled: lib.autoRadioEnabled,
+                  autoRadioEnabled: requestsOnly ? false : lib.autoRadioEnabled,
                   fadeType: lib.automixFadeType,
-                  sourceMode: lib.automixSourceMode
+                  sourceMode: lib.automixSourceMode,
+                  onlyRequests: requestsOnly
                 },
                 {
                   loadDeck: async (targetDeck, track) => {
@@ -2735,10 +2765,8 @@ export function App(): ReactElement {
                   </span>
                 ) : null}
               </button>
-              {requestMode === 'lantify' && lantifyStatus.connection === 'retrying' ? (
-                <span className="ml-auto truncate text-[10px] text-faint" title={lantifyStatus.lastError ?? undefined}>
-                  Lantify sin conexión
-                </span>
+              {requestMode === 'cloud' && cloudConnection === 'offline' ? (
+                <span className="ml-auto truncate text-[10px] text-faint">Pedidos sin conexión</span>
               ) : null}
             </div>
           ) : null}
@@ -2780,6 +2808,13 @@ export function App(): ReactElement {
                 if (res?.success) useSongRequestStore.getState().setSnapshot(res.data);
               }}
               onOpenSettings={() => setSettingsDrawerOpen(true)}
+              onSendChat={async (text) => {
+                const res = await window.tubedeckAPI?.sendRequestChat(text);
+                if (!res) return 'Sin conexión con el proceso principal';
+                if (!res.success) return res.error;
+                useSongRequestStore.getState().setSnapshot(res.data);
+                return null;
+              }}
             />
           ) : (
             <QueueTab

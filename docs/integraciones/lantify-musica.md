@@ -1,0 +1,117 @@
+# Pedidos de canciones por internet · Lantify Música (contrato v1)
+
+Contrato compartido entre **Proyecta** (`D:\Trabajos\Pantallas`) y **Lantify POS** (`C:\Users\Luis\Desktop\pos-system\pos-system`, Worker `cloud/api-worker`). Cualquier cambio se hace en los dos repos.
+
+## Por qué así
+
+- El QR tiene que funcionar **desde cualquier red** (datos móviles, otro WiFi): la página del cliente vive en la nube de Lantify.
+- El PC de Proyecta **no abre puertos**: mantiene un WebSocket saliente con un Durable Object por local (`MusicRoom`), igual que el relevo de meseros (`relay.ts`, `TenantRelay`). El objeto solo reenvía y guarda un caché pequeño (estado de pedidos, chat).
+- La **búsqueda de YouTube la hace Proyecta** (youtubei.js en el PC del DJ). El cliente nunca habla con YouTube.
+- Sirve igual para un local **sin Lantify POS** (módulo independiente: Proyecta se registra solo) y para uno **con Lantify POS** (se vincula con un código del POS; la página usa el tema del negocio y el POS puede chatear con el DJ).
+- Sin internet, Proyecta sigue ofreciendo el modo **"Solo red del local"** (servidor LAN propio, mismo API y misma página).
+
+Dominio: `api.lantifypos.com` (API y WebSocket) y `musica.lantifypos.com` (página del cliente, mismo Worker, `custom_domain`).
+
+## Identidad del local (`venue`)
+
+| Campo | Qué es |
+|---|---|
+| `venueId` | 8 caracteres `[a-z0-9]`, va en el QR. Para un local de Lantify es estable por negocio. |
+| `hostSecret` | 32 bytes base64url que solo conoce Proyecta. En la nube se guarda solo su SHA-256. |
+| `tenantId` | Negocio de Lantify vinculado, o `null` si es independiente. |
+
+D1 (migración nueva):
+
+```sql
+CREATE TABLE music_venues (
+  id TEXT PRIMARY KEY,              -- venueId
+  tenant_id TEXT UNIQUE,            -- NULL = independiente
+  name TEXT NOT NULL,
+  host_secret_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT
+);
+CREATE TABLE music_link_codes (
+  code TEXT PRIMARY KEY,            -- 8 caracteres, un solo uso
+  tenant_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL          -- 15 minutos
+);
+```
+
+## Endpoints HTTP
+
+Todos JSON, con CORS como el resto del Worker. Errores: `{ error: "texto en español para mostrar" }`.
+
+### Proyecta (registro y vínculo)
+
+| Método y ruta | Cuerpo | Respuesta |
+|---|---|---|
+| `POST /v1/music/venues` | `{ name }` | `201 { venueId, hostSecret }` — local independiente. Límite: 5 por IP por hora. |
+| `POST /v1/music/link` | `{ code }` (código del POS) | `200 { venueId, hostSecret, business: { name, slug } }`. Si el negocio ya tenía venue, se **rota** el secreto (el PC anterior queda fuera). `404` código vencido o usado. |
+| `POST /v1/music/venues/:venueId/rotate` | cabecera `Authorization: Bearer <hostSecret>` | `200 { venueId, hostSecret }` nuevo (el QR no cambia). |
+| `DELETE /v1/music/venues/:venueId` | `Authorization: Bearer <hostSecret>` | `204` — desvincular / dejar de usar. |
+
+### Lantify POS (programa del negocio, `licensed(env, request, true)`)
+
+| Método y ruta | Respuesta |
+|---|---|
+| `POST /v1/music/link-code` | `200 { code, expiresAt }` — el dueño lo ve en **Lantify → Proyecta → Vincular**. |
+| `GET /v1/music/mine` | `200 { venue: { venueId, name, online, lastSeenAt } \| null, tableUrl: "https://musica.lantifypos.com/<venueId>?mesa=" }` |
+| `GET /v1/music/mine/chat?since=<msgId>` | `200 { messages: ChatMessage[], online }` |
+| `POST /v1/music/mine/chat` | `{ text, author? }` → `201 ChatMessage` (author = nombre del usuario del POS) |
+
+### Cliente (página del QR, público)
+
+Base: `https://musica.lantifypos.com/<venueId>` (la página) y `https://api.lantifypos.com/v1/music/<venueId>/api/…` (el API). La página usa una variable `API_BASE` (en la nube la inyecta el Worker; en la red local es `/api/`).
+
+| Método y ruta | Cuerpo | Respuesta |
+|---|---|---|
+| `GET …/api/info` | — | `{ venueName, online, accepting, nowPlaying: { title, artist } \| null, theme: Theme \| null }` |
+| `GET …/api/search?q=` | — | `{ items: GuestTrack[] }` (máx. 12, ya filtrados: 90–600 s, sin basura). `503` si el DJ no está conectado. |
+| `POST …/api/requests` | `{ client, table?, guest?, videoId?, query? }` | `201 GuestRequestView` · `429 { error }` límite · `400 { error }` |
+| `GET …/api/requests/:id?client=` | — | `GuestRequestView` (del caché del objeto, no despierta a Proyecta) |
+
+- `client`: id aleatorio que la página guarda en el celular (`localStorage`), 16–64 caracteres. Junto con un hash de la IP lo usa Proyecta para los límites (1 pedido cada 30 s, 3 abiertos).
+- Si viene `videoId`, debe ser uno que Proyecta devolvió en una búsqueda de los últimos 15 min; si no, se trata como `query` (texto libre).
+
+```ts
+type Theme = { primary: string; accent: string; logoUrl: string | null };  // del tema de la página del negocio
+type GuestTrack = { videoId: string; title: string; channel: string; durationSec: number; thumbnailUrl: string };
+type GuestRequestView = {
+  id: string; state: 'searching' | 'pending' | 'queued' | 'playing' | 'played' | 'rejected';
+  query: string; title?: string; artist?: string; thumbnailUrl?: string;
+  reason?: string;          // texto para el cliente si fue rechazado
+  position?: number;        // puesto en la cola cuando está "queued"
+};
+type ChatMessage = { id: string; from: 'dj' | 'pos'; author: string; text: string; at: string };
+```
+
+## WebSocket de Proyecta
+
+`GET wss://api.lantifypos.com/v1/music/<venueId>/host` (upgrade). Primer mensaje en ≤ 5 s: `{ t:'auth', secret, v:1, app:'proyecta/<versión>' }`. Una sola conexión de host por local (la nueva cierra la vieja con código `4001`).
+
+| Dirección | Mensaje | Uso |
+|---|---|---|
+| objeto → PC | `{ t:'ready', chat: ChatMessage[] }` | tras autenticar; últimos 50 mensajes |
+| objeto → PC | `{ t:'req', rid, op:'search', q }` | búsqueda del cliente (responder en ≤ 8 s) |
+| objeto → PC | `{ t:'req', rid, op:'request', body, clientKey }` | pedido nuevo; `clientKey` = sha256(ip + client) |
+| objeto → PC | `{ t:'chat', msg: ChatMessage }` | mensaje del POS |
+| PC → objeto | `{ t:'res', rid, status, body }` | respuesta (`status` HTTP que verá el cliente) |
+| PC → objeto | `{ t:'view', view: GuestRequestView }` | estado nuevo de un pedido (caché para `GET requests/:id`) |
+| PC → objeto | `{ t:'info', info: { venueName, accepting, nowPlaying } }` | cada cambio de canción o de nombre |
+| PC → objeto | `{ t:'chat', text }` | mensaje del DJ (el objeto le pone id, `from:'dj'`, hora y lo guarda) |
+| ambos | `{ t:'ping' }` / `{ t:'pong' }` | cada 30 s |
+
+Cerrar con `4003` = secreto inválido (Proyecta muestra "Vincula de nuevo"). El objeto guarda en su almacenamiento: últimos 200 `view` (24 h), último `info`, últimos 200 mensajes de chat.
+
+## Página del cliente
+
+- Una sola página (HTML+CSS+JS sin dependencias, CSP estricta). La fuente está en Proyecta: `src/main/services/localRequestPage.ts`; el Worker sirve **la misma** (copiada en `cloud/api-worker/src/musicPage.ts`) con `API_BASE` inyectado.
+- **Mesa fija**: la primera vez se toma de `?mesa=` (QR de la mesa) o se escribe; se guarda en el celular por local y no se vuelve a pedir. Botón "Cambiar de mesa" para salir.
+- **Buscador** tipo YouTube: resultados con miniatura, título, canal y duración; el cliente elige el video exacto. Si no aparece, "Pedir por nombre".
+- **Tema**: si `info.theme` existe (local de Lantify POS) usa `primary`/`accent` y el logo del negocio; si no, el tema de Proyecta (negro, acentos cian/magenta).
+- En un local de Lantify POS, la página del negocio (`/m/<slug>?t=<mesa>`) enlaza a "Pedir canciones" → `https://musica.lantifypos.com/<venueId>?mesa=<mesa>`.
+
+## Chat DJ ↔ POS
+
+Mensajes cortos (≤ 280 caracteres) entre el DJ (Proyecta → pestaña Pedidos → Mensajes) y el personal del POS (Lantify → Proyecta). El objeto guarda los últimos 200. Límite: 20 mensajes por minuto por lado.

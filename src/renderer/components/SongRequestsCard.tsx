@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react';
-import { Link2, LoaderCircle, Printer, QrCode, RotateCcw, Unlink } from 'lucide-react';
-import type { LocalRequestSettings, Result, SongRequestMode, SongRequestPrefs, SongRequestsSnapshot } from '../../shared/types';
-import { useSongRequestStore } from '../store/useSongRequestStore';
+import { Globe, Link2, LoaderCircle, Printer, QrCode, RotateCcw, Unlink, Wifi } from 'lucide-react';
+import type { GuestPageSettings, Result, SongRequestMode, SongRequestPrefs, SongRequestsSnapshot } from '../../shared/types';
+import { activeQr, useSongRequestStore } from '../store/useSongRequestStore';
 
 const controlBtn =
   'inline-flex items-center justify-center gap-1 rounded border border-white/[0.06] bg-raised px-2 py-1 text-[11px] font-medium text-ink-soft transition-colors duration-150 hover:bg-raised-2 hover:text-ink disabled:opacity-40 cursor-pointer';
@@ -10,17 +10,29 @@ const textInput =
 
 const MODES: Array<{ id: SongRequestMode; label: string; hint: string }> = [
   { id: 'off', label: 'Desactivado', hint: 'Nadie puede pedir canciones.' },
-  { id: 'lantify', label: 'Lantify POS', hint: 'El negocio usa Lantify: los clientes piden desde el QR de su mesa.' },
+  {
+    id: 'cloud',
+    label: 'Por internet',
+    hint: 'El QR funciona desde cualquier red (datos o WiFi). Úsalo solo o vinculado a Lantify POS.'
+  },
   {
     id: 'local',
-    label: 'QR propio',
-    hint: 'Sin Lantify: Proyecta genera su QR. Los clientes deben estar en el WiFi del local.'
+    label: 'Solo red del local',
+    hint: 'Sin internet: el QR solo abre en celulares conectados al WiFi del local.'
   }
 ];
 
+const CONNECTION_TEXT: Record<SongRequestsSnapshot['cloud']['connection'], string> = {
+  unregistered: 'Sin activar',
+  connecting: 'Conectando…',
+  online: 'Conectado: recibe pedidos',
+  offline: 'Sin conexión: reintentando',
+  revoked: 'Desconectado por Lantify'
+};
+
 /**
- * Ajustes → Pedidos de canciones: choose the source (Lantify POS table QR or Proyecta's
- * own QR on the venue WiFi), pair or configure it, and set how requests are handled.
+ * Ajustes → Pedidos de canciones: choose how phones reach Proyecta (internet relay, alone
+ * or linked to Lantify POS, or the venue WiFi only), see the QR, and set the rules.
  */
 export function SongRequestsCard(): ReactElement {
   const snapshot = useSongRequestStore((s) => s.snapshot);
@@ -29,12 +41,13 @@ export function SongRequestsCard(): ReactElement {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tables, setTables] = useState(10);
-  const { mode, prefs, lantify, local } = snapshot;
-  const [venueName, setVenueName] = useState(local.settings.venueName);
-  const [wifiName, setWifiName] = useState(local.settings.wifiName);
+  const { mode, prefs, page, cloud, local } = snapshot;
+  const [venueName, setVenueName] = useState(page.venueName);
+  const [wifiName, setWifiName] = useState(page.wifiName);
+  const qr = activeQr(snapshot);
 
-  useEffect(() => setVenueName(local.settings.venueName), [local.settings.venueName]);
-  useEffect(() => setWifiName(local.settings.wifiName), [local.settings.wifiName]);
+  useEffect(() => setVenueName(page.venueName), [page.venueName]);
+  useEffect(() => setWifiName(page.wifiName), [page.wifiName]);
 
   const run = async (fn: () => Promise<Result<SongRequestsSnapshot>> | undefined): Promise<void> => {
     setBusy(true);
@@ -47,7 +60,7 @@ export function SongRequestsCard(): ReactElement {
   };
   const api = window.tubedeckAPI;
   const setPref = (patch: Partial<SongRequestPrefs>): void => void run(() => api?.setRequestPrefs(patch));
-  const setLocal = (patch: Partial<LocalRequestSettings>): void => void run(() => api?.setLocalRequestSettings(patch));
+  const setPage = (patch: Partial<GuestPageSettings>): void => void run(() => api?.setGuestPageSettings(patch));
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-ground p-3 sm:col-span-2">
@@ -56,7 +69,7 @@ export function SongRequestsCard(): ReactElement {
         Pedidos de canciones
       </h3>
 
-      <div role="radiogroup" aria-label="De dónde llegan los pedidos" className="flex flex-wrap gap-1">
+      <div role="radiogroup" aria-label="Cómo llegan los pedidos" className="flex flex-wrap gap-1">
         {MODES.map((m) => (
           <button
             key={m.id}
@@ -77,38 +90,72 @@ export function SongRequestsCard(): ReactElement {
       </div>
       <p className="text-[11px] leading-snug text-muted">{MODES.find((m) => m.id === mode)?.hint}</p>
 
-      {mode === 'lantify' ? (
-        lantify.paired ? (
-          <div className="flex items-center justify-between gap-2">
-            <p className="min-w-0 truncate text-ink-soft">
-              Vinculado a <span className="font-semibold text-ink">«{lantify.business?.name ?? 'tu negocio'}»</span>
-              {lantify.connection === 'retrying' ? <span className="text-muted"> · sin conexión</span> : null}
+      {mode !== 'off' ? (
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex flex-col gap-1 text-muted">
+            Nombre del local
+            <input
+              value={venueName}
+              maxLength={60}
+              onChange={(e) => setVenueName(e.target.value)}
+              onBlur={() => venueName !== page.venueName && setPage({ venueName })}
+              placeholder="Se ve en el celular y en el QR"
+              className={textInput}
+            />
+          </label>
+          {mode === 'local' ? (
+            <label className="flex flex-col gap-1 text-muted">
+              WiFi para clientes
+              <input
+                value={wifiName}
+                maxLength={60}
+                onChange={(e) => setWifiName(e.target.value)}
+                onBlur={() => wifiName !== page.wifiName && setPage({ wifiName })}
+                placeholder="Se imprime junto al QR"
+                className={textInput}
+              />
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+
+      {mode === 'cloud' && !cloud.registered ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5 rounded border border-white/[0.06] bg-surface p-2">
+            <p className="inline-flex items-center gap-1.5 font-semibold text-ink">
+              <Globe className="h-3.5 w-3.5 text-muted" />
+              Usar Proyecta solo
+            </p>
+            <p className="text-[11px] leading-snug text-muted">
+              Proyecta crea su propio QR en musica.lantifypos.com. No necesitas Lantify POS.
             </p>
             <button
               type="button"
-              onClick={() => void run(() => api?.lantifyUnpair())}
-              className={`${controlBtn} hover:text-danger-soft`}
+              disabled={busy}
+              onClick={() => void run(() => api?.registerCloudRequests())}
+              className={`${controlBtn} self-start`}
             >
-              <Unlink className="h-3 w-3" />
-              Desvincular
+              {busy ? <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" /> : <QrCode className="h-3 w-3" />}
+              Activar pedidos por internet
             </button>
           </div>
-        ) : (
           <form
-            className="flex flex-col gap-1.5"
+            className="flex flex-col gap-1.5 rounded border border-white/[0.06] bg-surface p-2"
             onSubmit={(e) => {
               e.preventDefault();
               void run(async () => {
-                const res = await api?.lantifyPair(code);
+                const res = await api?.linkCloudRequests(code);
                 if (res?.success) setCode('');
                 return res;
               });
             }}
           >
+            <p className="inline-flex items-center gap-1.5 font-semibold text-ink">
+              <Link2 className="h-3.5 w-3.5 text-muted" />
+              Vincular con Lantify POS
+            </p>
             <p className="text-[11px] leading-snug text-muted">
-              {lantify.connection === 'revoked'
-                ? `Lantify desvinculó Proyecta${lantify.business ? ` de «${lantify.business.name}»` : ''}. Vincula de nuevo con un código nuevo.`
-                : 'Sin vincular. El código de 8 caracteres está en Lantify → Mi página → Pedir canciones.'}
+              Código de Lantify → Proyecta · música. La página usa los colores del negocio y el chat con la caja.
             </p>
             <div className="flex items-center gap-1.5">
               <input
@@ -116,95 +163,98 @@ export function SongRequestsCard(): ReactElement {
                 onChange={(e) => setCode(e.target.value.toUpperCase())}
                 maxLength={12}
                 placeholder="Código de 8 caracteres"
-                aria-label="Código de vinculación de Lantify"
+                aria-label="Código de vinculación de Lantify POS"
                 autoComplete="off"
                 spellCheck={false}
                 className={`${textInput} flex-1 font-mono-tabular tracking-widest placeholder:tracking-normal`}
               />
               <button type="submit" disabled={busy || code.replace(/[\s-]/g, '').length !== 8} className={controlBtn}>
-                {busy ? <LoaderCircle className="h-3 w-3 animate-spin motion-reduce:animate-none" /> : <Link2 className="h-3 w-3" />}
-                {lantify.connection === 'revoked' ? 'Vincula de nuevo' : 'Vincular'}
+                Vincular
               </button>
             </div>
           </form>
-        )
+        </div>
       ) : null}
 
-      {mode === 'local' ? (
-        <div className="flex flex-col gap-2">
-          <div className="flex gap-3">
-            <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded bg-raised">
-              {local.qrSvgDataUrl ? (
-                <img src={local.qrSvgDataUrl} alt="QR para pedir canciones" className="h-full w-full rounded bg-ink p-1" />
-              ) : (
-                <LoaderCircle className="h-4 w-4 animate-spin text-muted motion-reduce:animate-none" aria-hidden="true" />
-              )}
-            </div>
-            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-              {local.url ? (
-                <p className="text-[11px] leading-snug text-ink-soft">
-                  Activo en <span className="break-all font-mono-tabular text-ink">{local.url.split('/?')[0]}</span>
+      {mode !== 'off' && (mode === 'local' || cloud.registered) ? (
+        <div className="flex gap-3">
+          <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded bg-raised">
+            {qr?.svg ? (
+              <img src={qr.svg} alt="QR para pedir canciones" className="h-full w-full rounded bg-ink p-1" />
+            ) : (
+              <LoaderCircle className="h-4 w-4 animate-spin text-muted motion-reduce:animate-none" aria-hidden="true" />
+            )}
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            {mode === 'cloud' ? (
+              <>
+                <p className="text-[11px] text-ink-soft">
+                  {cloud.business ? (
+                    <>
+                      Vinculado a <span className="font-semibold text-ink">«{cloud.business.name}»</span> ·{' '}
+                    </>
+                  ) : (
+                    'Módulo independiente · '
+                  )}
+                  <span className={cloud.connection === 'online' ? 'text-live' : 'text-muted'}>
+                    {CONNECTION_TEXT[cloud.connection]}
+                  </span>
                 </p>
-              ) : null}
-              {local.error ? (
-                <p role="alert" className="text-[11px] text-danger-soft">
-                  {local.error}
+                {cloud.url ? <p className="break-all font-mono-tabular text-[10px] text-faint">{cloud.url}</p> : null}
+              </>
+            ) : (
+              <>
+                {local.url ? (
+                  <p className="text-[11px] leading-snug text-ink-soft">
+                    Activo en <span className="break-all font-mono-tabular text-ink">{local.url.split('/?')[0]}</span>
+                  </p>
+                ) : null}
+                <p className="text-[11px] leading-snug text-muted">
+                  Si Windows pregunta, permite el acceso en redes privadas. En redes de invitados que aíslan los
+                  celulares, el QR no abre.
                 </p>
-              ) : null}
-              <p className="text-[11px] leading-snug text-muted">
-                Si Windows pregunta, permite el acceso en redes privadas. Si el WiFi aísla a los clientes (red de invitados), el
-                QR no abrirá: usa la red principal.
+                {local.addresses.length > 1 ? (
+                  <label className="flex items-center gap-1.5 text-muted">
+                    <Wifi className="h-3 w-3" />
+                    <select
+                      value={local.settings.address}
+                      onChange={(e) => void run(() => api?.setLocalRequestSettings({ address: e.target.value }))}
+                      className="rounded border border-white/[0.06] bg-raised px-2 py-1 text-ink"
+                      aria-label="Red del local"
+                    >
+                      <option value="">Automática ({local.addresses[0]})</option>
+                      {local.addresses.map((ip) => (
+                        <option key={ip} value={ip}>
+                          {ip}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </>
+            )}
+            {(mode === 'cloud' ? cloud.error : local.error) ? (
+              <p role="alert" className="text-[11px] text-danger-soft">
+                {mode === 'cloud' ? cloud.error : local.error}
               </p>
-              {local.addresses.length > 1 ? (
-                <label className="flex items-center gap-1.5 text-muted">
-                  Red
-                  <select
-                    value={local.settings.address}
-                    onChange={(e) => setLocal({ address: e.target.value })}
-                    className="rounded border border-white/[0.06] bg-raised px-2 py-1 text-ink"
-                  >
-                    <option value="">Automática ({local.addresses[0]})</option>
-                    {local.addresses.map((ip) => (
-                      <option key={ip} value={ip}>
-                        {ip}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-            </div>
+            ) : null}
           </div>
+        </div>
+      ) : null}
 
-          <div className="grid grid-cols-2 gap-2">
-            <label className="flex flex-col gap-1 text-muted">
-              Nombre del local
-              <input
-                value={venueName}
-                maxLength={60}
-                onChange={(e) => setVenueName(e.target.value)}
-                onBlur={() => venueName !== local.settings.venueName && setLocal({ venueName })}
-                placeholder="Se ve en el celular y en el QR"
-                className={textInput}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-muted">
-              WiFi para clientes
-              <input
-                value={wifiName}
-                maxLength={60}
-                onChange={(e) => setWifiName(e.target.value)}
-                onBlur={() => wifiName !== local.settings.wifiName && setLocal({ wifiName })}
-                placeholder="Se imprime junto al QR"
-                className={textInput}
-              />
-            </label>
-          </div>
+      {mode === 'cloud' && !cloud.registered && cloud.error ? (
+        <p role="alert" className="text-[11px] text-danger-soft">
+          {cloud.error}
+        </p>
+      ) : null}
 
+      {qr ? (
+        <>
           <label className="flex items-center gap-2 text-ink-soft cursor-pointer">
             <input
               type="checkbox"
-              checked={local.settings.qrOnScreen}
-              onChange={(e) => setLocal({ qrOnScreen: e.target.checked })}
+              checked={page.qrOnScreen}
+              onChange={(e) => setPage({ qrOnScreen: e.target.checked })}
               className="accent-ink-2"
             />
             Mostrar el QR en una esquina de Pantalla 2
@@ -224,10 +274,10 @@ export function SongRequestsCard(): ReactElement {
             </label>
             <button
               type="button"
-              disabled={!local.url || busy}
+              disabled={busy}
               onClick={async () => {
                 setError(null);
-                const res = await api?.printLocalRequestSheet(tables);
+                const res = await api?.printRequestSheet(tables);
                 if (res && !res.success) setError(res.error);
               }}
               title="Abre una hoja con un QR general y uno por mesa, lista para imprimir"
@@ -236,22 +286,39 @@ export function SongRequestsCard(): ReactElement {
               <Printer className="h-3 w-3" />
               Hoja de QR para imprimir
             </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                if (window.confirm('Los QR impresos o mostrados dejarán de funcionar. ¿Generar un código nuevo?')) {
-                  void run(() => api?.rotateLocalRequestKey());
-                }
-              }}
-              title="Invalida los QR anteriores (por ejemplo, si alguien pide desde fuera)"
-              className={`${controlBtn} hover:text-danger-soft`}
-            >
-              <RotateCcw className="h-3 w-3" />
-              Cambiar QR
-            </button>
+            {mode === 'local' ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  if (window.confirm('Los QR impresos o mostrados dejarán de funcionar. ¿Generar un código nuevo?')) {
+                    void run(() => api?.rotateLocalRequestKey());
+                  }
+                }}
+                title="Invalida los QR anteriores"
+                className={`${controlBtn} hover:text-danger-soft`}
+              >
+                <RotateCcw className="h-3 w-3" />
+                Cambiar QR
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  const msg = cloud.business
+                    ? `¿Desvincular de «${cloud.business.name}»? Los QR impresos dejarán de funcionar.`
+                    : '¿Dejar de usar este QR? Los QR impresos dejarán de funcionar.';
+                  if (window.confirm(msg)) void run(() => api?.unregisterCloudRequests());
+                }}
+                className={`${controlBtn} hover:text-danger-soft`}
+              >
+                <Unlink className="h-3 w-3" />
+                {cloud.business ? 'Desvincular' : 'Dejar de usar este QR'}
+              </button>
+            )}
           </div>
-        </div>
+        </>
       ) : null}
 
       {error ? (
@@ -270,6 +337,16 @@ export function SongRequestsCard(): ReactElement {
               className="accent-ink-2"
             />
             Aprobar automáticamente (solo los que pasan los filtros)
+          </label>
+
+          <label className="flex items-center gap-2 text-ink-soft cursor-pointer">
+            <input
+              type="checkbox"
+              checked={prefs.autoPlay}
+              onChange={(e) => setPref({ autoPlay: e.target.checked })}
+              className="accent-ink-2"
+            />
+            Poner los pedidos aprobados aunque Automix esté apagado (van primero en la cola)
           </label>
 
           <div className="grid grid-cols-2 gap-2">

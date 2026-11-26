@@ -29,6 +29,8 @@ export interface QueueItem {
   errorMessage?: string;
   /** Only for `source: 'request'`: table and guest shown in the queue. */
   request?: QueueRequestInfo;
+  /** The DJ placed this item by hand (drag or "next"): guest requests never jump ahead of it. */
+  pinned?: boolean;
 }
 
 export interface AutomixOptions {
@@ -40,6 +42,11 @@ export interface AutomixOptions {
   autoRadioEnabled: boolean;
   fadeType: AutomixFadeType;
   sourceMode?: AutomixSourceMode;
+  /**
+   * Automix is off but the next song is a guest request: play only requests (no radio,
+   * no backup songs, no other queued songs).
+   */
+  onlyRequests?: boolean;
 }
 
 export interface AutomixTickContext {
@@ -170,8 +177,34 @@ export class QueueAndAutomixEngine {
       source: resolvedSource
     };
     if (resolvedSource === 'request' && request) item.request = { ...request };
-    this.queue.push(item);
+    if (resolvedSource === 'request') {
+      this.queue.splice(this.requestInsertIndex(), 0, item);
+    } else {
+      this.queue.push(item);
+    }
     return item;
+  }
+
+  /**
+   * Queue hierarchy: guest requests go ahead of the DJ's and the radio's songs, in the
+   * order they were approved, but never ahead of what is already on a deck or of songs the
+   * DJ placed by hand. Moving a request later by hand is respected (it becomes pinned).
+   */
+  private requestInsertIndex(): number {
+    let i = 0;
+    while (i < this.queue.length) {
+      const q = this.queue[i];
+      const ahead = q.status === 'loaded' || q.status === 'preloading' || q.source === 'request' || q.pinned;
+      if (!ahead) break;
+      i += 1;
+    }
+    return i;
+  }
+
+  /** True when the next song to play is a guest request (used while Automix is off). */
+  nextIsRequest(): boolean {
+    const next = this.queue.find((q) => q.status === 'pending' || q.status === 'loaded' || q.status === 'preloading');
+    return next?.source === 'request';
   }
 
   enqueueMany(tracks: YouTubeTrack[], source?: QueueSource): QueueItem[] {
@@ -189,6 +222,7 @@ export class QueueAndAutomixEngine {
       return;
     }
     const [moved] = this.queue.splice(fromIndex, 1);
+    moved.pinned = true;
     this.queue.splice(toIndex, 0, moved);
   }
 
@@ -201,6 +235,7 @@ export class QueueAndAutomixEngine {
     // Insert at the first pending slot so already-preloaded deck stays undisturbed
     let targetIdx = this.queue.findIndex((q) => q.status === 'pending' || q.status === 'failed');
     if (targetIdx === -1) targetIdx = 0;
+    item.pinned = true;
     if (idx === targetIdx) return;
     this.queue.splice(idx, 1);
     const adjusted = idx < targetIdx ? targetIdx - 1 : targetIdx;
@@ -623,10 +658,15 @@ export class QueueAndAutomixEngine {
           safetyIterations += 1;
           const offline = callbacks.isOffline?.() ?? false;
           const findPlayable = (): QueueItem | undefined =>
-            this.queue.find((q) => q.status === 'pending' && (!offline || this.playsOffline(q.track, callbacks)));
+            this.queue.find(
+              (q) =>
+                q.status === 'pending' &&
+                (!options.onlyRequests || q.source === 'request') &&
+                (!offline || this.playsOffline(q.track, callbacks))
+            );
           let nextPending = findPlayable();
 
-          if (!nextPending && options.autoRadioEnabled) {
+          if (!nextPending && options.autoRadioEnabled && !options.onlyRequests) {
             await this.ensureAutoSuggestionQueued(context, options, callbacks, nowMs);
             nextPending = findPlayable();
           }
@@ -636,7 +676,7 @@ export class QueueAndAutomixEngine {
           const songEnding =
             context.isActiveEnded || remainingSec <= options.outroTriggerSec + 20;
           const waitingOnInternet = offline && this.queue.some((q) => q.status === 'pending');
-          if (!nextPending && (waitingOnInternet || songEnding)) {
+          if (!nextPending && !options.onlyRequests && (waitingOnInternet || songEnding)) {
             nextPending =
               this.queueFallback(context, callbacks, waitingOnInternet ? 'offline' : 'empty', offline) ?? undefined;
           }

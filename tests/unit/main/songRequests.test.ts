@@ -7,7 +7,7 @@ import {
 } from '../../../src/main/services/SongRequestsService';
 import { emptyTaste, makeHub, MemorySettings, track } from './songRequestsTestKit';
 
-function recorder(origin: 'lantify' | 'local') {
+function recorder(origin: 'cloud' | 'local') {
   const updates: Array<{ id: string; update: RequestStatusUpdate }> = [];
   const nowPlaying: unknown[] = [];
   const connector: RequestConnector = {
@@ -66,9 +66,9 @@ describe('SongRequestsService (hub)', () => {
 
   it('ingests, matches and reports NO_MATCH only to the connector of that origin', async () => {
     const { hub } = makeHub({ search: async (q) => (q === 'nada' ? [track('tt', 'Tutorial de guitarra')] : [track('ok', 'Bichota')]) });
-    const lantify = recorder('lantify');
+    const cloud = recorder('cloud');
     const local = recorder('local');
-    hub.registerConnector(lantify.connector);
+    hub.registerConnector(cloud.connector);
     hub.registerConnector(local.connector);
 
     await hub.ingest('local', [item('a1'), item('a2', 'nada')]);
@@ -79,7 +79,7 @@ describe('SongRequestsService (hub)', () => {
       ['local:a2', 'rejected']
     ]);
     expect(local.updates).toEqual([{ id: 'a2', update: { status: 'REJECTED', reason: 'NO_MATCH' } }]);
-    expect(lantify.updates).toEqual([]);
+    expect(cloud.updates).toEqual([]);
   });
 
   it('runs the decision lifecycle and sends QUEUED with title, artist and videoId', async () => {
@@ -104,7 +104,7 @@ describe('SongRequestsService (hub)', () => {
         return [track('ok', 'Bichota')];
       }
     });
-    await hub.ingest('lantify', [item('r1')]);
+    await hub.ingest('cloud', [item('r1')]);
     expect(hub.getRequests()[0].state).toBe('searching');
     fail = false;
     await hub.matchPending();
@@ -113,22 +113,37 @@ describe('SongRequestsService (hub)', () => {
 
   it('sends now-playing only to the active mode', () => {
     const { hub } = makeHub();
-    const lantify = recorder('lantify');
+    const cloud = recorder('cloud');
     const local = recorder('local');
-    hub.registerConnector(lantify.connector);
+    hub.registerConnector(cloud.connector);
     hub.registerConnector(local.connector);
     hub.setNowPlaying({ title: 'A', artist: 'B', videoId: null });
     hub.setMode('local');
     hub.setNowPlaying({ title: 'C', artist: 'D', videoId: null });
-    expect(lantify.nowPlaying).toEqual([]);
+    expect(cloud.nowPlaying).toEqual([]);
     expect(local.nowPlaying).toEqual([{ title: 'C', artist: 'D', videoId: null }]);
     expect(hub.getNowPlaying()?.title).toBe('C');
   });
 
-  it('keeps an existing Lantify pairing as "lantify" mode after updating', () => {
+  it('moves the v3.3.0 "lantify" mode to "cloud" and keeps the page settings of the old local QR', () => {
     const settings = new MemorySettings();
-    settings.setSetting('lantify.token', 'tok');
-    expect(makeHub({ settings }).hub.getMode()).toBe('lantify');
+    settings.setSetting('requests.mode', 'lantify');
+    settings.setSetting('requests.local', { venueName: 'Bar X', wifiName: 'BarX', qrOnScreen: false });
+    const { hub } = makeHub({ settings });
+    expect(hub.getMode()).toBe('cloud');
+    expect(hub.getPageSettings()).toEqual({ venueName: 'Bar X', wifiName: 'BarX', qrOnScreen: false });
     expect(makeHub().hub.getMode()).toBe('off');
+  });
+
+  it('a picked video skips the search and goes straight to the DJ; the guest sees its title', async () => {
+    let searched = 0;
+    const { hub } = makeHub({ search: async () => (searched++, []) });
+    const picked = track('pick', 'Feid - Normal');
+    await hub.ingest('local', [{ ...item('p1', ''), track: picked }]);
+    expect(searched).toBe(0);
+    expect(hub.getRequests()[0]).toMatchObject({ state: 'pending', query: 'Feid - Normal', candidates: [picked] });
+    expect(hub.view('local', 'p1')).toMatchObject({ state: 'pending', title: 'Feid - Normal', artist: 'Karol G' });
+    await hub.decide('local:p1', { action: 'reject', reason: 'NO_MATCH' });
+    expect(hub.view('local', 'p1')?.reason).toMatch(/No encontramos/);
   });
 });

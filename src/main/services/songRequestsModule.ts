@@ -1,18 +1,21 @@
 /**
- * Wires the song-request hub to its two sources and keeps exactly one active:
- * "lantify" polls Lantify Cloud (table QR of Lantify POS), "local" opens Proyecta's own
- * QR server on the venue network, "off" closes both. Snapshots for the renderer are
- * coalesced so a burst of changes sends one IPC message.
+ * Wires the song-request hub to its two transports and keeps exactly one active:
+ * "cloud" talks to the Lantify Música relay (any network, with or without Lantify POS),
+ * "local" serves the page on the venue WiFi, "off" closes both. Snapshots for the
+ * renderer are coalesced so a burst of changes sends one IPC message.
  */
 import type { SongRequestMode, SongRequestsSnapshot, YouTubeTrack } from '../../shared/types';
-import { LantifyRequestsService, type LantifyHttp } from './LantifyRequestsService';
+import { CloudMusicConnector, type HostSocket, type MusicHttp } from './CloudMusicConnector';
+import { GuestGateway } from './GuestGateway';
 import { LocalRequestServer } from './LocalRequestServer';
 import { SongRequestsService, type SettingsStore } from './SongRequestsService';
 import type { TasteSnapshot } from './TasteFeedbackService';
 
 export interface SongRequestsModuleDeps {
   settings: SettingsStore;
-  http: LantifyHttp;
+  http: MusicHttp;
+  openSocket: (url: string) => HostSocket;
+  appVersion?: string;
   search: (query: string) => Promise<YouTubeTrack[]>;
   getTasteSnapshot: () => Pick<TasteSnapshot, 'dislikedVideoIds' | 'blockedNames'>;
   onSnapshot: (snapshot: SongRequestsSnapshot) => void;
@@ -20,10 +23,12 @@ export interface SongRequestsModuleDeps {
 
 export interface SongRequestsModule {
   hub: SongRequestsService;
-  lantify: LantifyRequestsService;
+  cloud: CloudMusicConnector;
   local: LocalRequestServer;
   snapshot: () => SongRequestsSnapshot;
   setMode: (mode: SongRequestMode) => Promise<SongRequestsSnapshot>;
+  /** Printable QR sheet for the active mode. */
+  buildTableSheet: (tables: number) => Promise<string>;
   start: () => void;
   stop: () => Promise<void>;
 }
@@ -45,21 +50,32 @@ export function createSongRequestsModule(deps: SongRequestsModuleDeps): SongRequ
     getTasteSnapshot: deps.getTasteSnapshot,
     onChange: emit
   });
-  const lantify = new LantifyRequestsService({ http: deps.http, settings: deps.settings, hub, onChange: emit });
-  const local = new LocalRequestServer({ hub, settings: deps.settings, onChange: emit });
+  const gateway = new GuestGateway({ hub, search: deps.search, getTasteSnapshot: deps.getTasteSnapshot });
+  const cloud = new CloudMusicConnector({
+    hub,
+    gateway,
+    settings: deps.settings,
+    http: deps.http,
+    openSocket: deps.openSocket,
+    appVersion: deps.appVersion,
+    onChange: emit
+  });
+  const local = new LocalRequestServer({ hub, gateway, settings: deps.settings, onChange: emit });
 
   const snapshot = (): SongRequestsSnapshot => ({
     mode: hub.getMode(),
     prefs: hub.getPrefs(),
-    lantify: lantify.getStatus(),
+    page: hub.getPageSettings(),
+    cloud: cloud.getStatus(),
     local: local.getStatus(),
-    requests: hub.getRequests()
+    requests: hub.getRequests(),
+    chat: cloud.getChat()
   });
 
   let applying: Promise<void> = Promise.resolve();
   const applyMode = (mode: SongRequestMode): Promise<void> => {
     applying = applying.then(async () => {
-      lantify.handleModeChange();
+      cloud.setActive(mode === 'cloud');
       if (mode === 'local') await local.start();
       else await local.stop();
     });
@@ -69,7 +85,7 @@ export function createSongRequestsModule(deps: SongRequestsModuleDeps): SongRequ
 
   return {
     hub,
-    lantify,
+    cloud,
     local,
     snapshot,
     setMode: async (mode) => {
@@ -77,12 +93,13 @@ export function createSongRequestsModule(deps: SongRequestsModuleDeps): SongRequ
       await applyMode(mode);
       return snapshot();
     },
+    buildTableSheet: (tables) =>
+      hub.getMode() === 'local' ? local.buildTableSheet(tables) : cloud.buildTableSheet(tables),
     start: () => {
-      lantify.start();
       void applyMode(hub.getMode());
     },
     stop: async () => {
-      lantify.stop();
+      cloud.dispose();
       hub.dispose();
       await local.stop();
     }

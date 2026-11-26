@@ -83,11 +83,14 @@ export const IPC_CHANNELS = {
   REQUESTS_DECIDE: 'requests:decide',
   REQUESTS_NOW_PLAYING: 'requests:now-playing',
   REQUESTS_SET_PREFS: 'requests:set-prefs',
-  LANTIFY_PAIR: 'lantify:pair',
-  LANTIFY_UNPAIR: 'lantify:unpair',
+  REQUESTS_PAGE_SETTINGS: 'requests:page-settings',
+  REQUESTS_PRINT_SHEET: 'requests:print-sheet',
+  REQUESTS_CHAT_SEND: 'requests:chat-send',
+  CLOUD_REQUESTS_REGISTER: 'cloud-requests:register',
+  CLOUD_REQUESTS_LINK: 'cloud-requests:link',
+  CLOUD_REQUESTS_UNREGISTER: 'cloud-requests:unregister',
   LOCAL_REQUESTS_SETTINGS: 'local-requests:settings',
-  LOCAL_REQUESTS_ROTATE_KEY: 'local-requests:rotate-key',
-  LOCAL_REQUESTS_PRINT_SHEET: 'local-requests:print-sheet'
+  LOCAL_REQUESTS_ROTATE_KEY: 'local-requests:rotate-key'
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

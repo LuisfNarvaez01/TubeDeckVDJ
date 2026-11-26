@@ -31,6 +31,7 @@ import type { YouTubeSearchService } from '../services/YouTubeSearchService';
 import type { YtDlpBinaryManager } from '../services/YtDlpBinaryManager';
 import { isPrivateRequestSetting } from '../services/SongRequestsService';
 import { LocalSettingsPatchSchema } from '../services/LocalRequestServer';
+import { GuestPageSettingsSchema } from '../services/SongRequestsService';
 import type { SongRequestsModule } from '../services/songRequestsModule';
 
 const VideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'ID de video inválido');
@@ -94,7 +95,8 @@ const RtcSignalSchema = z.object({
     .optional()
 });
 
-const LantifyPairSchema = z.object({ code: z.string().trim().min(1).max(32) });
+const LinkCodeSchema = z.object({ code: z.string().trim().min(1).max(32) });
+const ChatTextSchema = z.string().trim().min(1).max(280);
 const SongRequestIdSchema = z.string().trim().min(1).max(128);
 const SongRequestDecisionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('next-candidate') }),
@@ -113,13 +115,14 @@ const SongRequestPrefsPatchSchema = z
     autoApprove: z.boolean(),
     maxPerHour: z.number().int().min(1).max(120),
     maxPerTable: z.number().int().min(1).max(30),
-    overlayEnabled: z.boolean()
+    overlayEnabled: z.boolean(),
+    autoPlay: z.boolean()
   })
   .partial();
 
-const RequestModeSchema = z.enum(['off', 'lantify', 'local']);
+const RequestModeSchema = z.enum(['off', 'cloud', 'local']);
 
-/** Song-request settings (Lantify token, QR access key) stay in the main process. */
+/** Song-request settings (relay secret, QR access key) stay in the main process. */
 function assertPublicSettingKey(key: string): string {
   if (isPrivateRequestSetting(key)) throw new Error('Ajuste reservado');
   return key;
@@ -421,34 +424,30 @@ export function registerIpcHandlers(services: MainServices): void {
       return requireRequests().snapshot();
     })
   );
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_PAIR, (_event, raw: unknown) =>
+  const snapshotAfter = (fn: () => unknown | Promise<unknown>) =>
     wrapResult(async () => {
-      await requireRequests().lantify.pair(LantifyPairSchema.parse(raw).code);
+      await fn();
       return requireRequests().snapshot();
-    })
+    });
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_PAGE_SETTINGS, (_event, raw: unknown) =>
+    snapshotAfter(() => requireRequests().hub.setPageSettings(GuestPageSettingsSchema.partial().parse(raw)))
   );
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_UNPAIR, () =>
-    wrapResult(() => {
-      requireRequests().lantify.unpair();
-      return requireRequests().snapshot();
-    })
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_CHAT_SEND, (_event, raw: unknown) =>
+    snapshotAfter(() => requireRequests().cloud.sendChat(ChatTextSchema.parse(raw)))
   );
+  ipcMain.handle(IPC_CHANNELS.CLOUD_REQUESTS_REGISTER, () => snapshotAfter(() => requireRequests().cloud.register()));
+  ipcMain.handle(IPC_CHANNELS.CLOUD_REQUESTS_LINK, (_event, raw: unknown) =>
+    snapshotAfter(() => requireRequests().cloud.link(LinkCodeSchema.parse(raw).code))
+  );
+  ipcMain.handle(IPC_CHANNELS.CLOUD_REQUESTS_UNREGISTER, () => snapshotAfter(() => requireRequests().cloud.unregister()));
   ipcMain.handle(IPC_CHANNELS.LOCAL_REQUESTS_SETTINGS, (_event, raw: unknown) =>
-    wrapResult(async () => {
-      await requireRequests().local.updateSettings(LocalSettingsPatchSchema.parse(raw));
-      return requireRequests().snapshot();
-    })
+    snapshotAfter(() => requireRequests().local.updateSettings(LocalSettingsPatchSchema.parse(raw)))
   );
-  ipcMain.handle(IPC_CHANNELS.LOCAL_REQUESTS_ROTATE_KEY, () =>
-    wrapResult(async () => {
-      await requireRequests().local.rotateKey();
-      return requireRequests().snapshot();
-    })
-  );
-  ipcMain.handle(IPC_CHANNELS.LOCAL_REQUESTS_PRINT_SHEET, (_event, raw: unknown) =>
+  ipcMain.handle(IPC_CHANNELS.LOCAL_REQUESTS_ROTATE_KEY, () => snapshotAfter(() => requireRequests().local.rotateKey()));
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_PRINT_SHEET, (_event, raw: unknown) =>
     wrapResult(async () => {
       const tables = z.number().int().min(0).max(100).parse(raw);
-      const html = await requireRequests().local.buildTableSheet(tables);
+      const html = await requireRequests().buildTableSheet(tables);
       const dir = path.join(app.getPath('documents'), 'Proyecta');
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, 'QR para pedir canciones.html');

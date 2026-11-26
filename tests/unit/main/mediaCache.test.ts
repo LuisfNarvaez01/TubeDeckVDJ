@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { MediaCache } from '../../../src/main/services/MediaCache';
+import { CAPTURE_DELAY_MS, MediaCache } from '../../../src/main/services/MediaCache';
 import type { ResolvedStream } from '../../../src/shared/types';
 
 const dirs: string[] = [];
@@ -102,6 +102,26 @@ describe('media cache', () => {
     await cache.idle();
     cache.capture('abcdefghijk', resolved, meta);
     await cache.idle();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('waits before saving so the deck gets the first chunks alone (first load at 00:00)', async () => {
+    const waits: number[] = [];
+    const calls: string[] = [];
+    let now = 1_000;
+    const cache = new MediaCache(tmp(), {
+      saveVideo: false,
+      fetchImpl: fakeFetch({ 'https://cdn/audio': 100 }, calls),
+      now: () => now,
+      sleep: async (ms) => {
+        waits.push(ms);
+        expect(calls).toHaveLength(0); // nothing downloaded during the wait
+        now += ms;
+      }
+    });
+    cache.capture('abcdefghijk', resolved, meta);
+    await cache.idle();
+    expect(waits[0]).toBe(CAPTURE_DELAY_MS);
     expect(calls).toHaveLength(1);
   });
 });

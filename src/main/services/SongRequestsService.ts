@@ -1,12 +1,14 @@
 /**
  * Guests' song requests, whatever their source. Connectors bring requests in
- * (`LantifyRequestsService` from Lantify Cloud, `LocalRequestServer` from Proyecta's
- * own QR on the venue WiFi) and get told about every status change. This hub owns the
+ * (`CloudMusicConnector` through the Lantify Música relay, `LocalRequestServer` on the
+ * venue WiFi) and get told about every status change. This hub owns the
  * request list, the YouTube matching, the DJ's decisions and the shared preferences,
  * so the booth works the same with or without Lantify POS.
  */
 import { z } from 'zod';
 import type {
+  GuestPageSettings,
+  GuestRequestView,
   NowPlayingInfo,
   SongRequest,
   SongRequestDecision,
@@ -26,7 +28,33 @@ const SEARCH_RETRY_MS = 15_000;
 const SETTING_MODE = 'requests.mode';
 const SETTING_PREFS = 'requests.prefs';
 const SETTING_ITEMS = 'requests.items';
+const SETTING_PAGE = 'requests.page';
 const LEGACY_PREFS = 'lantify.prefs';
+const LEGACY_LOCAL = 'requests.local';
+
+export const DEFAULT_PAGE_SETTINGS: GuestPageSettings = { venueName: '', wifiName: '', qrOnScreen: true };
+
+export const GuestPageSettingsSchema = z.object({
+  venueName: z.string().trim().max(60),
+  wifiName: z.string().trim().max(60),
+  qrOnScreen: z.boolean()
+});
+
+/** Readable text for guests (never the internal code). */
+export function guestReasonText(reason: string | undefined): string {
+  switch (reason) {
+    case 'NO_MATCH':
+      return 'No encontramos esa canción. Prueba con el artista y el título.';
+    case 'ALREADY_PLAYED':
+      return 'Esa canción ya sonó hace poco o ya está en la lista.';
+    case 'DJ_DECLINED':
+    case undefined:
+    case '':
+      return 'El DJ no pudo ponerla esta vez.';
+    default:
+      return reason;
+  }
+}
 
 /** Settings the renderer must never read or write through `db:get/set-setting`. */
 export function isPrivateRequestSetting(key: string): boolean {
@@ -37,14 +65,16 @@ export const DEFAULT_SONG_REQUEST_PREFS: SongRequestPrefs = {
   autoApprove: false,
   maxPerHour: 12,
   maxPerTable: 3,
-  overlayEnabled: true
+  overlayEnabled: true,
+  autoPlay: true
 };
 
 export const SongRequestPrefsSchema = z.object({
   autoApprove: z.boolean(),
   maxPerHour: z.number().int().min(1).max(120),
   maxPerTable: z.number().int().min(1).max(30),
-  overlayEnabled: z.boolean()
+  overlayEnabled: z.boolean(),
+  autoPlay: z.boolean()
 });
 
 export interface SettingsStore {
@@ -73,6 +103,8 @@ export interface IncomingSongRequest {
   guest: string;
   query: string;
   createdAt: string;
+  /** The exact video the guest picked from the search (skips the YouTube search). */
+  track?: YouTubeTrack;
 }
 
 export interface SongRequestsDeps {
@@ -125,10 +157,12 @@ export class SongRequestsService {
   private requests: SongRequest[];
   private prefs: SongRequestPrefs;
   private mode: SongRequestMode;
+  private page: GuestPageSettings;
   private nowPlaying: NowPlayingInfo | null = null;
   private matching: Promise<void> | null = null;
   private retryTimer: unknown = null;
   private readonly modeListeners: Array<(mode: SongRequestMode) => void> = [];
+  private readonly pageListeners: Array<(page: GuestPageSettings) => void> = [];
 
   constructor(private readonly deps: SongRequestsDeps) {
     this.settings = deps.settings;
@@ -144,14 +178,52 @@ export class SongRequestsService {
     this.prefs = stored.success ? stored.data : { ...DEFAULT_SONG_REQUEST_PREFS };
     const items = this.settings.getSetting<SongRequest[]>(SETTING_ITEMS, []);
     this.requests = Array.isArray(items) ? items.filter((r) => r && typeof r.id === 'string' && r.origin) : [];
-    const mode = this.settings.getSetting<SongRequestMode | null>(SETTING_MODE, null);
-    // Installs that paired with Lantify before modes existed keep working as "lantify".
-    this.mode =
-      mode === 'off' || mode === 'lantify' || mode === 'local'
-        ? mode
-        : this.settings.getSetting<string | null>('lantify.token', null)
-          ? 'lantify'
-          : 'off';
+    const mode = this.settings.getSetting<string | null>(SETTING_MODE, null);
+    // v3.3.0 called the internet mode "lantify" (it polled an API that never shipped).
+    this.mode = mode === 'off' || mode === 'cloud' || mode === 'local' ? mode : mode === 'lantify' ? 'cloud' : 'off';
+    const legacyLocal = this.settings.getSetting<Partial<GuestPageSettings>>(LEGACY_LOCAL, {});
+    const page = GuestPageSettingsSchema.safeParse({
+      ...DEFAULT_PAGE_SETTINGS,
+      venueName: legacyLocal.venueName ?? '',
+      wifiName: legacyLocal.wifiName ?? '',
+      qrOnScreen: legacyLocal.qrOnScreen ?? true,
+      ...this.settings.getSetting<Partial<GuestPageSettings>>(SETTING_PAGE, {})
+    });
+    this.page = page.success ? page.data : { ...DEFAULT_PAGE_SETTINGS };
+    // Requests of the old polling connector cannot be answered any more.
+    this.requests = this.requests.filter((r) => r.origin === 'cloud' || r.origin === 'local');
+  }
+
+  getPageSettings(): GuestPageSettings {
+    return { ...this.page };
+  }
+
+  setPageSettings(patch: Partial<GuestPageSettings>): GuestPageSettings {
+    this.page = GuestPageSettingsSchema.parse({ ...this.page, ...patch });
+    this.settings.setSetting(SETTING_PAGE, this.page);
+    for (const l of this.pageListeners) l(this.page);
+    this.emit();
+    return this.getPageSettings();
+  }
+
+  onPageChange(listener: (page: GuestPageSettings) => void): void {
+    this.pageListeners.push(listener);
+  }
+
+  /** What the guest's phone shows about one of its requests. */
+  view(origin: SongRequestOrigin, externalId: string): GuestRequestView | null {
+    const r = this.requests.find((x) => x.origin === origin && x.externalId === externalId);
+    if (!r) return null;
+    const chosen = r.chosenVideoId ? r.candidates.find((c) => c.videoId === r.chosenVideoId) : undefined;
+    const shown = chosen ?? (r.candidates.length === 1 ? r.candidates[0] : undefined);
+    const v: GuestRequestView = { id: externalId, state: r.state, query: r.query };
+    if (shown) {
+      v.title = shown.title;
+      v.artist = primaryArtist(shown);
+      v.thumbnailUrl = shown.thumbnailUrl;
+    }
+    if (r.state === 'rejected') v.reason = guestReasonText(r.rejectReason);
+    return v;
   }
 
   // ---------------------------------------------------------------- connectors & mode
@@ -218,11 +290,12 @@ export class SongRequestsService {
         externalId: item.externalId,
         table: item.table,
         guest: item.guest,
-        query: item.query,
+        query: item.query || item.track?.title || '',
         createdAt: item.createdAt,
         receivedAtMs: this.now(),
-        state: 'searching',
-        candidates: [],
+        // A video picked on the phone needs no search: it goes straight to the DJ.
+        state: item.track ? 'pending' : 'searching',
+        candidates: item.track ? [item.track] : [],
         candidateIndex: 0
       });
     }

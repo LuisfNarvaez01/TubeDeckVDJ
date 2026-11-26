@@ -13,6 +13,7 @@ import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { HistoryAndCratesService } from './services/HistoryAndCratesService';
 import { LocalLibraryService } from './services/LocalLibraryService';
 import { createSongRequestsModule, type SongRequestsModule } from './services/songRequestsModule';
+import type { HostSocket } from './services/CloudMusicConnector';
 import { MixRecordingService } from './services/MixRecordingService';
 import { RecommendationEngine } from './services/RecommendationEngine';
 import { TasteFeedbackService } from './services/TasteFeedbackService';
@@ -231,6 +232,9 @@ app.whenReady().then(async () => {
       const res = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
       return { status: res.status, json: () => res.json() };
     },
+    // Outgoing WebSocket to the Lantify Música relay (Node's built-in client): no open ports.
+    openSocket: (url) => new WebSocket(url) as unknown as HostSocket,
+    appVersion: app.getVersion(),
     settings: db,
     search: async (query) => (await search.search(query)).items,
     getTasteSnapshot: () => taste.getSnapshot(),

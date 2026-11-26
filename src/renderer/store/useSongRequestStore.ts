@@ -12,8 +12,18 @@ interface SongRequestStore {
 /** Shown until the main process sends the real state (same defaults as the main process). */
 const INITIAL: SongRequestsSnapshot = {
   mode: 'off',
-  prefs: { autoApprove: false, maxPerHour: 12, maxPerTable: 3, overlayEnabled: true },
-  lantify: { paired: false, business: null, connection: 'unpaired', lastError: null, pollDelayMs: 5000 },
+  prefs: { autoApprove: false, maxPerHour: 12, maxPerTable: 3, overlayEnabled: true, autoPlay: true },
+  page: { venueName: '', wifiName: '', qrOnScreen: true },
+  cloud: {
+    registered: false,
+    venueId: null,
+    business: null,
+    connection: 'unregistered',
+    url: null,
+    qrSvgDataUrl: null,
+    qrPngDataUrl: null,
+    error: null
+  },
   local: {
     running: false,
     url: null,
@@ -22,9 +32,10 @@ const INITIAL: SongRequestsSnapshot = {
     qrSvgDataUrl: null,
     qrPngDataUrl: null,
     error: null,
-    settings: { venueName: '', wifiName: '', address: '', qrOnScreen: true }
+    settings: { address: '' }
   },
-  requests: []
+  requests: [],
+  chat: []
 };
 
 export const useSongRequestStore = create<SongRequestStore>((set) => ({
@@ -40,6 +51,13 @@ export function pendingRequestCount(requests: SongRequest[]): number {
 }
 
 /** "Mesa 7", a free label as given ("Terraza 2"), or "Sin mesa". */
+/** QR and page address of the active mode (null when off or not ready). */
+export function activeQr(s: SongRequestsSnapshot): { url: string; svg: string | null; png: string | null } | null {
+  if (s.mode === 'cloud' && s.cloud.url) return { url: s.cloud.url, svg: s.cloud.qrSvgDataUrl, png: s.cloud.qrPngDataUrl };
+  if (s.mode === 'local' && s.local.url) return { url: s.local.url, svg: s.local.qrSvgDataUrl, png: s.local.qrPngDataUrl };
+  return null;
+}
+
 export function tableLabel(table: string): string {
   if (!table) return 'Sin mesa';
   return /^\d+$/.test(table) ? `Mesa ${table}` : table;

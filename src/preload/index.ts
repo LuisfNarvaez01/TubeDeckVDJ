@@ -28,6 +28,7 @@ import type {
   NetworkStatus,
   YouTubeTrack,
   YtDlpStatus,
+  GuestPageSettings,
   LocalRequestSettings,
   NowPlayingInfo,
   SongRequest,
@@ -140,11 +141,14 @@ export interface TubeDeckAPI {
   decideRequest: (id: string, decision: SongRequestDecision) => Promise<Result<SongRequest>>;
   reportNowPlaying: (np: NowPlayingInfo) => Promise<Result<void>>;
   setRequestPrefs: (patch: Partial<SongRequestPrefs>) => Promise<Result<SongRequestsSnapshot>>;
-  lantifyPair: (code: string) => Promise<Result<SongRequestsSnapshot>>;
-  lantifyUnpair: () => Promise<Result<SongRequestsSnapshot>>;
+  setGuestPageSettings: (patch: Partial<GuestPageSettings>) => Promise<Result<SongRequestsSnapshot>>;
+  sendRequestChat: (text: string) => Promise<Result<SongRequestsSnapshot>>;
+  registerCloudRequests: () => Promise<Result<SongRequestsSnapshot>>;
+  linkCloudRequests: (code: string) => Promise<Result<SongRequestsSnapshot>>;
+  unregisterCloudRequests: () => Promise<Result<SongRequestsSnapshot>>;
   setLocalRequestSettings: (patch: Partial<LocalRequestSettings>) => Promise<Result<SongRequestsSnapshot>>;
   rotateLocalRequestKey: () => Promise<Result<SongRequestsSnapshot>>;
-  printLocalRequestSheet: (tables: number) => Promise<Result<string>>;
+  printRequestSheet: (tables: number) => Promise<Result<string>>;
 }
 
 function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -252,11 +256,14 @@ const api: TubeDeckAPI = {
   decideRequest: (id, decision) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_DECIDE, id, decision),
   reportNowPlaying: (np) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_NOW_PLAYING, np),
   setRequestPrefs: (patch) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_SET_PREFS, patch),
-  lantifyPair: (code) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_PAIR, { code }),
-  lantifyUnpair: () => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_UNPAIR),
+  setGuestPageSettings: (patch) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_PAGE_SETTINGS, patch),
+  sendRequestChat: (text) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_CHAT_SEND, text),
+  registerCloudRequests: () => ipcRenderer.invoke(IPC_CHANNELS.CLOUD_REQUESTS_REGISTER),
+  linkCloudRequests: (code) => ipcRenderer.invoke(IPC_CHANNELS.CLOUD_REQUESTS_LINK, { code }),
+  unregisterCloudRequests: () => ipcRenderer.invoke(IPC_CHANNELS.CLOUD_REQUESTS_UNREGISTER),
   setLocalRequestSettings: (patch) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REQUESTS_SETTINGS, patch),
   rotateLocalRequestKey: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REQUESTS_ROTATE_KEY),
-  printLocalRequestSheet: (tables) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REQUESTS_PRINT_SHEET, tables)
+  printRequestSheet: (tables) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_PRINT_SHEET, tables)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);

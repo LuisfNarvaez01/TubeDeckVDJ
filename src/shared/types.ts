@@ -312,11 +312,12 @@ export interface YouTubeAccessStatus {
 // ---- Song requests from guests (Lantify POS table QR, or Proyecta's own QR) ----
 
 /**
- * Where requests come from: `lantify` = the business runs Lantify POS and guests use the
- * table QR; `local` = Proyecta alone, with its own QR served on the venue's WiFi.
+ * Where requests come from: `cloud` = guests' phones reach Proyecta from any network
+ * through the Lantify Música relay (musica.lantifypos.com), with or without Lantify POS;
+ * `local` = only phones on the venue's WiFi, served by Proyecta itself (no internet needed).
  */
-export type SongRequestMode = 'off' | 'lantify' | 'local';
-export type SongRequestOrigin = 'lantify' | 'local';
+export type SongRequestMode = 'off' | 'cloud' | 'local';
+export type SongRequestOrigin = 'cloud' | 'local';
 
 /** Life of a guest's song request inside Proyecta. */
 export type SongRequestState = 'searching' | 'pending' | 'queued' | 'playing' | 'played' | 'rejected';
@@ -354,29 +355,46 @@ export interface SongRequestPrefs {
   maxPerTable: number;
   /** "Pedida por la mesa 7" on Screen 2 for the first 10 s. */
   overlayEnabled: boolean;
+  /** Approved requests play on their own even while Automix is off. */
+  autoPlay: boolean;
 }
 
-export type LantifyConnection = 'unpaired' | 'ok' | 'retrying' | 'revoked';
+/** Shown to guests on the page, the printed QR sheet and Screen 2. */
+export interface GuestPageSettings {
+  venueName: string;
+  /** Optional WiFi name printed next to the QR (local mode). */
+  wifiName: string;
+  /** QR shown in a corner of Screen 2. */
+  qrOnScreen: boolean;
+}
 
-export interface LantifyStatus {
-  paired: boolean;
+export type CloudConnection = 'unregistered' | 'connecting' | 'online' | 'offline' | 'revoked';
+
+export interface CloudRequestStatus {
+  /** Has a venue on the relay (registered alone or linked to Lantify POS). */
+  registered: boolean;
+  venueId: string | null;
+  /** Lantify POS business this venue is linked to (null = stand-alone module). */
   business: { name: string; slug: string } | null;
-  connection: LantifyConnection;
-  /** Readable reason when the last call failed (never contains the token). */
-  lastError: string | null;
-  /** Wait before the next poll (5 s normally, up to 60 s after network errors). */
-  pollDelayMs: number;
+  connection: CloudConnection;
+  /** Page guests open (the QR content). */
+  url: string | null;
+  qrSvgDataUrl: string | null;
+  qrPngDataUrl: string | null;
+  error: string | null;
+}
+
+export interface ChatMessage {
+  id: string;
+  from: 'dj' | 'pos';
+  author: string;
+  text: string;
+  at: string;
 }
 
 export interface LocalRequestSettings {
-  /** Shown on the guest page, the printed QR sheet and Screen 2. */
-  venueName: string;
-  /** Optional WiFi name printed next to the QR ("Conéctate a…"). */
-  wifiName: string;
   /** LAN address chosen by the DJ; empty = automatic. */
   address: string;
-  /** QR shown in a corner of Screen 2 while the local QR mode is on. */
-  qrOnScreen: boolean;
 }
 
 export interface LocalRequestStatus {
@@ -395,9 +413,32 @@ export interface LocalRequestStatus {
 export interface SongRequestsSnapshot {
   mode: SongRequestMode;
   prefs: SongRequestPrefs;
-  lantify: LantifyStatus;
+  page: GuestPageSettings;
+  cloud: CloudRequestStatus;
   local: LocalRequestStatus;
   requests: SongRequest[];
+  /** DJ ↔ Lantify POS messages (only when linked to a business). */
+  chat: ChatMessage[];
+}
+
+/** A song a guest can pick on the phone page (already filtered like the radio). */
+export interface GuestTrack {
+  videoId: string;
+  title: string;
+  channel: string;
+  durationSec: number;
+  thumbnailUrl: string;
+}
+
+/** What a guest's phone sees about its own request. */
+export interface GuestRequestView {
+  id: string;
+  state: SongRequestState;
+  query: string;
+  title?: string;
+  artist?: string;
+  thumbnailUrl?: string;
+  reason?: string;
 }
 
 export type SongRequestDecision =
