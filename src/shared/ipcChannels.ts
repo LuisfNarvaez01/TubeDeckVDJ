@@ -82,6 +82,7 @@ export const IPC_CHANNELS = {
   REQUESTS_SET_MODE: 'requests:set-mode',
   REQUESTS_DECIDE: 'requests:decide',
   REQUESTS_NOW_PLAYING: 'requests:now-playing',
+  REQUESTS_UP_NEXT: 'requests:up-next',
   REQUESTS_SET_PREFS: 'requests:set-prefs',
   REQUESTS_PAGE_SETTINGS: 'requests:page-settings',
   REQUESTS_PRINT_SHEET: 'requests:print-sheet',

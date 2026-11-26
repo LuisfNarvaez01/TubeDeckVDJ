@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { listLanAddresses, LocalRequestServer } from '../../../src/main/services/LocalRequestServer';
-import { GUEST_JS } from '../../../src/main/services/localRequestPage';
+import { GUEST_HTML, GUEST_JS } from '../../../src/main/services/localRequestPage';
 import { flush, makeHub, track } from './songRequestsTestKit';
 
 const servers: LocalRequestServer[] = [];
@@ -153,5 +153,23 @@ describe('LocalRequestServer ("Solo red del local")', () => {
       venueName: 'Bar X',
       nowPlaying: { title: 'Feid - Normal', artist: 'Feid' }
     });
+  });
+});
+
+describe('upNext on the venue WiFi', () => {
+  it('serves the next song in /api/info', async () => {
+    const { api, hub } = await setup();
+    expect(await (await api('/api/info')).json()).toMatchObject({ upNext: null });
+    hub.setUpNext({ title: 'Feid - Normal', artist: 'Feid' });
+    expect(await (await api('/api/info')).json()).toMatchObject({ upNext: { title: 'Feid - Normal', artist: 'Feid' } });
+  });
+
+  it('shows "Sigue" under "Suena ahora" and keeps the markers Lantify replaces in the cloud', () => {
+    expect(GUEST_HTML).toContain('<span class="pnav-by">by Lantify</span>');
+    expect(GUEST_HTML).toContain('<!--nav-extra-->');
+    expect(GUEST_HTML).toContain('<script src="/app.js"></script>');
+    expect(GUEST_HTML.indexOf('id="next"')).toBeGreaterThan(GUEST_HTML.indexOf('Suena ahora'));
+    expect(GUEST_HTML).toContain('Sigue:');
+    expect(GUEST_JS).toContain('info.upNext');
   });
 });

@@ -112,6 +112,7 @@ const NowPlayingSchema = z.object({
   artist: z.string().max(300),
   videoId: VideoIdSchema.nullable()
 });
+const UpNextSchema = z.object({ title: z.string().max(500), artist: z.string().max(300) }).nullable();
 const SongRequestPrefsPatchSchema = z
   .object({
     autoApprove: z.boolean(),
@@ -420,6 +421,9 @@ export function registerIpcHandlers(services: MainServices): void {
   );
   ipcMain.handle(IPC_CHANNELS.REQUESTS_NOW_PLAYING, (_event, raw: unknown) =>
     wrapResult(() => requireRequests().hub.setNowPlaying(NowPlayingSchema.parse(raw)))
+  );
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_UP_NEXT, (_event, raw: unknown) =>
+    wrapResult(() => requireRequests().hub.setUpNext(UpNextSchema.parse(raw)))
   );
   ipcMain.handle(IPC_CHANNELS.REQUESTS_SET_PREFS, (_event, raw: unknown) =>
     wrapResult(() => {

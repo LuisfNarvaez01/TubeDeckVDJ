@@ -29,6 +29,7 @@ import type {
   MidiMapping,
   VideoQualityPreference,
   FeedbackSignal,
+  UpNextInfo,
   YouTubeTrack
 } from '../shared/types';
 import {
@@ -51,7 +52,7 @@ import { MixerCenter } from './components/MixerCenter';
 import { OverlayControls } from './components/OverlayControls';
 import { QueueTab } from './components/QueueTab';
 import { RequestsTab } from './components/RequestsTab';
-import { currentCandidate, SongRequestBridge } from './dj/SongRequestBridge';
+import { currentCandidate, pickUpNext, SongRequestBridge } from './dj/SongRequestBridge';
 import { activeQr, pendingRequestCount, tableLabel, useSongRequestStore } from './store/useSongRequestStore';
 import { SearchBrowserTab } from './components/SearchBrowserTab';
 import { SuggestionsTab } from './components/SuggestionsTab';
@@ -159,6 +160,10 @@ const LOAD_DATA_WAIT_MS = 15_000;
 /** A song that does not load is tried this many times (fresh URL each time) before showing the error. */
 const LOAD_ATTEMPTS = 3;
 const LOAD_RETRY_PAUSE_MS = 1500;
+/** Screen 2 "A continuación": shown in a song's last 25 s, gone 4 s before the end, only on songs of 1 min or more. */
+const UP_NEXT_LEAD_SEC = 25;
+const UP_NEXT_HIDE_SEC = 4;
+const UP_NEXT_MIN_SONG_SEC = 60;
 
 type FeedbackTrack = Pick<YouTubeTrack, 'videoId' | 'title' | 'channel' | 'artists'>;
 
@@ -326,7 +331,8 @@ export function App(): ReactElement {
             window.tubedeckAPI?.decideRequest
               ? window.tubedeckAPI.decideRequest(id, decision)
               : Promise.resolve({ success: false as const, error: 'Sin conexión con el proceso principal' }),
-          nowPlaying: (np) => window.tubedeckAPI?.reportNowPlaying?.(np) ?? Promise.resolve()
+          nowPlaying: (np) => window.tubedeckAPI?.reportNowPlaying?.(np) ?? Promise.resolve(),
+          upNext: (next) => window.tubedeckAPI?.reportUpNext?.(next) ?? Promise.resolve()
         },
         queue: {
           enqueue: (track, source, request) => queueEngineRef.current.enqueue(track, source, request),
@@ -396,6 +402,17 @@ export function App(): ReactElement {
   const compositorRef = useRef<WebGLVideoCompositor | null>(null);
   const fxPipelineRef = useRef(new VideoFxPipeline());
   const overlayCompRef = useRef(new OverlayCompositor(1280, 720));
+  /** The song after the one on air (phone page "Sigue" and the Screen 2 "A continuación" cue). */
+  const upNextSongRef = useRef<UpNextInfo | null>(null);
+  // "Reducir movimiento" in Windows: the Screen 2 cues fade without sliding
+  useEffect(() => {
+    const mq = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+    if (!mq) return;
+    const apply = (): void => overlayCompRef.current.setReducedMotion(mq.matches);
+    apply();
+    mq.addEventListener?.('change', apply);
+    return () => mq.removeEventListener?.('change', apply);
+  }, []);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
   const webcamStreamRef = useRef<MediaStream | null>(null);
 
@@ -927,6 +944,7 @@ export function App(): ReactElement {
     let lastEnergySample = 0;
     let lastWaveSample = 0;
     let lastAutomixTick = 0;
+    let lastUpNextCheck = 0;
 
     const tick = (now: number) => {
       const syncs = decksSyncRef.current;
@@ -1190,6 +1208,7 @@ export function App(): ReactElement {
 
           // Song requests: the loudest audible deck is "on air" (now-playing, PLAYING / PLAYED).
           let loudest: YouTubeTrack | null = null;
+          let loudestDeck: DeckId | null = null;
           let loudestGain = 0;
           for (const id of ['A', 'B'] as DeckId[]) {
             const d = useDeckStore.getState().decks[id];
@@ -1197,9 +1216,25 @@ export function App(): ReactElement {
             if (d.track && d.playing && gain > 0.1 && gain > loudestGain) {
               loudestGain = gain;
               loudest = d.track;
+              loudestDeck = id;
             }
           }
           const requestStarted = requestBridge.observeOnAir(loudest, Date.now());
+          // What follows: re-read twice a second (queue edits, a new song on air, a hand-loaded deck)
+          if (now - lastUpNextCheck >= 500) {
+            lastUpNextCheck = now;
+            const idleDeck: DeckId | null = loudestDeck ? (loudestDeck === 'A' ? 'B' : 'A') : null;
+            const idle = idleDeck ? useDeckStore.getState().decks[idleDeck] : null;
+            const manualIdle =
+              idleDeck && idle?.track && !idle.playing && queueEngineRef.current.isManualDeck(idleDeck) ? idle.track : null;
+            const next = pickUpNext(
+              queueEngineRef.current.getQueue(),
+              loudest?.videoId ?? requestBridge.getOnAirId(),
+              manualIdle
+            );
+            upNextSongRef.current = next;
+            requestBridge.observeUpNext(next);
+          }
           if (requestStarted && useSongRequestStore.getState().snapshot.prefs.overlayEnabled) {
             // The guest's name first; the table only when they did not give a name
             const t = requestStarted.table;
@@ -1230,6 +1265,18 @@ export function App(): ReactElement {
             ? 0
             : Math.max(0, deckState.durationSec - deckState.currentTimeSec);
           const lib = useLibraryStore.getState();
+
+          // Screen 2: "A continuación" in the last UP_NEXT_LEAD_SEC of a song (not during a mix)
+          const upNext = upNextSongRef.current;
+          const showUpNext =
+            Boolean(upNext) &&
+            stSettings.overlayConfig.osd.enabled &&
+            deckState.playing &&
+            !isTransitioning &&
+            deckState.durationSec >= UP_NEXT_MIN_SONG_SEC &&
+            remainingSec <= UP_NEXT_LEAD_SEC &&
+            remainingSec > UP_NEXT_HIDE_SEC;
+          overlayCompRef.current.setUpNextCue(showUpNext ? upNext : null, now);
 
           const target = automixTargetRef.current;
           if (target && !isTransitioning) {

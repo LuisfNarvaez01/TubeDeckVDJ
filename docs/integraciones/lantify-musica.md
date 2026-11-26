@@ -96,7 +96,7 @@ Base: `https://musica.lantifypos.com/<venueId>` (la página) y `https://api.lant
 
 | Método y ruta | Cuerpo | Respuesta |
 |---|---|---|
-| `GET …/api/info` | — | `{ venueName, online, accepting, nowPlaying: { title, artist } \| null, theme: Theme \| null }` |
+| `GET …/api/info` | — | `{ venueName, online, accepting, nowPlaying: { title, artist } \| null, upNext: { title, artist } \| null, theme: Theme \| null }` |
 | `GET …/api/search?q=` | — | `{ items: GuestTrack[] }` (máx. 12, ya filtrados: 90–600 s, sin basura). `503` si el DJ no está conectado. |
 | `POST …/api/requests` | `{ client, table?, guest?, videoId?, query? }` | `201 GuestRequestView` · `429 { error }` límite · `400 { error }` |
 | `GET …/api/requests/:id?client=` | — | `GuestRequestView` (del caché del objeto, no despierta a Proyecta) |
@@ -130,7 +130,7 @@ type ChatMessage = { id: string; from: 'dj' | 'pos'; author: string; text: strin
 | objeto → PC | `{ t:'autopilot', rules: AutopilotRules }` | la caja cambió el piloto automático |
 | PC → objeto | `{ t:'res', rid, status, body }` | respuesta (`status` HTTP que verá el cliente) |
 | PC → objeto | `{ t:'view', view: GuestRequestView }` | estado nuevo de un pedido (caché para `GET requests/:id`) |
-| PC → objeto | `{ t:'info', info: { venueName, accepting, nowPlaying } }` | cada cambio de canción o de nombre |
+| PC → objeto | `{ t:'info', info: { venueName, accepting, nowPlaying, upNext? } }` | cada cambio de canción, de la que sigue o de nombre. `upNext` (26 nov 2026) es la siguiente canción de la cola (`{ title, artist }` o `null`); un PC viejo que no la manda queda en `null` |
 | PC → objeto | `{ t:'chat', text }` | mensaje del DJ (el objeto le pone id, `from:'dj'`, hora y lo guarda) |
 | PC → objeto | `{ t:'desk', desk: { djPresent, pending } }` | solo vinculado a un negocio, cuando cambia. Con DJ, `pending: []` |
 | PC → objeto | `{ t:'alert', alert: { kind, text } }` | una canción no cargó o se saltó; el objeto la guarda solo sin DJ |
@@ -145,9 +145,11 @@ Cerrar con `4003` = secreto inválido (Proyecta muestra "Vincula de nuevo"). El 
 - **Buscador** tipo YouTube: resultados con miniatura, título, canal y duración; el cliente elige el video exacto. Si no aparece, "Pedir por nombre".
 - **Tema**: si `info.theme` existe (local de Lantify POS) usa `primary`/`accent` y el logo del negocio; si no, el tema de Proyecta (negro, acentos cian/magenta).
 - **Barra de Proyecta** (`<nav class="pnav">`): marca de Proyecta, "by Lantify" y un hueco `<!--nav-extra-->` donde el Worker pone el botón de la carta.
+- **Ahora y lo que sigue**: la tarjeta "Sonando" muestra `nowPlaying` y, debajo, "Sigue: <título> · <artista>" con `upNext` cuando no es `null` (pendiente en Proyecta: la página y la proyección "A continuación").
 - En un local de Lantify POS, la página del negocio (`/m/<slug>?mesa=<código de la mesa>`) enlaza a "Pedir canciones" → `https://musica.lantifypos.com/<venueId>?mesa=<mesa>&carta=<código de la mesa>`.
 - **Un solo QR por mesa (solo Lantify POS):** si el negocio tiene el pedido desde la mesa activo, el QR de la mesa es el de la página del negocio (carta + "Pedir canciones"). Si no, el QR es el de la página de música.
 - **Botón "volver a la carta" (lo pone el Worker, no la página de Proyecta):** en un local vinculado con página publicada, el Worker pone un `<a class="lf-carta">` en el hueco `<!--nav-extra-->` de la barra de Proyecta y suma sus estilos a `/app.css`. Con `carta=<código>` dice "Pedir de la carta" y vuelve a `/m/<slug>?mesa=<código>`; sin él, "Ver la carta" → `/m/<slug>`. Un local independiente no lo lleva. La página de Proyecta no cambia; en la red local (sin nube) no hay botón.
+- **Publicidad de Lantify (la pone el Worker, en todos los locales):** el "by Lantify" de la barra pasa a ser `<a class="pnav-by" href="https://lantifypos.com/" target="_blank">` y antes del `<script src="/app.js">` va una tarjeta `<aside class="lf-promo">` ("¿Tienes un restaurante o un bar?" → lantifypos.com, en otra pestaña para no perder el pedido). Para que funcione, la página de Proyecta debe conservar literal `<span class="pnav-by">by Lantify</span>` y `<script src="/app.js"></script>`. En la red local no aparece.
 
 ## Chat DJ ↔ POS
 

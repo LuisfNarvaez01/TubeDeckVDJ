@@ -125,6 +125,22 @@ function cornerCoords(
   return { x, y };
 }
 
+const UP_NEXT_FADE_IN_MS = 700;
+const UP_NEXT_FADE_OUT_MS = 500;
+
+/** Cuts `text` to `maxW` pixels with an ellipsis (canvas `maxWidth` squeezes instead). */
+function fitText(ctx2d: CanvasRenderingContext2D, text: string, maxW: number): string {
+  if (ctx2d.measureText(text).width <= maxW) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (ctx2d.measureText(`${text.slice(0, mid).trimEnd()}…`).width <= maxW) lo = mid;
+    else hi = mid - 1;
+  }
+  return `${text.slice(0, lo).trimEnd()}…`;
+}
+
 export class OverlayCompositor {
   private readonly width: number;
   private readonly height: number;
@@ -149,6 +165,14 @@ export class OverlayCompositor {
   private requestQrCaption = '';
   private requestQrVenue = '';
   private requestQrLogo: CanvasImageSource | null = null;
+
+  /** "A continuación: título · artista", shown near the end of each song. */
+  private upNextTitle = '';
+  private upNextArtist = '';
+  private upNextVisible = false;
+  private upNextChangedAtMs = -Infinity;
+  /** "Reducir movimiento" (OS setting): fades only, no slide or moving bars. */
+  private reducedMotion = false;
 
   private marqueeOffsetPx = 0;
   private lastMarqueeTickMs: number | null = null;
@@ -334,6 +358,36 @@ export class OverlayCompositor {
     if (this.config.webcam.enabled) taken.add(this.config.webcam.corner);
     const order: OverlayCorner[] = ['bottom-right', 'top-right', 'top-left'];
     return order.find((c) => !taken.has(c)) ?? 'top-left';
+  }
+
+  setReducedMotion(reduce: boolean): void {
+    this.reducedMotion = reduce;
+  }
+
+  /**
+   * Shows (or, with null, hides) the "A continuación" cue. The caller decides when (the
+   * last seconds of the song); a new title while it is up only swaps the text.
+   */
+  setUpNextCue(next: { title: string; artist: string } | null, nowMs: number): void {
+    if (next) {
+      this.upNextTitle = cleanTrackTitleForOsd(next.title).slice(0, 80);
+      this.upNextArtist = next.artist.trim().slice(0, 60);
+      if (!this.upNextVisible) {
+        this.upNextVisible = true;
+        this.upNextChangedAtMs = nowMs;
+      }
+    } else if (this.upNextVisible) {
+      this.upNextVisible = false;
+      this.upNextChangedAtMs = nowMs;
+    }
+  }
+
+  /** Opacity of the "A continuación" cue right now (0 = not drawn). */
+  upNextOpacity(nowMs: number): number {
+    if (!this.upNextTitle) return 0;
+    const t = Math.max(0, nowMs - this.upNextChangedAtMs);
+    if (this.upNextVisible) return Math.min(1, t / UP_NEXT_FADE_IN_MS);
+    return Math.max(0, 1 - t / UP_NEXT_FADE_OUT_MS);
   }
 
   hideRequestBanner(): void {
@@ -542,6 +596,50 @@ export class OverlayCompositor {
       ctx2d.fillStyle = '#94A3B8';
       ctx2d.font = '400 13px Inter, sans-serif';
       ctx2d.fillText(this.osdChannel, x + 16, y + 52);
+      ctx2d.restore();
+      drewAnything = true;
+    }
+
+    // 4b. "A continuación": a quiet card in the OSD slot (above the OSD if both are up)
+    const upNextAlpha = this.upNextOpacity(nowMs);
+    if (upNextAlpha > 0) {
+      const osdUp =
+        this.config.osd.enabled && elapsedOsd >= 0 && elapsedOsd <= this.config.osd.durationMs && Boolean(this.osdTitle);
+      const t = Math.max(0, nowMs - this.upNextChangedAtMs);
+      const ease = this.upNextVisible ? 1 - Math.pow(1 - Math.min(1, t / UP_NEXT_FADE_IN_MS), 3) : 1;
+      const slide = this.reducedMotion ? 0 : (1 - ease) * 28;
+      const boxH = 62;
+      const maxBoxW = Math.min(this.width - 64, 560);
+      const textX = 22;
+      ctx2d.save();
+      ctx2d.globalAlpha = upNextAlpha * 0.96;
+      ctx2d.textBaseline = 'alphabetic';
+      ctx2d.font = '600 19px Inter, sans-serif';
+      const line = this.upNextArtist && !this.upNextTitle.toLowerCase().includes(this.upNextArtist.toLowerCase())
+        ? `${this.upNextTitle} · ${this.upNextArtist}`
+        : this.upNextTitle;
+      const fitted = fitText(ctx2d, line, maxBoxW - textX - 18);
+      const boxW = Math.max(220, Math.min(maxBoxW, ctx2d.measureText(fitted).width + textX + 20));
+      const x = 32 - slide;
+      let y = this.height - boxH - 58;
+      if (osdUp) y -= 74 + 12;
+      ctx2d.fillStyle = 'rgba(8, 9, 12, 0.82)';
+      ctx2d.beginPath();
+      ctx2d.roundRect(x, y, boxW, boxH, 12);
+      ctx2d.fill();
+      const edge = ctx2d.createLinearGradient(x, y, x, y + boxH);
+      edge.addColorStop(0, '#22E1F0');
+      edge.addColorStop(1, '#FF4FA8');
+      ctx2d.fillStyle = edge;
+      ctx2d.beginPath();
+      ctx2d.roundRect(x, y, 4, boxH, [12, 0, 0, 12]);
+      ctx2d.fill();
+      ctx2d.fillStyle = '#22E1F0';
+      ctx2d.font = '700 12px Inter, sans-serif';
+      ctx2d.fillText('A CONTINUACIÓN', x + textX, y + 23);
+      ctx2d.fillStyle = '#F8FAFC';
+      ctx2d.font = '600 19px Inter, sans-serif';
+      ctx2d.fillText(fitted, x + textX, y + 47);
       ctx2d.restore();
       drewAnything = true;
     }

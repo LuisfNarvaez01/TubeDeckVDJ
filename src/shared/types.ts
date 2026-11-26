@@ -494,3 +494,9 @@ export interface NowPlayingInfo {
   /** YouTube id, or null for a local file. */
   videoId: string | null;
 }
+
+/** The next song in the queue (contract `upNext`), shown as "Sigue" on the phone page. */
+export interface UpNextInfo {
+  title: string;
+  artist: string;
+}

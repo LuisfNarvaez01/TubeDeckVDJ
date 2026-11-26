@@ -52,6 +52,7 @@ export const GUEST_HTML = `<!doctype html>
       <p id="now-artist" class="now-artist"></p>
     </div>
   </section>
+  <p id="next" class="next" hidden aria-live="polite"><span class="next-label">Sigue:</span> <span id="next-text"></span></p>
 
   <section id="onboard" class="panel onboard" hidden>
     <h1>Antes de pedir</h1>
@@ -147,6 +148,9 @@ h2{font-size:15px;margin:28px 0 10px;font-weight:650}
 .eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
 .now-title{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .now-artist{font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.next{margin:0 4px 16px;font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.now:not([hidden])+.next{margin-top:-8px}
+.next-label{font-weight:650;color:var(--ink)}
 .bars{display:flex;align-items:flex-end;gap:3px;height:22px;flex:none}
 .bars i{width:4px;height:40%;border-radius:2px;background:var(--ink)}
 @media (prefers-reduced-motion:no-preference){
@@ -302,6 +306,9 @@ export const GUEST_JS = `(function () {
       var np = info.nowPlaying;
       show($('now'), Boolean(np));
       if (np) { $('now-title').textContent = np.title; $('now-artist').textContent = np.artist || ''; }
+      var nx = info.upNext;
+      show($('next'), Boolean(nx && nx.title));
+      if (nx && nx.title) $('next-text').textContent = nx.title + (nx.artist ? ' · ' + nx.artist : '');
       if (info.theme) applyTheme(info.theme);
       show($('closed'), false);
     }).catch(function (err) {

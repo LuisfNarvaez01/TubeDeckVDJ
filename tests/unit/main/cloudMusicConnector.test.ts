@@ -162,3 +162,25 @@ describe('CloudMusicConnector ("Por internet")', () => {
     expect(cloud.getStatus().registered).toBe(false);
   });
 });
+
+describe('upNext (canción que sigue)', () => {
+  it('sends the next song in the info message on every change, and only on a change', async () => {
+    const { cloud, connected, hub } = setup();
+    await cloud.register();
+    const s = await connected();
+    expect(s.last('info')).toMatchObject({ info: { upNext: null } });
+
+    const before = s.sent.filter((m) => (m as { t?: string }).t === 'info').length;
+    hub.setUpNext({ title: 'Feid - Normal', artist: 'Feid' });
+    expect(s.last('info')).toMatchObject({ info: { upNext: { title: 'Feid - Normal', artist: 'Feid' } } });
+    hub.setUpNext({ title: 'Feid - Normal', artist: 'Feid' }); // same song: nothing new
+    expect(s.sent.filter((m) => (m as { t?: string }).t === 'info')).toHaveLength(before + 1);
+
+    hub.setNowPlaying({ title: 'KAROL G - BICHOTA', artist: 'KAROL G', videoId: null });
+    expect(s.last('info')).toMatchObject({
+      info: { nowPlaying: { title: 'KAROL G - BICHOTA' }, upNext: { title: 'Feid - Normal', artist: 'Feid' } }
+    });
+    hub.setUpNext(null);
+    expect(s.last('info')).toMatchObject({ info: { upNext: null } });
+  });
+});

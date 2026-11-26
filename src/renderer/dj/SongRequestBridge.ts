@@ -17,6 +17,7 @@ import type {
   SongRequestsSnapshot,
   SongRequest,
   Result,
+  UpNextInfo,
   YouTubeTrack
 } from '../../shared/types';
 import type { QueueItem, QueueRequestInfo, QueueSource } from './QueueAndAutomixEngine';
@@ -25,6 +26,8 @@ import { isYouTubeVideoId } from './QueueAndAutomixEngine';
 export interface SongRequestBridgeApi {
   decide: (id: string, decision: SongRequestDecision) => Promise<Result<SongRequest>>;
   nowPlaying: (np: NowPlayingInfo) => Promise<unknown>;
+  /** The next song in the queue (contract `upNext`); optional for older test fakes. */
+  upNext?: (next: UpNextInfo | null) => Promise<unknown>;
 }
 
 export interface SongRequestBridgeQueue {
@@ -46,6 +49,23 @@ export function trackArtist(track: YouTubeTrack): string {
   return track.artists?.[0] ?? track.channel.replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim();
 }
 
+/**
+ * The song that follows the one on air: a song the DJ loaded by hand on the idle deck
+ * (Automix mixes into it), otherwise the first queue item that is not on air and did not
+ * fail. Null when nothing is lined up.
+ */
+export function pickUpNext(
+  queue: ReadonlyArray<Pick<QueueItem, 'track' | 'status'>>,
+  onAirVideoId: string | null,
+  manualIdleTrack: YouTubeTrack | null = null
+): UpNextInfo | null {
+  if (manualIdleTrack && manualIdleTrack.videoId !== onAirVideoId) {
+    return { title: manualIdleTrack.title, artist: trackArtist(manualIdleTrack) };
+  }
+  const item = queue.find((q) => q.status !== 'failed' && q.track.videoId !== onAirVideoId);
+  return item ? { title: item.track.title, artist: trackArtist(item.track) } : null;
+}
+
 interface TrackedRequest extends QueueRequestInfo {
   state: 'queued' | 'playing';
 }
@@ -59,6 +79,8 @@ export class SongRequestBridge {
   private byVideoId = new Map<string, TrackedRequest>();
   private autoHandled = new Set<string>();
   private onAirId: string | null = null;
+  /** Last `upNext` sent (title + artist); null = nothing sent yet since requests turned on. */
+  private sentUpNextKey: string | null = null;
   private pendingOnAir: { id: string; sinceMs: number; track: YouTubeTrack } | null = null;
   private readonly now: () => number;
 
@@ -76,6 +98,7 @@ export class SongRequestBridge {
   /** New snapshot from the main process: remember the tracked songs, run auto-approve. */
   async sync(snapshot: SongRequestsSnapshot): Promise<void> {
     this.active = snapshot.mode !== 'off';
+    if (!this.active) this.sentUpNextKey = null; // resend when requests turn back on
     this.prefs = snapshot.prefs;
     this.desk = snapshot.desk ?? null;
     for (const req of snapshot.requests) {
@@ -157,6 +180,23 @@ export class SongRequestBridge {
 
   async nextCandidate(req: SongRequest): Promise<void> {
     await this.deps.api.decide(req.id, { action: 'next-candidate' });
+  }
+
+  /** Song on air (settled), or null before the first one. */
+  getOnAirId(): string | null {
+    return this.onAirId;
+  }
+
+  /**
+   * Reports the next song (queue edits, a new song on air, a hand-loaded deck). Called
+   * often; only a change is sent, and only while a request source is on.
+   */
+  observeUpNext(next: UpNextInfo | null): void {
+    if (!this.active) return;
+    const key = next ? `${next.title}\u0000${next.artist}` : '';
+    if (key === this.sentUpNextKey) return;
+    this.sentUpNextKey = key;
+    void this.deps.api.upNext?.(next ? { title: next.title, artist: next.artist } : null);
   }
 
   /** Request info for a queued/playing song (queue rows and the Screen 2 banner). */

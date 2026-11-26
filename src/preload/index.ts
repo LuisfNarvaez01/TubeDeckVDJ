@@ -31,6 +31,7 @@ import type {
   GuestPageSettings,
   LocalRequestSettings,
   NowPlayingInfo,
+  UpNextInfo,
   SongRequest,
   SongRequestDecision,
   SongRequestMode,
@@ -141,6 +142,7 @@ export interface TubeDeckAPI {
   setRequestMode: (mode: SongRequestMode) => Promise<Result<SongRequestsSnapshot>>;
   decideRequest: (id: string, decision: SongRequestDecision) => Promise<Result<SongRequest>>;
   reportNowPlaying: (np: NowPlayingInfo) => Promise<Result<void>>;
+  reportUpNext: (next: UpNextInfo | null) => Promise<Result<void>>;
   setRequestPrefs: (patch: Partial<SongRequestPrefs>) => Promise<Result<SongRequestsSnapshot>>;
   setGuestPageSettings: (patch: Partial<GuestPageSettings>) => Promise<Result<SongRequestsSnapshot>>;
   sendRequestChat: (text: string) => Promise<Result<SongRequestsSnapshot>>;
@@ -271,6 +273,7 @@ const api: TubeDeckAPI = {
   setRequestMode: (mode) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_SET_MODE, mode),
   decideRequest: (id, decision) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_DECIDE, id, decision),
   reportNowPlaying: (np) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_NOW_PLAYING, np),
+  reportUpNext: (next) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_UP_NEXT, next),
   setRequestPrefs: (patch) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_SET_PREFS, patch),
   setGuestPageSettings: (patch) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_PAGE_SETTINGS, patch),
   sendRequestChat: (text) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_CHAT_SEND, text),

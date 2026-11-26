@@ -15,7 +15,7 @@
  * as `autopilot` and the hub applies them only while no DJ is in the booth.
  */
 import { z } from 'zod';
-import type { ChatMessage, CloudConnection, CloudRequestStatus, NowPlayingInfo } from '../../shared/types';
+import type { ChatMessage, CloudConnection, CloudRequestStatus, NowPlayingInfo, UpNextInfo } from '../../shared/types';
 import type { GuestGateway } from './GuestGateway';
 import { buildQrSheet, qrImages } from './requestQr';
 import type { RequestConnector, RequestStatusUpdate, SettingsStore, SongRequestsService } from './SongRequestsService';
@@ -437,7 +437,7 @@ export class CloudMusicConnector implements RequestConnector {
     this.sendRaw({ t: 'res', rid, status: reply.status, body: reply.body });
   }
 
-  /** Current venue name and song for the page (on connect, song change and name change). */
+  /** Venue name, song on air and the next one for the page (on connect, song, queue and name changes). */
   private sendInfo(): void {
     const info = this.deps.gateway.info();
     this.sendRaw({ t: 'info', info });
@@ -516,6 +516,10 @@ export class CloudMusicConnector implements RequestConnector {
   }
 
   reportNowPlaying(_np: NowPlayingInfo): void {
+    this.sendInfo();
+  }
+
+  reportUpNext(_next: UpNextInfo | null): void {
     this.sendInfo();
   }
 

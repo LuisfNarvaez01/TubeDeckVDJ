@@ -66,11 +66,13 @@ export class GuestGateway {
 
   info(): Record<string, unknown> {
     const np = this.deps.hub.getNowPlaying();
+    const next = this.deps.hub.getUpNext();
     const page = this.deps.hub.getPageSettings();
     return {
       venueName: page.venueName,
       accepting: this.deps.hub.getMode() !== 'off',
-      nowPlaying: np ? { title: np.title, artist: np.artist } : null
+      nowPlaying: np ? { title: np.title, artist: np.artist } : null,
+      upNext: next ? { title: next.title, artist: next.artist } : null
     };
   }
 

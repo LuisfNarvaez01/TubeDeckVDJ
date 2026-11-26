@@ -17,6 +17,7 @@ import type {
   SongRequestMode,
   SongRequestOrigin,
   SongRequestPrefs,
+  UpNextInfo,
   YouTubeTrack
 } from '../../shared/types';
 import { passesSongFilter } from './RecommendationEngine';
@@ -116,6 +117,8 @@ export interface RequestConnector {
   readonly origin: SongRequestOrigin;
   reportStatus(externalId: string, update: RequestStatusUpdate): void;
   reportNowPlaying(np: NowPlayingInfo): void;
+  /** The next song in the queue changed (null = nothing queued). */
+  reportUpNext?(next: UpNextInfo | null): void;
 }
 
 export interface IncomingSongRequest {
@@ -180,6 +183,7 @@ export class SongRequestsService {
   private mode: SongRequestMode;
   private page: GuestPageSettings;
   private nowPlaying: NowPlayingInfo | null = null;
+  private upNext: UpNextInfo | null = null;
   private matching: Promise<void> | null = null;
   private retryTimer: unknown = null;
   private readonly modeListeners: Array<(mode: SongRequestMode) => void> = [];
@@ -485,6 +489,22 @@ export class SongRequestsService {
 
   getNowPlaying(): NowPlayingInfo | null {
     return this.nowPlaying ? { ...this.nowPlaying } : null;
+  }
+
+  /** The next song in the queue changed (queue edits or a new song on air); repeats are ignored. */
+  setUpNext(next: UpNextInfo | null): void {
+    const clean = next ? { title: next.title, artist: next.artist } : null;
+    const same =
+      clean === this.upNext ||
+      (clean !== null && this.upNext !== null && clean.title === this.upNext.title && clean.artist === this.upNext.artist);
+    if (same) return;
+    this.upNext = clean;
+    const connector = this.mode === 'off' ? null : this.connectors.get(this.mode);
+    connector?.reportUpNext?.(clean ? { ...clean } : null);
+  }
+
+  getUpNext(): UpNextInfo | null {
+    return this.upNext ? { ...this.upNext } : null;
   }
 
   private reject(req: SongRequest, reason: string): void {

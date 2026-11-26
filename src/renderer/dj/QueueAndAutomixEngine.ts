@@ -364,6 +364,11 @@ export class QueueAndAutomixEngine {
     return Array.from(this.dismissedVideoIds);
   }
 
+  /** True while the DJ's hand-loaded song waits on this deck (Automix will mix into it). */
+  isManualDeck(deck: DeckId): boolean {
+    return this.preloadedForDeck[deck] === MANUAL_DECK_CLAIM;
+  }
+
   /** True when this song (any upload of it) already played this session. */
   wasSongPlayed(track: YouTubeTrack): boolean {
     if (this.playedVideoIds.has(track.videoId)) return true;
