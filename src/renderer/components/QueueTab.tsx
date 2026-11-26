@@ -24,6 +24,7 @@ import type { AutomixFadeType, PreloadMode } from '../dj/QueueAndAutomixEngine';
 import { useDeckStore } from '../store/useDeckStore';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useMixerStore } from '../store/useMixerStore';
+import { tableLabel } from '../store/useSongRequestStore';
 import { formatTrackDuration } from './SearchBrowserTab';
 
 interface QueueTabProps {
@@ -414,7 +415,7 @@ export function QueueTab({
                         <>
                           <QrCode className="h-2.5 w-2.5 shrink-0 text-ink-soft" />
                           <span className="truncate text-ink-soft">
-                            {/^\d+$/.test(item.request.table) ? `Mesa ${item.request.table}` : item.request.table}
+                            {tableLabel(item.request.table)}
                             {item.request.guest ? ` · ${item.request.guest}` : ''}
                           </span>
                         </>

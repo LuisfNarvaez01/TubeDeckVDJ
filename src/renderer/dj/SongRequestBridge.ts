@@ -1,27 +1,27 @@
 /**
- * Renderer side of Lantify song requests: turns an approved request into a queue item,
+ * Renderer side of guest song requests (Lantify POS or Proyecta's own QR): turns an approved request into a queue item,
  * applies "Aprobar automáticamente" with its limits, and reports PLAYING / PLAYED and
  * now-playing as the song on air changes. The DJ always decides: nothing here removes
  * or reorders what is already in the queue, it only adds approved requests at the end.
  */
 import type {
-  LantifyDecision,
-  LantifyNowPlaying,
-  LantifyPrefs,
-  LantifySnapshot,
-  LantifySongRequest,
+  SongRequestDecision,
+  NowPlayingInfo,
+  SongRequestPrefs,
+  SongRequestsSnapshot,
+  SongRequest,
   Result,
   YouTubeTrack
 } from '../../shared/types';
 import type { QueueItem, QueueRequestInfo, QueueSource } from './QueueAndAutomixEngine';
 import { isYouTubeVideoId } from './QueueAndAutomixEngine';
 
-export interface LantifyBridgeApi {
-  decide: (id: string, decision: LantifyDecision) => Promise<Result<LantifySongRequest>>;
-  nowPlaying: (np: LantifyNowPlaying) => Promise<unknown>;
+export interface SongRequestBridgeApi {
+  decide: (id: string, decision: SongRequestDecision) => Promise<Result<SongRequest>>;
+  nowPlaying: (np: NowPlayingInfo) => Promise<unknown>;
 }
 
-export interface LantifyBridgeQueue {
+export interface SongRequestBridgeQueue {
   enqueue: (track: YouTubeTrack, source: QueueSource, request: QueueRequestInfo) => QueueItem;
   requestConflict: (track: YouTubeTrack, nowMs?: number) => 'queued' | 'played' | null;
 }
@@ -32,7 +32,7 @@ export type ApproveOutcome = 'queued' | 'already-played' | 'already-queued' | 'n
 export const ON_AIR_SETTLE_MS = 1500;
 const HOUR_MS = 60 * 60 * 1000;
 
-export function currentCandidate(req: LantifySongRequest): YouTubeTrack | null {
+export function currentCandidate(req: SongRequest): YouTubeTrack | null {
   return req.candidates[req.candidateIndex] ?? req.candidates[0] ?? null;
 }
 
@@ -44,9 +44,10 @@ interface TrackedRequest extends QueueRequestInfo {
   state: 'queued' | 'playing';
 }
 
-export class LantifyRequestBridge {
-  private paired = false;
-  private prefs: LantifyPrefs | null = null;
+export class SongRequestBridge {
+  /** A request source is active (Lantify or the local QR): now-playing is worth sending. */
+  private active = false;
+  private prefs: SongRequestPrefs | null = null;
   private approvals: Array<{ table: string; atMs: number }> = [];
   private byVideoId = new Map<string, TrackedRequest>();
   private autoHandled = new Set<string>();
@@ -56,8 +57,8 @@ export class LantifyRequestBridge {
 
   constructor(
     private readonly deps: {
-      api: LantifyBridgeApi;
-      queue: LantifyBridgeQueue;
+      api: SongRequestBridgeApi;
+      queue: SongRequestBridgeQueue;
       onQueueChanged: () => void;
       now?: () => number;
     }
@@ -66,9 +67,9 @@ export class LantifyRequestBridge {
   }
 
   /** New snapshot from the main process: remember the tracked songs, run auto-approve. */
-  async sync(snapshot: LantifySnapshot): Promise<void> {
-    this.paired = snapshot.status.paired;
-    this.prefs = snapshot.status.prefs;
+  async sync(snapshot: SongRequestsSnapshot): Promise<void> {
+    this.active = snapshot.mode !== 'off';
+    this.prefs = snapshot.prefs;
     for (const req of snapshot.requests) {
       if ((req.state === 'queued' || req.state === 'playing') && req.chosenVideoId && !this.byVideoId.has(req.chosenVideoId)) {
         this.byVideoId.set(req.chosenVideoId, {
@@ -79,7 +80,7 @@ export class LantifyRequestBridge {
         });
       }
     }
-    if (!this.paired || !this.prefs.autoApprove) return;
+    if (!this.active || !this.prefs.autoApprove) return;
     for (const req of snapshot.requests) {
       if (req.state !== 'pending' || this.autoHandled.has(req.id)) continue;
       if (this.overLimit(req.table)) continue; // waits for the DJ; retried on the next snapshot
@@ -103,7 +104,7 @@ export class LantifyRequestBridge {
   }
 
   /** Queues the request's current candidate, or rejects it with ALREADY_PLAYED if it would repeat. */
-  async approve(req: LantifySongRequest): Promise<ApproveOutcome> {
+  async approve(req: SongRequest): Promise<ApproveOutcome> {
     const track = currentCandidate(req);
     if (!track) return 'no-candidate';
     const conflict = this.deps.queue.requestConflict(track, this.now());
@@ -121,12 +122,12 @@ export class LantifyRequestBridge {
     return 'queued';
   }
 
-  async reject(req: LantifySongRequest, reason?: string): Promise<void> {
+  async reject(req: SongRequest, reason?: string): Promise<void> {
     this.autoHandled.add(req.id);
     await this.deps.api.decide(req.id, { action: 'reject', reason: reason?.trim() || undefined });
   }
 
-  async nextCandidate(req: LantifySongRequest): Promise<void> {
+  async nextCandidate(req: SongRequest): Promise<void> {
     await this.deps.api.decide(req.id, { action: 'next-candidate' });
   }
 
@@ -168,7 +169,7 @@ export class LantifyRequestBridge {
         void this.deps.api.decide(prevReq.requestId, { action: 'played' });
       }
     }
-    if (this.paired) {
+    if (this.active) {
       void this.deps.api.nowPlaying({
         title: track.title,
         artist: trackArtist(track),

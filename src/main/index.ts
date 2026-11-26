@@ -12,7 +12,7 @@ import { DatabaseService } from './services/DatabaseService';
 import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { HistoryAndCratesService } from './services/HistoryAndCratesService';
 import { LocalLibraryService } from './services/LocalLibraryService';
-import { LantifyRequestsService } from './services/LantifyRequestsService';
+import { createSongRequestsModule, type SongRequestsModule } from './services/songRequestsModule';
 import { MixRecordingService } from './services/MixRecordingService';
 import { RecommendationEngine } from './services/RecommendationEngine';
 import { TasteFeedbackService } from './services/TasteFeedbackService';
@@ -80,7 +80,7 @@ let displayManager: DisplayWindowManager | null = null;
 let updaterService: AutoUpdaterService | null = null;
 let batchDownloaderService: BatchDownloadService | null = null;
 let recordingService: MixRecordingService | null = null;
-let lantifyService: LantifyRequestsService | null = null;
+let songRequestsModule: SongRequestsModule | null = null;
 
 function buildContentSecurityPolicy(isDev: boolean): string {
   const scriptSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
@@ -225,7 +225,7 @@ app.whenReady().then(async () => {
     getSnapshot: () => taste.getSnapshot(),
     buildTasteProfile: (limit) => history.buildTasteProfile(limit)
   });
-  const lantify = new LantifyRequestsService({
+  const songRequests = createSongRequestsModule({
     // Node's fetch from the main process: the renderer's CSP stays closed to the internet.
     http: async (url, init) => {
       const res = await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
@@ -234,13 +234,13 @@ app.whenReady().then(async () => {
     settings: db,
     search: async (query) => (await search.search(query)).items,
     getTasteSnapshot: () => taste.getSnapshot(),
-    onChange: (snapshot) => {
+    onSnapshot: (snapshot) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(IPC_CHANNELS.LANTIFY_EVENT, snapshot);
+        mainWindow.webContents.send(IPC_CHANNELS.REQUESTS_EVENT, snapshot);
       }
     }
   });
-  lantifyService = lantify;
+  songRequestsModule = songRequests;
   const exporter = new SessionExporter();
   const localLibrary = new LocalLibraryService(db);
   const recordings = new MixRecordingService(path.join(app.getPath('music'), 'Proyecta Grabaciones'));
@@ -283,7 +283,7 @@ app.whenReady().then(async () => {
     batchDownloader,
     taste,
     recommender,
-    lantify,
+    songRequests,
     recordings,
     network,
     mediaCache,
@@ -310,7 +310,7 @@ app.whenReady().then(async () => {
   mainWindow = createMainWindow();
   updater.scheduleStartupCheck(8000);
   network.start();
-  lantify.start();
+  songRequests.start();
   // Re-export cookies (Google rotates them) and find out early if YouTube is blocking us.
   setTimeout(() => {
     void ytAuth
@@ -344,7 +344,7 @@ app.whenReady().then(async () => {
 
 app.on('will-quit', () => {
   void recordingService?.stopAll();
-  lantifyService?.stop();
+  void songRequestsModule?.stop();
   batchDownloaderService?.cancel();
   updaterService?.cancelStartupCheck();
   displayManager?.dispose();

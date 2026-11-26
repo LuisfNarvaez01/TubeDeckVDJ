@@ -1,17 +1,17 @@
 import { useEffect, useState, type ReactElement } from 'react';
 import { Check, Film, Inbox, LoaderCircle, QrCode, RefreshCw, Settings2, X } from 'lucide-react';
-import type { LantifySongRequest } from '../../shared/types';
-import { currentCandidate } from '../dj/LantifyRequestBridge';
-import { useLantifyStore } from '../store/useLantifyStore';
+import type { SongRequest } from '../../shared/types';
+import { currentCandidate } from '../dj/SongRequestBridge';
+import { tableLabel, useSongRequestStore } from '../store/useSongRequestStore';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { formatTrackDuration } from './SearchBrowserTab';
 
 interface RequestsTabProps {
-  onApprove: (req: LantifySongRequest) => void;
-  onNextVersion: (req: LantifySongRequest) => void;
-  onReject: (req: LantifySongRequest, reason: string) => void;
+  onApprove: (req: SongRequest) => void;
+  onNextVersion: (req: SongRequest) => void;
+  onReject: (req: SongRequest, reason: string) => void;
   /** "Ya está en la cola" / "Sonó hace menos de 1 h", or null. */
-  conflictFor: (req: LantifySongRequest) => string | null;
+  conflictFor: (req: SongRequest) => string | null;
   /** Requests approved for this table in the last hour. */
   tableCountFor: (table: string) => number;
   onToggleAutoApprove: (enabled: boolean) => void;
@@ -34,11 +34,7 @@ function agoText(ms: number, now: number): string {
   return `hace ${Math.floor(min / 60)} h`;
 }
 
-function tableLabel(table: string): string {
-  return /^\d+$/.test(table) ? `Mesa ${table}` : table;
-}
-
-/** "Pedidos" column: guests' song requests from the table QR, one card each. */
+/** "Pedidos" column: guests' song requests (Lantify table QR or Proyecta's own QR), one card each. */
 export function RequestsTab({
   onApprove,
   onNextVersion,
@@ -48,9 +44,10 @@ export function RequestsTab({
   onToggleAutoApprove,
   onOpenSettings
 }: RequestsTabProps): ReactElement {
-  const status = useLantifyStore((s) => s.status);
-  const requests = useLantifyStore((s) => s.requests);
-  const note = useLantifyStore((s) => s.note);
+  const snapshot = useSongRequestStore((s) => s.snapshot);
+  const note = useSongRequestStore((s) => s.note);
+  const { mode, prefs, lantify, local, requests } = snapshot;
+  const [showQr, setShowQr] = useState(false);
   // Re-render when the queue changes: the "ya está en la cola" hints depend on it.
   useLibraryStore((s) => s.queue);
   const [now, setNow] = useState(() => Date.now());
@@ -69,21 +66,42 @@ export function RequestsTab({
     .slice(-12)
     .reverse();
 
-  if (!status.paired) {
+  const notReady =
+    mode === 'off'
+      ? {
+          title: 'Pedidos de canciones desde el celular',
+          text: 'Actívalos en Ajustes: con el QR de las mesas de Lantify POS o con el QR propio de Proyecta, sin nada más.',
+          action: 'Activar en Ajustes'
+        }
+      : mode === 'lantify' && !lantify.paired
+        ? lantify.connection === 'revoked'
+          ? {
+              title: 'Lantify desvinculó Proyecta',
+              text: 'Vincula de nuevo con un código nuevo de Lantify → Mi página → Pedir canciones.',
+              action: 'Vincula de nuevo'
+            }
+          : {
+              title: 'Falta vincular Lantify POS',
+              text: 'Escribe en Ajustes el código de Lantify → Mi página → Pedir canciones.',
+              action: 'Vincular en Ajustes'
+            }
+        : mode === 'local' && (!local.running || !local.url)
+          ? {
+              title: 'El QR propio no está listo',
+              text: local.error ?? 'Abriendo el QR en la red del local…',
+              action: 'Revisar en Ajustes'
+            }
+          : null;
+
+  if (notReady && requests.length === 0) {
     return (
       <div className="flex h-full min-h-0 flex-col items-start gap-2 rounded-lg bg-surface p-3">
         <QrCode className="h-5 w-5 text-muted" aria-hidden="true" />
-        <p className="text-xs font-medium text-ink">
-          {status.connection === 'revoked' ? 'Lantify desvinculó Proyecta' : 'Pedidos desde el QR de las mesas'}
-        </p>
-        <p className="text-[11px] leading-snug text-muted">
-          {status.connection === 'revoked'
-            ? 'Vincula de nuevo con un código nuevo de Lantify → Mi página → Pedir canciones.'
-            : 'Vincula Lantify POS para que los clientes pidan canciones y tú las apruebes aquí.'}
-        </p>
+        <p className="text-xs font-medium text-ink">{notReady.title}</p>
+        <p className="text-[11px] leading-snug text-muted">{notReady.text}</p>
         <button type="button" onClick={onOpenSettings} className={controlBtn}>
           <Settings2 className="h-3 w-3" />
-          {status.connection === 'revoked' ? 'Vincula de nuevo' : 'Vincular en Ajustes'}
+          {notReady.action}
         </button>
       </div>
     );
@@ -102,23 +120,44 @@ export function RequestsTab({
     <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 truncate text-[11px] text-muted">
-          {status.business?.name ?? 'Lantify'}
-          {status.connection === 'retrying' ? (
-            <span className="text-ink-soft">
-              {' '}
-              · sin conexión, reintenta en {Math.round(status.pollDelayMs / 1000)} s
-            </span>
+          {mode === 'local' ? (
+            <>
+              QR propio
+              <span className="text-faint">{local.settings.venueName ? ` · ${local.settings.venueName}` : ' · red del local'}</span>
+            </>
           ) : (
-            <span className="text-faint"> · conectado</span>
+            <>
+              {lantify.business?.name ?? 'Lantify'}
+              {lantify.connection === 'retrying' ? (
+                <span className="text-ink-soft">
+                  {' '}
+                  · sin conexión, reintenta en {Math.round(lantify.pollDelayMs / 1000)} s
+                </span>
+              ) : (
+                <span className="text-faint"> · conectado</span>
+              )}
+            </>
           )}
         </p>
+        {mode === 'local' && local.qrSvgDataUrl ? (
+          <button
+            type="button"
+            onClick={() => setShowQr((v) => !v)}
+            aria-pressed={showQr}
+            aria-label={showQr ? 'Ocultar el QR' : 'Mostrar el QR para pedir'}
+            title="Mostrar el QR para que un cliente lo escanee"
+            className={`${controlBtn} shrink-0 ${showQr ? 'text-ink' : ''}`}
+          >
+            <QrCode className="h-3 w-3" />
+          </button>
+        ) : null}
         <button
           type="button"
-          onClick={() => onToggleAutoApprove(!status.prefs.autoApprove)}
-          aria-pressed={status.prefs.autoApprove}
-          title={`Aprueba solo los pedidos que pasan los filtros, hasta ${status.prefs.maxPerHour} por hora y ${status.prefs.maxPerTable} por mesa`}
+          onClick={() => onToggleAutoApprove(!prefs.autoApprove)}
+          aria-pressed={prefs.autoApprove}
+          title={`Aprueba solo los pedidos que pasan los filtros, hasta ${prefs.maxPerHour} por hora y ${prefs.maxPerTable} por mesa`}
           className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold transition-colors duration-150 cursor-pointer ${
-            status.prefs.autoApprove
+            prefs.autoApprove
               ? 'border-live/50 bg-live/12 text-live'
               : 'border-white/[0.06] bg-raised text-muted hover:text-ink'
           }`}
@@ -127,6 +166,17 @@ export function RequestsTab({
           Aprobar automáticamente
         </button>
       </div>
+
+      {showQr && mode === 'local' && local.qrSvgDataUrl ? (
+        <div className="flex items-center gap-3 rounded-lg bg-surface p-2">
+          <img src={local.qrSvgDataUrl} alt="QR para pedir canciones" className="h-28 w-28 shrink-0 rounded bg-ink p-1" />
+          <p className="min-w-0 text-[11px] leading-snug text-muted">
+            Escanéalo con un celular conectado al WiFi
+            {local.settings.wifiName ? ` «${local.settings.wifiName}»` : ' del local'}.
+            <span className="mt-1 block break-all font-mono-tabular text-[10px] text-faint">{local.url}</span>
+          </p>
+        </div>
+      ) : null}
 
       {note ? (
         <p role="status" className="truncate text-[11px] text-ink-soft">
@@ -197,7 +247,7 @@ export function RequestsTab({
                   )}
 
                   {conflict ? <p className="mt-1 text-[10px] font-semibold text-ink-soft">{conflict}</p> : null}
-                  {tableCount >= status.prefs.maxPerTable ? (
+                  {tableCount >= prefs.maxPerTable ? (
                     <p className="mt-1 text-[10px] text-faint">
                       {tableLabel(req.table)} ya tiene {tableCount} aprobadas esta hora
                     </p>

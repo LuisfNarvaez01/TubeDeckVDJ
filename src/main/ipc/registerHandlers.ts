@@ -29,7 +29,9 @@ import type { ExportFormat, SessionExporter } from '../services/SessionExporter'
 import type { StreamResolverService } from '../services/StreamResolverService';
 import type { YouTubeSearchService } from '../services/YouTubeSearchService';
 import type { YtDlpBinaryManager } from '../services/YtDlpBinaryManager';
-import { isPrivateLantifySetting, type LantifyRequestsService } from '../services/LantifyRequestsService';
+import { isPrivateRequestSetting } from '../services/SongRequestsService';
+import { LocalSettingsPatchSchema } from '../services/LocalRequestServer';
+import type { SongRequestsModule } from '../services/songRequestsModule';
 
 const VideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'ID de video inválido');
 
@@ -93,20 +95,20 @@ const RtcSignalSchema = z.object({
 });
 
 const LantifyPairSchema = z.object({ code: z.string().trim().min(1).max(32) });
-const LantifyRequestIdSchema = z.string().trim().min(1).max(128);
-const LantifyDecisionSchema = z.discriminatedUnion('action', [
+const SongRequestIdSchema = z.string().trim().min(1).max(128);
+const SongRequestDecisionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('next-candidate') }),
   z.object({ action: z.literal('reject'), reason: z.string().trim().max(80).optional() }),
   z.object({ action: z.literal('queued'), videoId: VideoIdSchema }),
   z.object({ action: z.literal('playing') }),
   z.object({ action: z.literal('played') })
 ]);
-const LantifyNowPlayingSchema = z.object({
+const NowPlayingSchema = z.object({
   title: z.string().max(500),
   artist: z.string().max(300),
   videoId: VideoIdSchema.nullable()
 });
-const LantifyPrefsPatchSchema = z
+const SongRequestPrefsPatchSchema = z
   .object({
     autoApprove: z.boolean(),
     maxPerHour: z.number().int().min(1).max(120),
@@ -115,9 +117,11 @@ const LantifyPrefsPatchSchema = z
   })
   .partial();
 
-/** Lantify settings (the pairing token above all) stay in the main process. */
+const RequestModeSchema = z.enum(['off', 'lantify', 'local']);
+
+/** Song-request settings (Lantify token, QR access key) stay in the main process. */
 function assertPublicSettingKey(key: string): string {
-  if (isPrivateLantifySetting(key)) throw new Error('Ajuste reservado');
+  if (isPrivateRequestSetting(key)) throw new Error('Ajuste reservado');
   return key;
 }
 
@@ -158,7 +162,7 @@ export interface MainServices {
   batchDownloader?: BatchDownloadService;
   taste?: TasteFeedbackService;
   recommender?: RecommendationEngine;
-  lantify?: LantifyRequestsService;
+  songRequests?: SongRequestsModule;
 }
 
 /** Endpoints served from the media cache through the local proxy (no network needed). */
@@ -395,26 +399,64 @@ export function registerIpcHandlers(services: MainServices): void {
   );
 
 
-  const requireLantify = (): LantifyRequestsService => {
-    if (!services.lantify) throw new Error('Pedidos de Lantify no disponibles');
-    return services.lantify;
+  const requireRequests = (): SongRequestsModule => {
+    if (!services.songRequests) throw new Error('Pedidos de canciones no disponibles');
+    return services.songRequests;
   };
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_PAIR, (_event, raw: unknown) =>
-    wrapResult(() => requireLantify().pair(LantifyPairSchema.parse(raw).code))
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_SNAPSHOT, () => wrapResult(() => requireRequests().snapshot()));
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_SET_MODE, (_event, raw: unknown) =>
+    wrapResult(() => requireRequests().setMode(RequestModeSchema.parse(raw)))
   );
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_UNPAIR, () => wrapResult(() => requireLantify().unpair()));
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_STATUS, () => wrapResult(() => requireLantify().getStatus()));
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_REQUESTS, () => wrapResult(() => requireLantify().getRequests()));
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_DECIDE, (_event, rawId: unknown, rawDecision: unknown) =>
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_DECIDE, (_event, rawId: unknown, rawDecision: unknown) =>
     wrapResult(() =>
-      requireLantify().decide(LantifyRequestIdSchema.parse(rawId), LantifyDecisionSchema.parse(rawDecision))
+      requireRequests().hub.decide(SongRequestIdSchema.parse(rawId), SongRequestDecisionSchema.parse(rawDecision))
     )
   );
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_NOW_PLAYING, (_event, raw: unknown) =>
-    wrapResult(() => requireLantify().setNowPlaying(LantifyNowPlayingSchema.parse(raw)))
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_NOW_PLAYING, (_event, raw: unknown) =>
+    wrapResult(() => requireRequests().hub.setNowPlaying(NowPlayingSchema.parse(raw)))
   );
-  ipcMain.handle(IPC_CHANNELS.LANTIFY_SET_PREFS, (_event, raw: unknown) =>
-    wrapResult(() => requireLantify().setPrefs(LantifyPrefsPatchSchema.parse(raw)))
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_SET_PREFS, (_event, raw: unknown) =>
+    wrapResult(() => {
+      requireRequests().hub.setPrefs(SongRequestPrefsPatchSchema.parse(raw));
+      return requireRequests().snapshot();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_PAIR, (_event, raw: unknown) =>
+    wrapResult(async () => {
+      await requireRequests().lantify.pair(LantifyPairSchema.parse(raw).code);
+      return requireRequests().snapshot();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_UNPAIR, () =>
+    wrapResult(() => {
+      requireRequests().lantify.unpair();
+      return requireRequests().snapshot();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.LOCAL_REQUESTS_SETTINGS, (_event, raw: unknown) =>
+    wrapResult(async () => {
+      await requireRequests().local.updateSettings(LocalSettingsPatchSchema.parse(raw));
+      return requireRequests().snapshot();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.LOCAL_REQUESTS_ROTATE_KEY, () =>
+    wrapResult(async () => {
+      await requireRequests().local.rotateKey();
+      return requireRequests().snapshot();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.LOCAL_REQUESTS_PRINT_SHEET, (_event, raw: unknown) =>
+    wrapResult(async () => {
+      const tables = z.number().int().min(0).max(100).parse(raw);
+      const html = await requireRequests().local.buildTableSheet(tables);
+      const dir = path.join(app.getPath('documents'), 'Proyecta');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'QR para pedir canciones.html');
+      fs.writeFileSync(file, html, 'utf8');
+      const err = await shell.openPath(file);
+      if (err) throw new Error(`Se guardó en ${file}, pero no se pudo abrir: ${err}`);
+      return file;
+    })
   );
 
   ipcMain.handle(IPC_CHANNELS.DB_GET_SETTING, (_event, rawKey: unknown, fallback: unknown) =>

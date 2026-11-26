@@ -309,24 +309,35 @@ export interface YouTubeAccessStatus {
   detail: string | null;
 }
 
-// ---- Lantify POS: song requests from the table QR ----
+// ---- Song requests from guests (Lantify POS table QR, or Proyecta's own QR) ----
 
-/** Life of a guest's song request inside Proyecta (mirrors what Lantify Cloud is told). */
-export type LantifyRequestState = 'searching' | 'pending' | 'queued' | 'playing' | 'played' | 'rejected';
+/**
+ * Where requests come from: `lantify` = the business runs Lantify POS and guests use the
+ * table QR; `local` = Proyecta alone, with its own QR served on the venue's WiFi.
+ */
+export type SongRequestMode = 'off' | 'lantify' | 'local';
+export type SongRequestOrigin = 'lantify' | 'local';
+
+/** Life of a guest's song request inside Proyecta. */
+export type SongRequestState = 'searching' | 'pending' | 'queued' | 'playing' | 'played' | 'rejected';
 
 /** Automatic rejection codes; a DJ rejection carries the DJ's short text or `DJ_DECLINED`. */
-export type LantifyRejectCode = 'NO_MATCH' | 'ALREADY_PLAYED' | 'DJ_DECLINED';
+export type SongRequestRejectCode = 'NO_MATCH' | 'ALREADY_PLAYED' | 'DJ_DECLINED';
 
-export interface LantifySongRequest {
+export interface SongRequest {
+  /** Unique inside Proyecta: `<origin>:<externalId>`. */
   id: string;
-  /** Table label as Lantify sends it ("7", "Terraza 2"). */
+  origin: SongRequestOrigin;
+  /** Id in the source (Lantify's request id, or the local server's id). */
+  externalId: string;
+  /** Table label ("7", "Terraza 2"); empty when the guest did not say. */
   table: string;
   guest: string;
   /** What the guest typed. */
   query: string;
   createdAt: string;
   receivedAtMs: number;
-  state: LantifyRequestState;
+  state: SongRequestState;
   /** Valid YouTube matches, best first ("Otra versión" walks this list). */
   candidates: YouTubeTrack[];
   candidateIndex: number;
@@ -335,7 +346,7 @@ export interface LantifySongRequest {
   rejectReason?: string;
 }
 
-export interface LantifyPrefs {
+export interface SongRequestPrefs {
   autoApprove: boolean;
   /** Auto-approved requests allowed per hour (all tables). */
   maxPerHour: number;
@@ -355,22 +366,48 @@ export interface LantifyStatus {
   lastError: string | null;
   /** Wait before the next poll (5 s normally, up to 60 s after network errors). */
   pollDelayMs: number;
-  prefs: LantifyPrefs;
 }
 
-export interface LantifySnapshot {
-  status: LantifyStatus;
-  requests: LantifySongRequest[];
+export interface LocalRequestSettings {
+  /** Shown on the guest page, the printed QR sheet and Screen 2. */
+  venueName: string;
+  /** Optional WiFi name printed next to the QR ("Conéctate a…"). */
+  wifiName: string;
+  /** LAN address chosen by the DJ; empty = automatic. */
+  address: string;
+  /** QR shown in a corner of Screen 2 while the local QR mode is on. */
+  qrOnScreen: boolean;
 }
 
-export type LantifyDecision =
+export interface LocalRequestStatus {
+  running: boolean;
+  /** Address guests open (the QR content), e.g. http://192.168.1.20:8765/?k=… */
+  url: string | null;
+  addresses: string[];
+  port: number | null;
+  /** QR of `url`: SVG for the booth, PNG for Screen 2 (canvas-safe). */
+  qrSvgDataUrl: string | null;
+  qrPngDataUrl: string | null;
+  error: string | null;
+  settings: LocalRequestSettings;
+}
+
+export interface SongRequestsSnapshot {
+  mode: SongRequestMode;
+  prefs: SongRequestPrefs;
+  lantify: LantifyStatus;
+  local: LocalRequestStatus;
+  requests: SongRequest[];
+}
+
+export type SongRequestDecision =
   | { action: 'next-candidate' }
   | { action: 'reject'; reason?: string }
   | { action: 'queued'; videoId: string }
   | { action: 'playing' }
   | { action: 'played' };
 
-export interface LantifyNowPlaying {
+export interface NowPlayingInfo {
   title: string;
   artist: string;
   /** YouTube id, or null for a local file. */

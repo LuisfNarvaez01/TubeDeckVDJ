@@ -1,0 +1,375 @@
+/**
+ * Guests' song requests, whatever their source. Connectors bring requests in
+ * (`LantifyRequestsService` from Lantify Cloud, `LocalRequestServer` from Proyecta's
+ * own QR on the venue WiFi) and get told about every status change. This hub owns the
+ * request list, the YouTube matching, the DJ's decisions and the shared preferences,
+ * so the booth works the same with or without Lantify POS.
+ */
+import { z } from 'zod';
+import type {
+  NowPlayingInfo,
+  SongRequest,
+  SongRequestDecision,
+  SongRequestMode,
+  SongRequestOrigin,
+  SongRequestPrefs,
+  YouTubeTrack
+} from '../../shared/types';
+import { passesSongFilter } from './RecommendationEngine';
+import type { TasteSnapshot } from './TasteFeedbackService';
+
+/** Valid matches kept per request ("Otra versión" walks them). */
+export const MAX_REQUEST_CANDIDATES = 5;
+const MAX_KEPT_REQUESTS = 80;
+const SEARCH_RETRY_MS = 15_000;
+
+const SETTING_MODE = 'requests.mode';
+const SETTING_PREFS = 'requests.prefs';
+const SETTING_ITEMS = 'requests.items';
+const LEGACY_PREFS = 'lantify.prefs';
+
+/** Settings the renderer must never read or write through `db:get/set-setting`. */
+export function isPrivateRequestSetting(key: string): boolean {
+  return key.startsWith('lantify.') || key.startsWith('requests.');
+}
+
+export const DEFAULT_SONG_REQUEST_PREFS: SongRequestPrefs = {
+  autoApprove: false,
+  maxPerHour: 12,
+  maxPerTable: 3,
+  overlayEnabled: true
+};
+
+export const SongRequestPrefsSchema = z.object({
+  autoApprove: z.boolean(),
+  maxPerHour: z.number().int().min(1).max(120),
+  maxPerTable: z.number().int().min(1).max(30),
+  overlayEnabled: z.boolean()
+});
+
+export interface SettingsStore {
+  getSetting<T>(key: string, fallback: T): T;
+  setSetting<T>(key: string, value: T): void;
+}
+
+/** What a connector reports back for a request it brought in. */
+export interface RequestStatusUpdate {
+  status: 'QUEUED' | 'PLAYING' | 'PLAYED' | 'REJECTED';
+  title?: string;
+  artist?: string;
+  videoId?: string;
+  reason?: string;
+}
+
+export interface RequestConnector {
+  readonly origin: SongRequestOrigin;
+  reportStatus(externalId: string, update: RequestStatusUpdate): void;
+  reportNowPlaying(np: NowPlayingInfo): void;
+}
+
+export interface IncomingSongRequest {
+  externalId: string;
+  table: string;
+  guest: string;
+  query: string;
+  createdAt: string;
+}
+
+export interface SongRequestsDeps {
+  settings: SettingsStore;
+  /** YouTube search for what the guest typed (raw results; filtering happens here). */
+  search: (query: string) => Promise<YouTubeTrack[]>;
+  /** Dislikes and blocked channels from `TasteFeedbackService`. */
+  getTasteSnapshot: () => Pick<TasteSnapshot, 'dislikedVideoIds' | 'blockedNames'>;
+  onChange?: () => void;
+  now?: () => number;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+}
+
+/**
+ * Picks the songs worth offering for a guest's request: YouTube's relevance order, kept
+ * only when they pass the same filters as the radio (90–600 s, no reactions, tutorials,
+ * shorts or long mixes, no dislikes, no blocked channels).
+ */
+export function pickRequestCandidates(
+  results: YouTubeTrack[],
+  snapshot: Pick<TasteSnapshot, 'dislikedVideoIds' | 'blockedNames'>,
+  max = MAX_REQUEST_CANDIDATES
+): YouTubeTrack[] {
+  const seen = new Set<string>();
+  const picked: YouTubeTrack[] = [];
+  for (const t of results) {
+    if (seen.has(t.videoId) || t.source === 'local') continue;
+    seen.add(t.videoId);
+    if (!passesSongFilter(t, snapshot)) continue;
+    picked.push(t);
+    if (picked.length >= max) break;
+  }
+  return picked;
+}
+
+/** Artist line sent to Lantify and shown to guests. */
+export function primaryArtist(t: YouTubeTrack): string {
+  return t.artists?.[0] ?? t.channel.replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim();
+}
+
+const TERMINAL: ReadonlySet<SongRequest['state']> = new Set(['played', 'rejected']);
+
+export class SongRequestsService {
+  private readonly settings: SettingsStore;
+  private readonly now: () => number;
+  private readonly setTimer: (fn: () => void, ms: number) => unknown;
+  private readonly clearTimer: (handle: unknown) => void;
+  private readonly connectors = new Map<SongRequestOrigin, RequestConnector>();
+  private requests: SongRequest[];
+  private prefs: SongRequestPrefs;
+  private mode: SongRequestMode;
+  private nowPlaying: NowPlayingInfo | null = null;
+  private matching: Promise<void> | null = null;
+  private retryTimer: unknown = null;
+  private readonly modeListeners: Array<(mode: SongRequestMode) => void> = [];
+
+  constructor(private readonly deps: SongRequestsDeps) {
+    this.settings = deps.settings;
+    this.now = deps.now ?? Date.now;
+    this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+    this.clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+
+    const stored = SongRequestPrefsSchema.safeParse({
+      ...DEFAULT_SONG_REQUEST_PREFS,
+      ...this.settings.getSetting<Partial<SongRequestPrefs>>(LEGACY_PREFS, {}),
+      ...this.settings.getSetting<Partial<SongRequestPrefs>>(SETTING_PREFS, {})
+    });
+    this.prefs = stored.success ? stored.data : { ...DEFAULT_SONG_REQUEST_PREFS };
+    const items = this.settings.getSetting<SongRequest[]>(SETTING_ITEMS, []);
+    this.requests = Array.isArray(items) ? items.filter((r) => r && typeof r.id === 'string' && r.origin) : [];
+    const mode = this.settings.getSetting<SongRequestMode | null>(SETTING_MODE, null);
+    // Installs that paired with Lantify before modes existed keep working as "lantify".
+    this.mode =
+      mode === 'off' || mode === 'lantify' || mode === 'local'
+        ? mode
+        : this.settings.getSetting<string | null>('lantify.token', null)
+          ? 'lantify'
+          : 'off';
+  }
+
+  // ---------------------------------------------------------------- connectors & mode
+
+  registerConnector(connector: RequestConnector): void {
+    this.connectors.set(connector.origin, connector);
+  }
+
+  getMode(): SongRequestMode {
+    return this.mode;
+  }
+
+  setMode(mode: SongRequestMode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    this.settings.setSetting(SETTING_MODE, mode);
+    for (const l of this.modeListeners) l(mode);
+    this.emit();
+  }
+
+  onModeChange(listener: (mode: SongRequestMode) => void): void {
+    this.modeListeners.push(listener);
+  }
+
+  getPrefs(): SongRequestPrefs {
+    return { ...this.prefs };
+  }
+
+  setPrefs(patch: Partial<SongRequestPrefs>): SongRequestPrefs {
+    this.prefs = SongRequestPrefsSchema.parse({ ...this.prefs, ...patch });
+    this.settings.setSetting(SETTING_PREFS, this.prefs);
+    this.emit();
+    return this.getPrefs();
+  }
+
+  // ---------------------------------------------------------------- requests
+
+  getRequests(): SongRequest[] {
+    return this.requests.map((r) => ({ ...r, candidates: [...r.candidates] }));
+  }
+
+  find(origin: SongRequestOrigin, externalId: string): SongRequest | null {
+    const r = this.requests.find((x) => x.origin === origin && x.externalId === externalId);
+    return r ? { ...r, candidates: [...r.candidates] } : null;
+  }
+
+  /** Requests of this origin that are still open (not played or rejected). */
+  openCount(origin: SongRequestOrigin, predicate: (r: SongRequest) => boolean = () => true): number {
+    return this.requests.filter((r) => r.origin === origin && !TERMINAL.has(r.state) && predicate(r)).length;
+  }
+
+  /** Adds new requests (duplicates by id are ignored) and resolves after they were matched. */
+  async ingest(origin: SongRequestOrigin, items: IncomingSongRequest[]): Promise<void> {
+    const known = new Set(this.requests.map((r) => r.id));
+    let added = 0;
+    for (const item of items) {
+      const id = `${origin}:${item.externalId}`;
+      if (known.has(id)) continue;
+      known.add(id);
+      added += 1;
+      this.requests.push({
+        id,
+        origin,
+        externalId: item.externalId,
+        table: item.table,
+        guest: item.guest,
+        query: item.query,
+        createdAt: item.createdAt,
+        receivedAtMs: this.now(),
+        state: 'searching',
+        candidates: [],
+        candidateIndex: 0
+      });
+    }
+    if (added === 0) return;
+    this.trim();
+    this.persist();
+    this.emit();
+    await this.matchPending();
+  }
+
+  /** Drops every request of one origin (e.g. after unpairing Lantify). */
+  removeOrigin(origin: SongRequestOrigin): void {
+    const before = this.requests.length;
+    this.requests = this.requests.filter((r) => r.origin !== origin);
+    if (this.requests.length !== before) {
+      this.persist();
+      this.emit();
+    }
+  }
+
+  /** Searches YouTube for requests still waiting for a match; NO_MATCH when nothing fits. */
+  matchPending(): Promise<void> {
+    if (!this.matching) {
+      this.matching = this.runMatching().finally(() => {
+        this.matching = null;
+      });
+    }
+    return this.matching;
+  }
+
+  private async runMatching(): Promise<void> {
+    let failed = false;
+    for (const req of this.requests.filter((r) => r.state === 'searching')) {
+      if (!req.query) {
+        this.reject(req, 'NO_MATCH');
+        continue;
+      }
+      let results: YouTubeTrack[];
+      try {
+        results = await this.deps.search(req.query);
+      } catch {
+        failed = true; // YouTube or the network failed: retried below
+        continue;
+      }
+      if (req.state !== 'searching') continue; // the DJ rejected it meanwhile
+      const candidates = pickRequestCandidates(results, this.deps.getTasteSnapshot());
+      if (candidates.length === 0) {
+        this.reject(req, 'NO_MATCH');
+      } else {
+        req.candidates = candidates;
+        req.candidateIndex = 0;
+        req.state = 'pending';
+      }
+      this.persist();
+      this.emit();
+    }
+    if (failed && this.retryTimer === null) {
+      this.retryTimer = this.setTimer(() => {
+        this.retryTimer = null;
+        void this.matchPending();
+      }, SEARCH_RETRY_MS);
+    }
+  }
+
+  async decide(id: string, decision: SongRequestDecision): Promise<SongRequest> {
+    const req = this.requests.find((r) => r.id === id);
+    if (!req) throw new Error('Ese pedido ya no existe');
+    switch (decision.action) {
+      case 'next-candidate': {
+        if (req.state !== 'pending' || req.candidates.length === 0) break;
+        req.candidateIndex = (req.candidateIndex + 1) % req.candidates.length;
+        break;
+      }
+      case 'reject': {
+        if (TERMINAL.has(req.state)) break;
+        this.reject(req, (decision.reason ?? '').trim().slice(0, 80) || 'DJ_DECLINED');
+        break;
+      }
+      case 'queued': {
+        if (req.state !== 'pending') throw new Error('Este pedido ya fue atendido');
+        const track = req.candidates.find((c) => c.videoId === decision.videoId);
+        if (!track) throw new Error('Esa versión no está entre las encontradas');
+        req.state = 'queued';
+        req.chosenVideoId = track.videoId;
+        this.report(req, { status: 'QUEUED', title: track.title, artist: primaryArtist(track), videoId: track.videoId });
+        break;
+      }
+      case 'playing': {
+        if (req.state !== 'queued') break;
+        req.state = 'playing';
+        this.report(req, { status: 'PLAYING' });
+        break;
+      }
+      case 'played': {
+        if (req.state !== 'playing' && req.state !== 'queued') break;
+        req.state = 'played';
+        this.report(req, { status: 'PLAYED' });
+        break;
+      }
+    }
+    this.persist();
+    this.emit();
+    return { ...req, candidates: [...req.candidates] };
+  }
+
+  /** The song on air changed (any song, not only requests). */
+  setNowPlaying(np: NowPlayingInfo): void {
+    this.nowPlaying = { ...np };
+    const connector = this.mode === 'off' ? null : this.connectors.get(this.mode);
+    connector?.reportNowPlaying(this.nowPlaying);
+  }
+
+  getNowPlaying(): NowPlayingInfo | null {
+    return this.nowPlaying ? { ...this.nowPlaying } : null;
+  }
+
+  private reject(req: SongRequest, reason: string): void {
+    req.state = 'rejected';
+    req.rejectReason = reason;
+    this.report(req, { status: 'REJECTED', reason });
+  }
+
+  private report(req: SongRequest, update: RequestStatusUpdate): void {
+    this.connectors.get(req.origin)?.reportStatus(req.externalId, update);
+  }
+
+  // ---------------------------------------------------------------- storage
+
+  private trim(): void {
+    if (this.requests.length <= MAX_KEPT_REQUESTS) return;
+    const active = this.requests.filter((r) => !TERMINAL.has(r.state));
+    const done = this.requests.filter((r) => TERMINAL.has(r.state));
+    this.requests = [...done.slice(-Math.max(0, MAX_KEPT_REQUESTS - active.length)), ...active].sort(
+      (a, b) => a.receivedAtMs - b.receivedAtMs
+    );
+  }
+
+  private persist(): void {
+    this.settings.setSetting(SETTING_ITEMS, this.requests);
+  }
+
+  dispose(): void {
+    if (this.retryTimer !== null) this.clearTimer(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  private emit(): void {
+    this.deps.onChange?.();
+  }
+}

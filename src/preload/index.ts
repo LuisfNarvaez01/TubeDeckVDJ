@@ -28,12 +28,13 @@ import type {
   NetworkStatus,
   YouTubeTrack,
   YtDlpStatus,
-  LantifyDecision,
-  LantifyNowPlaying,
-  LantifyPrefs,
-  LantifySnapshot,
-  LantifySongRequest,
-  LantifyStatus
+  LocalRequestSettings,
+  NowPlayingInfo,
+  SongRequest,
+  SongRequestDecision,
+  SongRequestMode,
+  SongRequestPrefs,
+  SongRequestsSnapshot
 } from '../shared/types';
 
 export interface TubeDeckAPI {
@@ -132,15 +133,18 @@ export interface TubeDeckAPI {
   revealMixRecording: (filePath: string) => Promise<Result<void>>;
   browseLocalDir: (dirPath: string, recursive?: boolean) => Promise<Result<LocalDirListing>>;
   addLocalFolderPath: (dirPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
-  /** Lantify POS song requests (table QR). */
-  lantifyPair: (code: string) => Promise<Result<LantifyStatus>>;
-  lantifyUnpair: () => Promise<Result<LantifyStatus>>;
-  lantifyStatus: () => Promise<Result<LantifyStatus>>;
-  lantifyRequests: () => Promise<Result<LantifySongRequest[]>>;
-  lantifyDecide: (id: string, decision: LantifyDecision) => Promise<Result<LantifySongRequest>>;
-  lantifyNowPlaying: (np: LantifyNowPlaying) => Promise<Result<void>>;
-  lantifySetPrefs: (patch: Partial<LantifyPrefs>) => Promise<Result<LantifyStatus>>;
-  onLantifyEvent: (cb: (snapshot: LantifySnapshot) => void) => () => void;
+  /** Guests' song requests: Lantify POS table QR, or Proyecta's own QR on the venue WiFi. */
+  requestsSnapshot: () => Promise<Result<SongRequestsSnapshot>>;
+  onRequestsEvent: (cb: (snapshot: SongRequestsSnapshot) => void) => () => void;
+  setRequestMode: (mode: SongRequestMode) => Promise<Result<SongRequestsSnapshot>>;
+  decideRequest: (id: string, decision: SongRequestDecision) => Promise<Result<SongRequest>>;
+  reportNowPlaying: (np: NowPlayingInfo) => Promise<Result<void>>;
+  setRequestPrefs: (patch: Partial<SongRequestPrefs>) => Promise<Result<SongRequestsSnapshot>>;
+  lantifyPair: (code: string) => Promise<Result<SongRequestsSnapshot>>;
+  lantifyUnpair: () => Promise<Result<SongRequestsSnapshot>>;
+  setLocalRequestSettings: (patch: Partial<LocalRequestSettings>) => Promise<Result<SongRequestsSnapshot>>;
+  rotateLocalRequestKey: () => Promise<Result<SongRequestsSnapshot>>;
+  printLocalRequestSheet: (tables: number) => Promise<Result<string>>;
 }
 
 function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -242,14 +246,17 @@ const api: TubeDeckAPI = {
   browseLocalDir: (dirPath, recursive) =>
     ipcRenderer.invoke(IPC_CHANNELS.LOCAL_BROWSE_DIR, dirPath, recursive === true),
   addLocalFolderPath: (dirPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_ADD_FOLDER_PATH, dirPath),
+  requestsSnapshot: () => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_SNAPSHOT),
+  onRequestsEvent: (cb) => subscribeChannel(IPC_CHANNELS.REQUESTS_EVENT, cb),
+  setRequestMode: (mode) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_SET_MODE, mode),
+  decideRequest: (id, decision) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_DECIDE, id, decision),
+  reportNowPlaying: (np) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_NOW_PLAYING, np),
+  setRequestPrefs: (patch) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_SET_PREFS, patch),
   lantifyPair: (code) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_PAIR, { code }),
   lantifyUnpair: () => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_UNPAIR),
-  lantifyStatus: () => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_STATUS),
-  lantifyRequests: () => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_REQUESTS),
-  lantifyDecide: (id, decision) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_DECIDE, id, decision),
-  lantifyNowPlaying: (np) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_NOW_PLAYING, np),
-  lantifySetPrefs: (patch) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_SET_PREFS, patch),
-  onLantifyEvent: (cb) => subscribeChannel(IPC_CHANNELS.LANTIFY_EVENT, cb)
+  setLocalRequestSettings: (patch) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REQUESTS_SETTINGS, patch),
+  rotateLocalRequestKey: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REQUESTS_ROTATE_KEY),
+  printLocalRequestSheet: (tables) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REQUESTS_PRINT_SHEET, tables)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);

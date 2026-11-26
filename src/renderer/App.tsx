@@ -51,8 +51,8 @@ import { MixerCenter } from './components/MixerCenter';
 import { OverlayControls } from './components/OverlayControls';
 import { QueueTab } from './components/QueueTab';
 import { RequestsTab } from './components/RequestsTab';
-import { currentCandidate, LantifyRequestBridge } from './dj/LantifyRequestBridge';
-import { pendingRequestCount, useLantifyStore } from './store/useLantifyStore';
+import { currentCandidate, SongRequestBridge } from './dj/SongRequestBridge';
+import { pendingRequestCount, tableLabel, useSongRequestStore } from './store/useSongRequestStore';
 import { SearchBrowserTab } from './components/SearchBrowserTab';
 import { SuggestionsTab } from './components/SuggestionsTab';
 import { SettingsTab } from './components/SettingsTab';
@@ -309,16 +309,16 @@ export function App(): ReactElement {
   const autoGainEmaRef = useRef<Record<DeckId, number>>({ A: 0.42, B: 0.42 });
   const brakeTimersRef = useRef<Record<DeckId, number | null>>({ A: null, B: null });
   const queueEngineRef = useRef(new QueueAndAutomixEngine());
-  // Lantify POS: guests' song requests from the table QR (approve → queue → PLAYING/PLAYED).
-  const [lantifyBridge] = useState(
+  // Guests' song requests (Lantify POS table QR or Proyecta's own QR): approve → queue → PLAYING/PLAYED.
+  const [requestBridge] = useState(
     () =>
-      new LantifyRequestBridge({
+      new SongRequestBridge({
         api: {
           decide: (id, decision) =>
-            window.tubedeckAPI?.lantifyDecide
-              ? window.tubedeckAPI.lantifyDecide(id, decision)
+            window.tubedeckAPI?.decideRequest
+              ? window.tubedeckAPI.decideRequest(id, decision)
               : Promise.resolve({ success: false as const, error: 'Sin conexión con el proceso principal' }),
-          nowPlaying: (np) => window.tubedeckAPI?.lantifyNowPlaying?.(np) ?? Promise.resolve()
+          nowPlaying: (np) => window.tubedeckAPI?.reportNowPlaying?.(np) ?? Promise.resolve()
         },
         queue: {
           enqueue: (track, source, request) => queueEngineRef.current.enqueue(track, source, request),
@@ -328,10 +328,14 @@ export function App(): ReactElement {
       })
   );
   const [upNextTab, setUpNextTab] = useState<'queue' | 'requests'>('queue');
-  const lantifyStatus = useLantifyStore((s) => s.status);
-  const lantifyHasRequests = useLantifyStore((s) => s.requests.length > 0);
-  const lantifyPending = useLantifyStore((s) => pendingRequestCount(s.requests));
-  const showRequestsTab = lantifyStatus.paired || lantifyStatus.connection === 'revoked' || lantifyHasRequests;
+  const requestMode = useSongRequestStore((s) => s.snapshot.mode);
+  const lantifyStatus = useSongRequestStore((s) => s.snapshot.lantify);
+  const hasRequests = useSongRequestStore((s) => s.snapshot.requests.length > 0);
+  const pendingRequests = useSongRequestStore((s) => pendingRequestCount(s.snapshot.requests));
+  const requestQrPng = useSongRequestStore((s) =>
+    s.snapshot.mode === 'local' && s.snapshot.local.settings.qrOnScreen ? s.snapshot.local.qrPngDataUrl : null
+  );
+  const showRequestsTab = requestMode !== 'off' || hasRequests;
   /** Mirrors the network banner for the Automix engine (read inside the render loop). */
   const offlineRef = useRef(false);
   /** Deck Automix just mixed into: if it does not start playing, retry and then skip it. */
@@ -339,21 +343,38 @@ export function App(): ReactElement {
 
   useEffect(() => {
     const api = window.tubedeckAPI;
-    if (!api?.lantifyStatus || !api.onLantifyEvent) return;
+    if (!api?.requestsSnapshot || !api.onRequestsEvent) return;
     let alive = true;
-    const apply = (snapshot: Parameters<typeof lantifyBridge.sync>[0]): void => {
-      useLantifyStore.getState().setSnapshot(snapshot);
-      void lantifyBridge.sync(snapshot);
+    const apply = (snapshot: Parameters<typeof requestBridge.sync>[0]): void => {
+      useSongRequestStore.getState().setSnapshot(snapshot);
+      void requestBridge.sync(snapshot);
     };
-    void Promise.all([api.lantifyStatus(), api.lantifyRequests()]).then(([st, rq]) => {
-      if (alive && st.success && rq.success) apply({ status: st.data, requests: rq.data });
+    void api.requestsSnapshot().then((res) => {
+      if (alive && res.success) apply(res.data);
     });
-    const off = api.onLantifyEvent(apply);
+    const off = api.onRequestsEvent(apply);
     return () => {
       alive = false;
       off();
     };
-  }, [lantifyBridge]);
+  }, [requestBridge]);
+
+  // Stand-alone mode: Proyecta's own QR in a corner of Screen 2 (PNG keeps the canvas untainted).
+  useEffect(() => {
+    if (!requestQrPng) {
+      overlayCompRef.current.setRequestQr(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (!cancelled) overlayCompRef.current.setRequestQr(img, 'Pide tu canción');
+    };
+    img.src = requestQrPng;
+    return () => {
+      cancelled = true;
+    };
+  }, [requestQrPng]);
 
   const masterCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const compositorRef = useRef<WebGLVideoCompositor | null>(null);
@@ -1120,7 +1141,7 @@ export function App(): ReactElement {
             }
           });
 
-          // Lantify: the loudest audible deck is "on air" (now-playing, PLAYING / PLAYED).
+          // Song requests: the loudest audible deck is "on air" (now-playing, PLAYING / PLAYED).
           let loudest: YouTubeTrack | null = null;
           let loudestGain = 0;
           for (const id of ['A', 'B'] as DeckId[]) {
@@ -1131,9 +1152,10 @@ export function App(): ReactElement {
               loudest = d.track;
             }
           }
-          const requestStarted = lantifyBridge.observeOnAir(loudest, Date.now());
-          if (requestStarted && useLantifyStore.getState().status.prefs.overlayEnabled) {
-            const label = /^\d+$/.test(requestStarted.table) ? `la mesa ${requestStarted.table}` : requestStarted.table;
+          const requestStarted = requestBridge.observeOnAir(loudest, Date.now());
+          if (requestStarted && useSongRequestStore.getState().snapshot.prefs.overlayEnabled) {
+            const t = requestStarted.table;
+            const label = /^\d+$/.test(t) ? `la mesa ${t}` : t || requestStarted.guest || 'el público';
             overlayCompRef.current.triggerRequestBanner(`Pedida por ${label}`, now, 10_000);
           }
         }
@@ -2696,24 +2718,24 @@ export function App(): ReactElement {
                 type="button"
                 role="tab"
                 aria-selected={upNextTab === 'requests'}
-                aria-label={lantifyPending > 0 ? `Pedidos: ${lantifyPending} por aprobar` : 'Pedidos'}
+                aria-label={pendingRequests > 0 ? `Pedidos: ${pendingRequests} por aprobar` : 'Pedidos'}
                 onClick={() => setUpNextTab('requests')}
                 className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-semibold transition-colors duration-150 cursor-pointer ${
                   upNextTab === 'requests' ? 'text-ink' : 'text-muted hover:text-ink'
                 }`}
               >
                 Pedidos
-                {lantifyPending > 0 ? (
+                {pendingRequests > 0 ? (
                   <span
                     className={`min-w-[18px] rounded-full bg-live px-1.5 text-center font-mono-tabular text-[10px] font-bold leading-[18px] text-ground ${
                       upNextTab === 'requests' ? '' : 'animate-pulse motion-reduce:animate-none'
                     }`}
                   >
-                    {lantifyPending}
+                    {pendingRequests}
                   </span>
                 ) : null}
               </button>
-              {lantifyStatus.connection === 'retrying' ? (
+              {requestMode === 'lantify' && lantifyStatus.connection === 'retrying' ? (
                 <span className="ml-auto truncate text-[10px] text-faint" title={lantifyStatus.lastError ?? undefined}>
                   Lantify sin conexión
                 </span>
@@ -2723,10 +2745,10 @@ export function App(): ReactElement {
           {showRequestsTab && upNextTab === 'requests' ? (
             <RequestsTab
               onApprove={async (req) => {
-                const outcome = await lantifyBridge.approve(req);
+                const outcome = await requestBridge.approve(req);
                 const cand = currentCandidate(req);
-                const who = /^\d+$/.test(req.table) ? `Mesa ${req.table}` : req.table;
-                useLantifyStore
+                const who = tableLabel(req.table);
+                useSongRequestStore
                   .getState()
                   .setNote(
                     outcome === 'queued'
@@ -2738,10 +2760,10 @@ export function App(): ReactElement {
                           : `${who}: no se pudo aprobar el pedido.`
                   );
               }}
-              onNextVersion={(req) => lantifyBridge.nextCandidate(req)}
+              onNextVersion={(req) => requestBridge.nextCandidate(req)}
               onReject={async (req, reason) => {
-                await lantifyBridge.reject(req, reason);
-                useLantifyStore.getState().setNote(null);
+                await requestBridge.reject(req, reason);
+                useSongRequestStore.getState().setNote(null);
               }}
               conflictFor={(req) => {
                 const cand = currentCandidate(req);
@@ -2752,10 +2774,10 @@ export function App(): ReactElement {
                     ? 'Sonó hace menos de una hora'
                     : null;
               }}
-              tableCountFor={(table) => lantifyBridge.countsFor(table).table}
+              tableCountFor={(table) => requestBridge.countsFor(table).table}
               onToggleAutoApprove={async (enabled) => {
-                const res = await window.tubedeckAPI?.lantifySetPrefs({ autoApprove: enabled });
-                if (res?.success) useLantifyStore.getState().setStatus(res.data);
+                const res = await window.tubedeckAPI?.setRequestPrefs({ autoApprove: enabled });
+                if (res?.success) useSongRequestStore.getState().setSnapshot(res.data);
               }}
               onOpenSettings={() => setSettingsDrawerOpen(true)}
             />

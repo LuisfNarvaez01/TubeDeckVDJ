@@ -1,50 +1,24 @@
 /**
- * Song requests from Lantify POS (guests scan the table QR, Lantify Cloud stores the
- * request, Proyecta pulls it, the DJ approves it and it plays).
+ * Lantify POS connector for song requests (the business runs the whole Lantify
+ * ecosystem: guests scan the table QR, Lantify Cloud stores the request).
  *
- * Runs in the main process. It polls every 5 s while paired, backs off up to 60 s when
- * the network fails, and never blocks the booth: every call is async, failures only
- * delay the next poll, and status updates that could not be sent wait in an outbox.
- * The pairing token lives in `app_settings` and is never sent to the renderer or logged.
+ * Pairs with the owner's 8-character code, polls every 5 s while the request mode is
+ * "lantify", backs off up to 60 s on network errors and never blocks the booth: status
+ * updates that could not be sent wait in an outbox. The pairing token lives in
+ * `app_settings` and is never sent to the renderer or logged. Matching, decisions and
+ * the request list belong to `SongRequestsService`.
  */
 import { z } from 'zod';
-import type {
-  LantifyConnection,
-  LantifyDecision,
-  LantifyNowPlaying,
-  LantifyPrefs,
-  LantifySnapshot,
-  LantifySongRequest,
-  LantifyStatus,
-  YouTubeTrack
-} from '../../shared/types';
-import { passesSongFilter } from './RecommendationEngine';
-import type { TasteSnapshot } from './TasteFeedbackService';
+import type { LantifyConnection, LantifyStatus, NowPlayingInfo } from '../../shared/types';
+import type { RequestConnector, RequestStatusUpdate, SettingsStore, SongRequestsService } from './SongRequestsService';
 
 export const LANTIFY_BASE_URL = 'https://api.lantifypos.com';
 export const LANTIFY_POLL_MS = 5_000;
 export const LANTIFY_MAX_BACKOFF_MS = 60_000;
-/** Valid matches kept per request ("Otra versión" walks them). */
-export const MAX_REQUEST_CANDIDATES = 5;
-const MAX_KEPT_REQUESTS = 60;
 
 const SETTING_TOKEN = 'lantify.token';
 const SETTING_BUSINESS = 'lantify.business';
 const SETTING_CURSOR = 'lantify.cursor';
-const SETTING_PREFS = 'lantify.prefs';
-const SETTING_REQUESTS = 'lantify.requests';
-
-/** Settings keys the renderer must never read or write through `db:get/set-setting`. */
-export function isPrivateLantifySetting(key: string): boolean {
-  return key.startsWith('lantify.');
-}
-
-export const DEFAULT_LANTIFY_PREFS: LantifyPrefs = {
-  autoApprove: false,
-  maxPerHour: 12,
-  maxPerTable: 3,
-  overlayEnabled: true
-};
 
 export interface LantifyHttpResponse {
   status: number;
@@ -56,21 +30,12 @@ export type LantifyHttp = (
   init: { method: 'GET' | 'POST' | 'PUT'; headers: Record<string, string>; body?: string }
 ) => Promise<LantifyHttpResponse>;
 
-export interface LantifySettingsStore {
-  getSetting<T>(key: string, fallback: T): T;
-  setSetting<T>(key: string, value: T): void;
-}
-
 export interface LantifyRequestsDeps {
   http: LantifyHttp;
-  settings: LantifySettingsStore;
-  /** YouTube search for what the guest typed (raw results; filtering happens here). */
-  search: (query: string) => Promise<YouTubeTrack[]>;
-  /** Dislikes and blocked channels from `TasteFeedbackService`. */
-  getTasteSnapshot: () => Pick<TasteSnapshot, 'dislikedVideoIds' | 'blockedNames'>;
-  onChange?: (snapshot: LantifySnapshot) => void;
+  settings: SettingsStore;
+  hub: SongRequestsService;
+  onChange?: () => void;
   baseUrl?: string;
-  now?: () => number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
 }
@@ -79,28 +44,6 @@ export interface LantifyRequestsDeps {
 export function nextPollDelayMs(failures: number, baseMs = LANTIFY_POLL_MS, maxMs = LANTIFY_MAX_BACKOFF_MS): number {
   if (failures <= 0) return baseMs;
   return Math.min(maxMs, baseMs * 2 ** Math.min(failures, 10));
-}
-
-/**
- * Picks the songs worth offering for a guest's request: YouTube's relevance order, kept
- * only when they pass the same filters as the radio (90–600 s, no reactions, tutorials,
- * shorts or long mixes, no dislikes, no blocked channels).
- */
-export function pickRequestCandidates(
-  results: YouTubeTrack[],
-  snapshot: Pick<TasteSnapshot, 'dislikedVideoIds' | 'blockedNames'>,
-  max = MAX_REQUEST_CANDIDATES
-): YouTubeTrack[] {
-  const seen = new Set<string>();
-  const picked: YouTubeTrack[] = [];
-  for (const t of results) {
-    if (seen.has(t.videoId) || t.source === 'local') continue;
-    seen.add(t.videoId);
-    if (!passesSongFilter(t, snapshot)) continue;
-    picked.push(t);
-    if (picked.length >= max) break;
-  }
-  return picked;
 }
 
 /** Owner's 8-character code, typed with or without spaces / dashes. */
@@ -126,13 +69,6 @@ const RequestsResponseSchema = z.object({
   cursor: z.union([z.string(), z.number()]).nullish()
 });
 
-const PrefsSchema = z.object({
-  autoApprove: z.boolean(),
-  maxPerHour: z.number().int().min(1).max(120),
-  maxPerTable: z.number().int().min(1).max(30),
-  overlayEnabled: z.boolean()
-});
-
 interface OutboxEntry {
   method: 'POST' | 'PUT';
   path: string;
@@ -147,38 +83,32 @@ class UnauthorizedError extends Error {
   }
 }
 
-const TERMINAL: ReadonlySet<LantifySongRequest['state']> = new Set(['played', 'rejected']);
-
-function primaryArtist(t: YouTubeTrack): string {
-  return t.artists?.[0] ?? t.channel.replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim();
-}
-
-export class LantifyRequestsService {
+export class LantifyRequestsService implements RequestConnector {
+  readonly origin = 'lantify' as const;
   private readonly http: LantifyHttp;
-  private readonly settings: LantifySettingsStore;
+  private readonly settings: SettingsStore;
+  private readonly hub: SongRequestsService;
   private readonly baseUrl: string;
-  private readonly now: () => number;
   private readonly setTimer: (fn: () => void, ms: number) => unknown;
   private readonly clearTimer: (handle: unknown) => void;
 
   private token: string | null;
   private business: { name: string; slug: string } | null;
   private cursor: string | null;
-  private prefs: LantifyPrefs;
-  private requests: LantifySongRequest[];
   private outbox: OutboxEntry[] = [];
   private connection: LantifyConnection;
   private lastError: string | null = null;
   private failures = 0;
   private timer: unknown = null;
   private polling = false;
-  private stopped = true;
+  private flushing = false;
+  private started = false;
 
   constructor(private readonly deps: LantifyRequestsDeps) {
     this.http = deps.http;
     this.settings = deps.settings;
+    this.hub = deps.hub;
     this.baseUrl = (deps.baseUrl ?? LANTIFY_BASE_URL).replace(/\/+$/, '');
-    this.now = deps.now ?? Date.now;
     this.setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
 
@@ -186,26 +116,24 @@ export class LantifyRequestsService {
     this.token = typeof storedToken === 'string' && storedToken ? storedToken : null;
     this.business = this.settings.getSetting<{ name: string; slug: string } | null>(SETTING_BUSINESS, null);
     this.cursor = this.settings.getSetting<string | null>(SETTING_CURSOR, null);
-    const storedPrefs = PrefsSchema.safeParse({
-      ...DEFAULT_LANTIFY_PREFS,
-      ...this.settings.getSetting<Partial<LantifyPrefs>>(SETTING_PREFS, {})
-    });
-    this.prefs = storedPrefs.success ? storedPrefs.data : { ...DEFAULT_LANTIFY_PREFS };
-    const stored = this.settings.getSetting<LantifySongRequest[]>(SETTING_REQUESTS, []);
-    this.requests = Array.isArray(stored) ? stored : [];
     this.connection = this.token ? 'ok' : this.business ? 'revoked' : 'unpaired';
+    this.hub.registerConnector(this);
   }
 
   // ---------------------------------------------------------------- lifecycle
 
-  /** Starts polling if a pairing exists. Safe to call more than once. */
+  /** Polls while paired and the request mode is "lantify". Safe to call more than once. */
   start(): void {
-    this.stopped = false;
-    if (this.token) this.schedule(0);
+    this.started = true;
+    if (this.token && this.hub.getMode() === 'lantify') this.schedule(0);
   }
 
   stop(): void {
-    this.stopped = true;
+    this.started = false;
+    this.cancelTimer();
+  }
+
+  private cancelTimer(): void {
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
   }
@@ -216,17 +144,8 @@ export class LantifyRequestsService {
       business: this.business,
       connection: this.connection,
       lastError: this.lastError,
-      pollDelayMs: nextPollDelayMs(this.failures),
-      prefs: { ...this.prefs }
+      pollDelayMs: nextPollDelayMs(this.failures)
     };
-  }
-
-  getRequests(): LantifySongRequest[] {
-    return this.requests.map((r) => ({ ...r, candidates: [...r.candidates] }));
-  }
-
-  getSnapshot(): LantifySnapshot {
-    return { status: this.getStatus(), requests: this.getRequests() };
   }
 
   // ---------------------------------------------------------------- pairing
@@ -256,7 +175,6 @@ export class LantifyRequestsService {
     this.token = parsed.data.token;
     this.business = parsed.data.business;
     this.cursor = null;
-    this.requests = [];
     this.outbox = [];
     this.failures = 0;
     this.lastError = null;
@@ -264,9 +182,10 @@ export class LantifyRequestsService {
     this.settings.setSetting(SETTING_TOKEN, this.token);
     this.settings.setSetting(SETTING_BUSINESS, this.business);
     this.settings.setSetting(SETTING_CURSOR, null);
-    this.persistRequests();
+    this.hub.removeOrigin('lantify');
+    this.hub.setMode('lantify'); // pairing means the business uses Lantify's table QR
     this.emit();
-    if (!this.stopped) this.schedule(0);
+    if (this.started) this.schedule(0);
     return this.getStatus();
   }
 
@@ -274,17 +193,18 @@ export class LantifyRequestsService {
     this.clearPairing('unpaired');
     this.business = null;
     this.settings.setSetting(SETTING_BUSINESS, null);
-    this.requests = [];
-    this.persistRequests();
+    this.hub.removeOrigin('lantify');
     this.emit();
     return this.getStatus();
   }
 
-  setPrefs(patch: Partial<LantifyPrefs>): LantifyStatus {
-    this.prefs = PrefsSchema.parse({ ...this.prefs, ...patch });
-    this.settings.setSetting(SETTING_PREFS, this.prefs);
-    this.emit();
-    return this.getStatus();
+  /** The request mode changed: poll only while it is "lantify". */
+  handleModeChange(): void {
+    if (this.hub.getMode() === 'lantify') {
+      if (this.started && this.token) this.schedule(0);
+    } else {
+      this.cancelTimer();
+    }
   }
 
   // ---------------------------------------------------------------- polling
@@ -296,7 +216,6 @@ export class LantifyRequestsService {
     try {
       await this.flushOutbox();
       await this.fetchNewRequests();
-      await this.matchPendingSearches();
       await this.flushOutbox();
       this.failures = 0;
       this.lastError = null;
@@ -312,12 +231,14 @@ export class LantifyRequestsService {
     } finally {
       this.polling = false;
       this.emit();
-      if (this.token && !this.stopped) this.schedule(nextPollDelayMs(this.failures));
+      if (this.token && this.started && this.hub.getMode() === 'lantify') {
+        this.schedule(nextPollDelayMs(this.failures));
+      }
     }
   }
 
   private schedule(ms: number): void {
-    if (this.timer !== null) this.clearTimer(this.timer);
+    this.cancelTimer();
     this.timer = this.setTimer(() => {
       this.timer = null;
       void this.pollOnce();
@@ -329,106 +250,34 @@ export class LantifyRequestsService {
     const res = await this.call('GET', `/v1/proyecta/requests${qs}`);
     const body = RequestsResponseSchema.safeParse(await res.json().catch(() => null));
     if (!body.success) throw new Error('Respuesta inesperada de Lantify');
-    const known = new Set(this.requests.map((r) => r.id));
+    const items = [];
     for (const raw of body.data.items) {
       const item = RequestItemSchema.safeParse(raw);
-      if (!item.success || known.has(item.data.id)) continue;
-      known.add(item.data.id);
-      this.requests.push({
-        ...item.data,
-        receivedAtMs: this.now(),
-        state: 'searching',
-        candidates: [],
-        candidateIndex: 0
-      });
+      if (!item.success) continue;
+      const { id, ...rest } = item.data;
+      items.push({ externalId: id, ...rest });
     }
     if (body.data.cursor !== undefined && body.data.cursor !== null) {
       this.cursor = String(body.data.cursor);
       this.settings.setSetting(SETTING_CURSOR, this.cursor);
     }
-    this.trimRequests();
-    this.persistRequests();
-    this.emit();
+    await this.hub.ingest('lantify', items); // resolves once matched (NO_MATCH lands in the outbox)
   }
 
-  /** Searches YouTube for requests still waiting for a match; NO_MATCH when nothing fits. */
-  private async matchPendingSearches(): Promise<void> {
-    for (const req of this.requests.filter((r) => r.state === 'searching')) {
-      if (!req.query) {
-        this.reject(req, 'NO_MATCH');
-        continue;
-      }
-      let results: YouTubeTrack[];
-      try {
-        results = await this.deps.search(req.query);
-      } catch {
-        continue; // YouTube or the network failed: try again on the next poll
-      }
-      const candidates = pickRequestCandidates(results, this.deps.getTasteSnapshot());
-      if (candidates.length === 0) {
-        this.reject(req, 'NO_MATCH');
-      } else {
-        req.candidates = candidates;
-        req.candidateIndex = 0;
-        req.state = 'pending';
-      }
-      this.persistRequests();
-      this.emit();
-    }
-  }
+  // ---------------------------------------------------------------- RequestConnector
 
-  // ---------------------------------------------------------------- decisions
-
-  async decide(id: string, decision: LantifyDecision): Promise<LantifySongRequest> {
-    const req = this.requests.find((r) => r.id === id);
-    if (!req) throw new Error('Ese pedido ya no existe');
-    switch (decision.action) {
-      case 'next-candidate': {
-        if (req.state !== 'pending' || req.candidates.length === 0) break;
-        req.candidateIndex = (req.candidateIndex + 1) % req.candidates.length;
-        break;
-      }
-      case 'reject': {
-        if (TERMINAL.has(req.state)) break;
-        const reason = (decision.reason ?? '').trim().slice(0, 80) || 'DJ_DECLINED';
-        this.reject(req, reason);
-        break;
-      }
-      case 'queued': {
-        if (req.state !== 'pending') throw new Error('Este pedido ya fue atendido');
-        const track = req.candidates.find((c) => c.videoId === decision.videoId);
-        if (!track) throw new Error('Esa versión no está entre las encontradas');
-        req.state = 'queued';
-        req.chosenVideoId = track.videoId;
-        this.enqueueStatus(req.id, {
-          status: 'QUEUED',
-          title: track.title,
-          artist: primaryArtist(track),
-          videoId: track.videoId
-        });
-        break;
-      }
-      case 'playing': {
-        if (req.state !== 'queued') break;
-        req.state = 'playing';
-        this.enqueueStatus(req.id, { status: 'PLAYING' });
-        break;
-      }
-      case 'played': {
-        if (req.state !== 'playing' && req.state !== 'queued') break;
-        req.state = 'played';
-        this.enqueueStatus(req.id, { status: 'PLAYED' });
-        break;
-      }
-    }
-    this.persistRequests();
-    this.emit();
+  reportStatus(externalId: string, update: RequestStatusUpdate): void {
+    if (!this.token) return;
+    const body: Record<string, unknown> = { status: update.status };
+    if (update.title !== undefined) body.title = update.title;
+    if (update.artist !== undefined) body.artist = update.artist;
+    if (update.videoId !== undefined) body.videoId = update.videoId;
+    if (update.reason !== undefined) body.reason = update.reason;
+    this.outbox.push({ method: 'POST', path: `/v1/proyecta/requests/${encodeURIComponent(externalId)}`, body });
     void this.flushOutboxSafely();
-    return { ...req, candidates: [...req.candidates] };
   }
 
-  /** The song on air changed (any song, not only requests). */
-  setNowPlaying(np: LantifyNowPlaying): void {
+  reportNowPlaying(np: NowPlayingInfo): void {
     if (!this.token) return;
     this.outbox = this.outbox.filter((e) => e.coalesceKey !== 'now-playing');
     this.outbox.push({
@@ -438,16 +287,6 @@ export class LantifyRequestsService {
       coalesceKey: 'now-playing'
     });
     void this.flushOutboxSafely();
-  }
-
-  private reject(req: LantifySongRequest, reason: string): void {
-    req.state = 'rejected';
-    req.rejectReason = reason;
-    this.enqueueStatus(req.id, { status: 'REJECTED', reason });
-  }
-
-  private enqueueStatus(id: string, body: Record<string, unknown>): void {
-    this.outbox.push({ method: 'POST', path: `/v1/proyecta/requests/${encodeURIComponent(id)}`, body });
   }
 
   // ---------------------------------------------------------------- network
@@ -484,7 +323,6 @@ export class LantifyRequestsService {
     }
   }
 
-  private flushing = false;
   private async flushOutboxSafely(): Promise<void> {
     if (this.flushing || this.polling) return;
     this.flushing = true;
@@ -508,9 +346,7 @@ export class LantifyRequestsService {
   }
 
   private clearPairing(connection: LantifyConnection): void {
-    const wasStopped = this.stopped;
-    this.stop();
-    this.stopped = wasStopped;
+    this.cancelTimer();
     this.token = null;
     this.cursor = null;
     this.outbox = [];
@@ -521,22 +357,7 @@ export class LantifyRequestsService {
     this.settings.setSetting(SETTING_CURSOR, null);
   }
 
-  // ---------------------------------------------------------------- storage
-
-  private trimRequests(): void {
-    if (this.requests.length <= MAX_KEPT_REQUESTS) return;
-    const active = this.requests.filter((r) => !TERMINAL.has(r.state));
-    const done = this.requests.filter((r) => TERMINAL.has(r.state));
-    this.requests = [...done.slice(-(MAX_KEPT_REQUESTS - active.length)), ...active].sort(
-      (a, b) => a.receivedAtMs - b.receivedAtMs
-    );
-  }
-
-  private persistRequests(): void {
-    this.settings.setSetting(SETTING_REQUESTS, this.requests);
-  }
-
   private emit(): void {
-    this.deps.onChange?.(this.getSnapshot());
+    this.deps.onChange?.();
   }
 }

@@ -142,6 +142,9 @@ export class OverlayCompositor {
   private requestBannerText = '';
   private requestBannerAtMs = -Infinity;
   private requestBannerDurationMs = 10_000;
+  /** Proyecta's own song-request QR (stand-alone mode), drawn in a free corner. */
+  private requestQr: CanvasImageSource | null = null;
+  private requestQrCaption = '';
 
   private marqueeOffsetPx = 0;
   private lastMarqueeTickMs: number | null = null;
@@ -293,6 +296,25 @@ export class OverlayCompositor {
     this.requestBannerText = text.trim().slice(0, 60);
     this.requestBannerAtMs = nowMs;
     this.requestBannerDurationMs = durationMs;
+  }
+
+  /** Shows (or hides with null) the "pide tu canción" QR in a corner of Screen 2. */
+  setRequestQr(image: CanvasImageSource | null, caption = 'Pide tu canción'): void {
+    this.requestQr = image;
+    this.requestQrCaption = caption.trim().slice(0, 32);
+  }
+
+  hasRequestQr(): boolean {
+    return this.requestQr !== null;
+  }
+
+  /** First corner not taken by the logo or the webcam (bottom-right preferred). */
+  requestQrCorner(): OverlayCorner {
+    const taken = new Set<OverlayCorner>();
+    if (this.config.logo.enabled && this.config.logo.dataUrl) taken.add(this.config.logo.corner);
+    if (this.config.webcam.enabled) taken.add(this.config.webcam.corner);
+    const order: OverlayCorner[] = ['bottom-right', 'top-right', 'top-left'];
+    return order.find((c) => !taken.has(c)) ?? 'top-left';
   }
 
   hideRequestBanner(): void {
@@ -505,7 +527,41 @@ export class OverlayCompositor {
       drewAnything = true;
     }
 
-    // 5. Song request banner (Lantify): a pill above the OSD slot, bottom-left
+    // 5. Song-request QR (stand-alone mode): white tile with a caption, in a free corner
+    if (this.requestQr) {
+      const size = Math.round(Math.min(this.width, this.height) * 0.2);
+      const pad = 8;
+      const captionH = this.requestQrCaption ? 26 : 0;
+      const boxW = size + pad * 2;
+      const boxH = size + pad * 2 + captionH;
+      const corner = this.requestQrCorner();
+      let { x, y } = cornerCoords(corner, this.width, this.height, boxW, boxH);
+      if (corner.startsWith('bottom') && this.config.marquee.enabled && this.config.marquee.position === 'bottom') {
+        y -= 48;
+      }
+      if (corner.startsWith('top') && this.config.marquee.enabled && this.config.marquee.position === 'top') {
+        y += 48;
+      }
+      ctx2d.save();
+      ctx2d.globalAlpha = 0.96;
+      ctx2d.fillStyle = '#FFFFFF';
+      ctx2d.beginPath();
+      ctx2d.roundRect(x, y, boxW, boxH, 10);
+      ctx2d.fill();
+      ctx2d.imageSmoothingEnabled = false;
+      ctx2d.drawImage(this.requestQr, x + pad, y + pad, size, size);
+      if (this.requestQrCaption) {
+        ctx2d.fillStyle = '#0B0B0D';
+        ctx2d.font = '700 15px Inter, sans-serif';
+        ctx2d.textBaseline = 'middle';
+        const tw = ctx2d.measureText(this.requestQrCaption).width;
+        ctx2d.fillText(this.requestQrCaption, x + (boxW - Math.min(tw, boxW - 12)) / 2, y + size + pad + captionH / 2 + 2, boxW - 12);
+      }
+      ctx2d.restore();
+      drewAnything = true;
+    }
+
+    // 6. Song request banner: a pill above the OSD slot, bottom-left
     if (this.isRequestBannerVisible(nowMs)) {
       const t = nowMs - this.requestBannerAtMs;
       const alpha = Math.max(0, Math.min(1, t / 350, (this.requestBannerDurationMs - t) / 450));
