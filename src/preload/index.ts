@@ -27,7 +27,13 @@ import type {
   YouTubeAccessStatus,
   NetworkStatus,
   YouTubeTrack,
-  YtDlpStatus
+  YtDlpStatus,
+  LantifyDecision,
+  LantifyNowPlaying,
+  LantifyPrefs,
+  LantifySnapshot,
+  LantifySongRequest,
+  LantifyStatus
 } from '../shared/types';
 
 export interface TubeDeckAPI {
@@ -126,6 +132,15 @@ export interface TubeDeckAPI {
   revealMixRecording: (filePath: string) => Promise<Result<void>>;
   browseLocalDir: (dirPath: string, recursive?: boolean) => Promise<Result<LocalDirListing>>;
   addLocalFolderPath: (dirPath: string) => Promise<Result<{ folders: string[]; tracks: YouTubeTrack[] }>>;
+  /** Lantify POS song requests (table QR). */
+  lantifyPair: (code: string) => Promise<Result<LantifyStatus>>;
+  lantifyUnpair: () => Promise<Result<LantifyStatus>>;
+  lantifyStatus: () => Promise<Result<LantifyStatus>>;
+  lantifyRequests: () => Promise<Result<LantifySongRequest[]>>;
+  lantifyDecide: (id: string, decision: LantifyDecision) => Promise<Result<LantifySongRequest>>;
+  lantifyNowPlaying: (np: LantifyNowPlaying) => Promise<Result<void>>;
+  lantifySetPrefs: (patch: Partial<LantifyPrefs>) => Promise<Result<LantifyStatus>>;
+  onLantifyEvent: (cb: (snapshot: LantifySnapshot) => void) => () => void;
 }
 
 function subscribeChannel<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -226,7 +241,15 @@ const api: TubeDeckAPI = {
   revealMixRecording: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.REC_REVEAL, filePath),
   browseLocalDir: (dirPath, recursive) =>
     ipcRenderer.invoke(IPC_CHANNELS.LOCAL_BROWSE_DIR, dirPath, recursive === true),
-  addLocalFolderPath: (dirPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_ADD_FOLDER_PATH, dirPath)
+  addLocalFolderPath: (dirPath) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_ADD_FOLDER_PATH, dirPath),
+  lantifyPair: (code) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_PAIR, { code }),
+  lantifyUnpair: () => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_UNPAIR),
+  lantifyStatus: () => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_STATUS),
+  lantifyRequests: () => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_REQUESTS),
+  lantifyDecide: (id, decision) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_DECIDE, id, decision),
+  lantifyNowPlaying: (np) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_NOW_PLAYING, np),
+  lantifySetPrefs: (patch) => ipcRenderer.invoke(IPC_CHANNELS.LANTIFY_SET_PREFS, patch),
+  onLantifyEvent: (cb) => subscribeChannel(IPC_CHANNELS.LANTIFY_EVENT, cb)
 };
 
 contextBridge.exposeInMainWorld('tubedeckAPI', api);

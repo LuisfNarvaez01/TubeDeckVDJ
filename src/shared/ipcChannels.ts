@@ -76,7 +76,15 @@ export const IPC_CHANNELS = {
   UPDATER_CHECK: 'updater:check',
   UPDATER_DOWNLOAD: 'updater:download',
   UPDATER_INSTALL: 'updater:install',
-  UPDATER_STATUS_EVENT: 'updater:status-event'
+  UPDATER_STATUS_EVENT: 'updater:status-event',
+  LANTIFY_PAIR: 'lantify:pair',
+  LANTIFY_UNPAIR: 'lantify:unpair',
+  LANTIFY_STATUS: 'lantify:status',
+  LANTIFY_REQUESTS: 'lantify:requests',
+  LANTIFY_DECIDE: 'lantify:decide',
+  LANTIFY_NOW_PLAYING: 'lantify:now-playing',
+  LANTIFY_SET_PREFS: 'lantify:set-prefs',
+  LANTIFY_EVENT: 'lantify:event'
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

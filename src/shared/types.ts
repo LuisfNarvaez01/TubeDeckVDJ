@@ -308,3 +308,71 @@ export interface YouTubeAccessStatus {
   checkedAtMs: number | null;
   detail: string | null;
 }
+
+// ---- Lantify POS: song requests from the table QR ----
+
+/** Life of a guest's song request inside Proyecta (mirrors what Lantify Cloud is told). */
+export type LantifyRequestState = 'searching' | 'pending' | 'queued' | 'playing' | 'played' | 'rejected';
+
+/** Automatic rejection codes; a DJ rejection carries the DJ's short text or `DJ_DECLINED`. */
+export type LantifyRejectCode = 'NO_MATCH' | 'ALREADY_PLAYED' | 'DJ_DECLINED';
+
+export interface LantifySongRequest {
+  id: string;
+  /** Table label as Lantify sends it ("7", "Terraza 2"). */
+  table: string;
+  guest: string;
+  /** What the guest typed. */
+  query: string;
+  createdAt: string;
+  receivedAtMs: number;
+  state: LantifyRequestState;
+  /** Valid YouTube matches, best first ("Otra versión" walks this list). */
+  candidates: YouTubeTrack[];
+  candidateIndex: number;
+  /** The song that went to the queue. */
+  chosenVideoId?: string;
+  rejectReason?: string;
+}
+
+export interface LantifyPrefs {
+  autoApprove: boolean;
+  /** Auto-approved requests allowed per hour (all tables). */
+  maxPerHour: number;
+  /** Auto-approved requests allowed per table per hour. */
+  maxPerTable: number;
+  /** "Pedida por la mesa 7" on Screen 2 for the first 10 s. */
+  overlayEnabled: boolean;
+}
+
+export type LantifyConnection = 'unpaired' | 'ok' | 'retrying' | 'revoked';
+
+export interface LantifyStatus {
+  paired: boolean;
+  business: { name: string; slug: string } | null;
+  connection: LantifyConnection;
+  /** Readable reason when the last call failed (never contains the token). */
+  lastError: string | null;
+  /** Wait before the next poll (5 s normally, up to 60 s after network errors). */
+  pollDelayMs: number;
+  prefs: LantifyPrefs;
+}
+
+export interface LantifySnapshot {
+  status: LantifyStatus;
+  requests: LantifySongRequest[];
+}
+
+export type LantifyDecision =
+  | { action: 'next-candidate' }
+  | { action: 'reject'; reason?: string }
+  | { action: 'queued'; videoId: string }
+  | { action: 'playing' }
+  | { action: 'played' };
+
+export interface LantifyNowPlaying {
+  title: string;
+  artist: string;
+  /** YouTube id, or null for a local file. */
+  videoId: string | null;
+}

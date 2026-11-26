@@ -138,6 +138,10 @@ export class OverlayCompositor {
   private osdTitle = '';
   private osdChannel = '';
   private osdTriggeredAtMs = -Infinity;
+  /** "Pedida por la mesa 7" (Lantify request), shown for the first seconds of the song. */
+  private requestBannerText = '';
+  private requestBannerAtMs = -Infinity;
+  private requestBannerDurationMs = 10_000;
 
   private marqueeOffsetPx = 0;
   private lastMarqueeTickMs: number | null = null;
@@ -283,6 +287,22 @@ export class OverlayCompositor {
 
   hideTrackOsd(): void {
     this.osdTriggeredAtMs = -Infinity;
+  }
+
+  triggerRequestBanner(text: string, nowMs: number, durationMs = 10_000): void {
+    this.requestBannerText = text.trim().slice(0, 60);
+    this.requestBannerAtMs = nowMs;
+    this.requestBannerDurationMs = durationMs;
+  }
+
+  hideRequestBanner(): void {
+    this.requestBannerAtMs = -Infinity;
+  }
+
+  /** True while the request banner is on screen (used by tests and to keep frames drawing). */
+  isRequestBannerVisible(nowMs: number): boolean {
+    const t = nowMs - this.requestBannerAtMs;
+    return Boolean(this.requestBannerText) && t >= 0 && t <= this.requestBannerDurationMs;
   }
 
   private renderAudioVisualizer(
@@ -481,6 +501,29 @@ export class OverlayCompositor {
       ctx2d.fillStyle = '#94A3B8';
       ctx2d.font = '400 13px Inter, sans-serif';
       ctx2d.fillText(this.osdChannel, x + 16, y + 52);
+      ctx2d.restore();
+      drewAnything = true;
+    }
+
+    // 5. Song request banner (Lantify): a pill above the OSD slot, bottom-left
+    if (this.isRequestBannerVisible(nowMs)) {
+      const t = nowMs - this.requestBannerAtMs;
+      const alpha = Math.max(0, Math.min(1, t / 350, (this.requestBannerDurationMs - t) / 450));
+      ctx2d.save();
+      ctx2d.globalAlpha = alpha;
+      ctx2d.font = '600 20px Inter, sans-serif';
+      ctx2d.textBaseline = 'middle';
+      const textW = ctx2d.measureText(this.requestBannerText).width;
+      const boxH = 42;
+      const boxW = Math.min(this.width - 64, textW + 40);
+      const x = 32;
+      const y = this.height - 74 - 58 - boxH - 14;
+      ctx2d.fillStyle = 'rgba(8, 9, 12, 0.88)';
+      ctx2d.beginPath();
+      ctx2d.roundRect(x, y, boxW, boxH, boxH / 2);
+      ctx2d.fill();
+      ctx2d.fillStyle = '#F8FAFC';
+      ctx2d.fillText(this.requestBannerText, x + 20, y + boxH / 2 + 1, boxW - 40);
       ctx2d.restore();
       drewAnything = true;
     }

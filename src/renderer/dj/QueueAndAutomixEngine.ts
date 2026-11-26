@@ -2,7 +2,17 @@ import { looseSongKey } from '../../shared/songIdentity';
 import { pickSimilarTrack } from './localFallback';
 import type { DeckId, YouTubeTrack } from '../../shared/types';
 
-export type QueueSource = 'user' | 'youtube-radio' | 'local';
+export type QueueSource = 'user' | 'youtube-radio' | 'local' | 'request';
+
+/** A guest asked for this song from the table QR (Lantify POS). */
+export interface QueueRequestInfo {
+  requestId: string;
+  table: string;
+  guest: string;
+}
+
+/** A request song that played this recently counts as a repeat. */
+export const REQUEST_REPEAT_WINDOW_MS = 60 * 60 * 1000;
 export type AutomixFadeType = 'smart-crossfade' | 'fade-out-in' | 'cut' | 'backspin';
 export type PreloadMode = 'immediate' | '90s' | '60s' | '30s';
 /**
@@ -17,6 +27,8 @@ export interface QueueItem {
   status: 'pending' | 'preloading' | 'loaded' | 'failed';
   source?: QueueSource;
   errorMessage?: string;
+  /** Only for `source: 'request'`: table and guest shown in the queue. */
+  request?: QueueRequestInfo;
 }
 
 export interface AutomixOptions {
@@ -124,6 +136,9 @@ export class QueueAndAutomixEngine {
   private transitionedForDeck: Partial<Record<DeckId, boolean>> = {};
   private playedVideoIds = new Set<string>();
   private playedSongKeys = new Set<string>();
+  /** When each song (by id and by loose key) last went to a deck. */
+  private lastPlayedAtById = new Map<string, number>();
+  private lastPlayedAtByKey = new Map<string, number>();
   /** Songs the DJ took out this session (not a dislike: just "not this one"). */
   private dismissedVideoIds = new Set<string>();
   private dismissedSongKeys = new Set<string>();
@@ -146,7 +161,7 @@ export class QueueAndAutomixEngine {
     return `q-${Date.now()}-${this.idCounter}`;
   }
 
-  enqueue(track: YouTubeTrack, source?: QueueSource): QueueItem {
+  enqueue(track: YouTubeTrack, source?: QueueSource, request?: QueueRequestInfo): QueueItem {
     const resolvedSource: QueueSource = source ?? (track.source === 'local' ? 'local' : 'user');
     const item: QueueItem = {
       queueId: this.nextId(),
@@ -154,6 +169,7 @@ export class QueueAndAutomixEngine {
       status: 'pending',
       source: resolvedSource
     };
+    if (resolvedSource === 'request' && request) item.request = { ...request };
     this.queue.push(item);
     return item;
   }
@@ -233,8 +249,29 @@ export class QueueAndAutomixEngine {
     return this.queue.map((item) => ({ ...item }));
   }
 
-  recordPlayed(videoId: string, title?: string): void {
+  /**
+   * Why a guest's request would repeat a song: it is already in the queue (any upload of
+   * it), or it went on a deck less than `windowMs` ago. Null when it is fine to queue.
+   */
+  requestConflict(
+    track: YouTubeTrack,
+    nowMs = Date.now(),
+    windowMs = REQUEST_REPEAT_WINDOW_MS
+  ): 'queued' | 'played' | null {
+    const key = looseSongKey(track.title);
+    if (this.queue.some((q) => q.track.videoId === track.videoId || (key && looseSongKey(q.track.title) === key))) {
+      return 'queued';
+    }
+    const at = Math.max(
+      this.lastPlayedAtById.get(track.videoId) ?? -Infinity,
+      key ? (this.lastPlayedAtByKey.get(key) ?? -Infinity) : -Infinity
+    );
+    return nowMs - at < windowMs ? 'played' : null;
+  }
+
+  recordPlayed(videoId: string, title?: string, nowMs = Date.now()): void {
     if (videoId) {
+      this.lastPlayedAtById.set(videoId, nowMs);
       this.playedVideoIds.add(videoId);
       if (isYouTubeVideoId(videoId)) {
         this.recentSeedIds = [...this.recentSeedIds.filter((id) => id !== videoId), videoId].slice(
@@ -245,6 +282,7 @@ export class QueueAndAutomixEngine {
     if (title) {
       const key = looseSongKey(title);
       if (key) {
+        this.lastPlayedAtByKey.set(key, nowMs);
         this.playedSongKeys.add(key);
         if (videoId) this.titleKeys.set(videoId, key);
       }

@@ -29,6 +29,7 @@ import type { ExportFormat, SessionExporter } from '../services/SessionExporter'
 import type { StreamResolverService } from '../services/StreamResolverService';
 import type { YouTubeSearchService } from '../services/YouTubeSearchService';
 import type { YtDlpBinaryManager } from '../services/YtDlpBinaryManager';
+import { isPrivateLantifySetting, type LantifyRequestsService } from '../services/LantifyRequestsService';
 
 const VideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'ID de video inválido');
 
@@ -91,6 +92,35 @@ const RtcSignalSchema = z.object({
     .optional()
 });
 
+const LantifyPairSchema = z.object({ code: z.string().trim().min(1).max(32) });
+const LantifyRequestIdSchema = z.string().trim().min(1).max(128);
+const LantifyDecisionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('next-candidate') }),
+  z.object({ action: z.literal('reject'), reason: z.string().trim().max(80).optional() }),
+  z.object({ action: z.literal('queued'), videoId: VideoIdSchema }),
+  z.object({ action: z.literal('playing') }),
+  z.object({ action: z.literal('played') })
+]);
+const LantifyNowPlayingSchema = z.object({
+  title: z.string().max(500),
+  artist: z.string().max(300),
+  videoId: VideoIdSchema.nullable()
+});
+const LantifyPrefsPatchSchema = z
+  .object({
+    autoApprove: z.boolean(),
+    maxPerHour: z.number().int().min(1).max(120),
+    maxPerTable: z.number().int().min(1).max(30),
+    overlayEnabled: z.boolean()
+  })
+  .partial();
+
+/** Lantify settings (the pairing token above all) stay in the main process. */
+function assertPublicSettingKey(key: string): string {
+  if (isPrivateLantifySetting(key)) throw new Error('Ajuste reservado');
+  return key;
+}
+
 async function wrapResult<T>(fn: () => Promise<T> | T): Promise<Result<T>> {
   try {
     const data = await fn();
@@ -128,6 +158,7 @@ export interface MainServices {
   batchDownloader?: BatchDownloadService;
   taste?: TasteFeedbackService;
   recommender?: RecommendationEngine;
+  lantify?: LantifyRequestsService;
 }
 
 /** Endpoints served from the media cache through the local proxy (no network needed). */
@@ -363,16 +394,39 @@ export function registerIpcHandlers(services: MainServices): void {
     })
   );
 
+
+  const requireLantify = (): LantifyRequestsService => {
+    if (!services.lantify) throw new Error('Pedidos de Lantify no disponibles');
+    return services.lantify;
+  };
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_PAIR, (_event, raw: unknown) =>
+    wrapResult(() => requireLantify().pair(LantifyPairSchema.parse(raw).code))
+  );
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_UNPAIR, () => wrapResult(() => requireLantify().unpair()));
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_STATUS, () => wrapResult(() => requireLantify().getStatus()));
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_REQUESTS, () => wrapResult(() => requireLantify().getRequests()));
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_DECIDE, (_event, rawId: unknown, rawDecision: unknown) =>
+    wrapResult(() =>
+      requireLantify().decide(LantifyRequestIdSchema.parse(rawId), LantifyDecisionSchema.parse(rawDecision))
+    )
+  );
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_NOW_PLAYING, (_event, raw: unknown) =>
+    wrapResult(() => requireLantify().setNowPlaying(LantifyNowPlayingSchema.parse(raw)))
+  );
+  ipcMain.handle(IPC_CHANNELS.LANTIFY_SET_PREFS, (_event, raw: unknown) =>
+    wrapResult(() => requireLantify().setPrefs(LantifyPrefsPatchSchema.parse(raw)))
+  );
+
   ipcMain.handle(IPC_CHANNELS.DB_GET_SETTING, (_event, rawKey: unknown, fallback: unknown) =>
     wrapResult(() => {
-      const key = NonEmptyStringSchema.parse(rawKey);
+      const key = assertPublicSettingKey(NonEmptyStringSchema.parse(rawKey));
       return services.db.getSetting(key, fallback);
     })
   );
 
   ipcMain.handle(IPC_CHANNELS.DB_SET_SETTING, (_event, rawKey: unknown, value: unknown) =>
     wrapResult(() => {
-      const key = NonEmptyStringSchema.parse(rawKey);
+      const key = assertPublicSettingKey(NonEmptyStringSchema.parse(rawKey));
       services.db.setSetting(key, value);
     })
   );

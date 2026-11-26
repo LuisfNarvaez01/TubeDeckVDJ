@@ -50,6 +50,9 @@ import { LocalLibraryTab } from './components/LocalLibraryTab';
 import { MixerCenter } from './components/MixerCenter';
 import { OverlayControls } from './components/OverlayControls';
 import { QueueTab } from './components/QueueTab';
+import { RequestsTab } from './components/RequestsTab';
+import { currentCandidate, LantifyRequestBridge } from './dj/LantifyRequestBridge';
+import { pendingRequestCount, useLantifyStore } from './store/useLantifyStore';
 import { SearchBrowserTab } from './components/SearchBrowserTab';
 import { SuggestionsTab } from './components/SuggestionsTab';
 import { SettingsTab } from './components/SettingsTab';
@@ -306,10 +309,51 @@ export function App(): ReactElement {
   const autoGainEmaRef = useRef<Record<DeckId, number>>({ A: 0.42, B: 0.42 });
   const brakeTimersRef = useRef<Record<DeckId, number | null>>({ A: null, B: null });
   const queueEngineRef = useRef(new QueueAndAutomixEngine());
+  // Lantify POS: guests' song requests from the table QR (approve → queue → PLAYING/PLAYED).
+  const [lantifyBridge] = useState(
+    () =>
+      new LantifyRequestBridge({
+        api: {
+          decide: (id, decision) =>
+            window.tubedeckAPI?.lantifyDecide
+              ? window.tubedeckAPI.lantifyDecide(id, decision)
+              : Promise.resolve({ success: false as const, error: 'Sin conexión con el proceso principal' }),
+          nowPlaying: (np) => window.tubedeckAPI?.lantifyNowPlaying?.(np) ?? Promise.resolve()
+        },
+        queue: {
+          enqueue: (track, source, request) => queueEngineRef.current.enqueue(track, source, request),
+          requestConflict: (track, nowMs) => queueEngineRef.current.requestConflict(track, nowMs)
+        },
+        onQueueChanged: () => useLibraryStore.getState().setQueue(queueEngineRef.current.getQueue())
+      })
+  );
+  const [upNextTab, setUpNextTab] = useState<'queue' | 'requests'>('queue');
+  const lantifyStatus = useLantifyStore((s) => s.status);
+  const lantifyHasRequests = useLantifyStore((s) => s.requests.length > 0);
+  const lantifyPending = useLantifyStore((s) => pendingRequestCount(s.requests));
+  const showRequestsTab = lantifyStatus.paired || lantifyStatus.connection === 'revoked' || lantifyHasRequests;
   /** Mirrors the network banner for the Automix engine (read inside the render loop). */
   const offlineRef = useRef(false);
   /** Deck Automix just mixed into: if it does not start playing, retry and then skip it. */
   const automixTargetRef = useRef<{ deck: DeckId; atMs: number; lastTryMs: number } | null>(null);
+
+  useEffect(() => {
+    const api = window.tubedeckAPI;
+    if (!api?.lantifyStatus || !api.onLantifyEvent) return;
+    let alive = true;
+    const apply = (snapshot: Parameters<typeof lantifyBridge.sync>[0]): void => {
+      useLantifyStore.getState().setSnapshot(snapshot);
+      void lantifyBridge.sync(snapshot);
+    };
+    void Promise.all([api.lantifyStatus(), api.lantifyRequests()]).then(([st, rq]) => {
+      if (alive && st.success && rq.success) apply({ status: st.data, requests: rq.data });
+    });
+    const off = api.onLantifyEvent(apply);
+    return () => {
+      alive = false;
+      off();
+    };
+  }, [lantifyBridge]);
 
   const masterCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const compositorRef = useRef<WebGLVideoCompositor | null>(null);
@@ -1075,6 +1119,23 @@ export function App(): ReactElement {
               onAirMsRef.current[id] = 0;
             }
           });
+
+          // Lantify: the loudest audible deck is "on air" (now-playing, PLAYING / PLAYED).
+          let loudest: YouTubeTrack | null = null;
+          let loudestGain = 0;
+          for (const id of ['A', 'B'] as DeckId[]) {
+            const d = useDeckStore.getState().decks[id];
+            const gain = stMixer.channels[id].fader * (id === 'A' ? 1 - stMixer.crossfader : stMixer.crossfader);
+            if (d.track && d.playing && gain > 0.1 && gain > loudestGain) {
+              loudestGain = gain;
+              loudest = d.track;
+            }
+          }
+          const requestStarted = lantifyBridge.observeOnAir(loudest, Date.now());
+          if (requestStarted && useLantifyStore.getState().status.prefs.overlayEnabled) {
+            const label = /^\d+$/.test(requestStarted.table) ? `la mesa ${requestStarted.table}` : requestStarted.table;
+            overlayCompRef.current.triggerRequestBanner(`Pedida por ${label}`, now, 10_000);
+          }
         }
 
         if (now - lastAutomixTick >= 250) {
@@ -2618,7 +2679,89 @@ export function App(): ReactElement {
           aria-label="Siguiente"
           className="flex min-h-0 min-w-0 flex-col rounded-lg focus:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
         >
+          {showRequestsTab ? (
+            <div role="tablist" aria-label="Siguiente y pedidos" className="mb-2 flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={upNextTab === 'queue'}
+                onClick={() => setUpNextTab('queue')}
+                className={`rounded-md px-2 py-1 text-sm font-semibold transition-colors duration-150 cursor-pointer ${
+                  upNextTab === 'queue' ? 'text-ink' : 'text-muted hover:text-ink'
+                }`}
+              >
+                Siguiente
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={upNextTab === 'requests'}
+                aria-label={lantifyPending > 0 ? `Pedidos: ${lantifyPending} por aprobar` : 'Pedidos'}
+                onClick={() => setUpNextTab('requests')}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-semibold transition-colors duration-150 cursor-pointer ${
+                  upNextTab === 'requests' ? 'text-ink' : 'text-muted hover:text-ink'
+                }`}
+              >
+                Pedidos
+                {lantifyPending > 0 ? (
+                  <span
+                    className={`min-w-[18px] rounded-full bg-live px-1.5 text-center font-mono-tabular text-[10px] font-bold leading-[18px] text-ground ${
+                      upNextTab === 'requests' ? '' : 'animate-pulse motion-reduce:animate-none'
+                    }`}
+                  >
+                    {lantifyPending}
+                  </span>
+                ) : null}
+              </button>
+              {lantifyStatus.connection === 'retrying' ? (
+                <span className="ml-auto truncate text-[10px] text-faint" title={lantifyStatus.lastError ?? undefined}>
+                  Lantify sin conexión
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {showRequestsTab && upNextTab === 'requests' ? (
+            <RequestsTab
+              onApprove={async (req) => {
+                const outcome = await lantifyBridge.approve(req);
+                const cand = currentCandidate(req);
+                const who = /^\d+$/.test(req.table) ? `Mesa ${req.table}` : req.table;
+                useLantifyStore
+                  .getState()
+                  .setNote(
+                    outcome === 'queued'
+                      ? `${who}: "${cand?.title ?? req.query}" va a la cola.`
+                      : outcome === 'already-played'
+                        ? `${who}: esa canción sonó hace menos de una hora. Se rechazó.`
+                        : outcome === 'already-queued'
+                          ? `${who}: esa canción ya estaba en la cola. Se rechazó.`
+                          : `${who}: no se pudo aprobar el pedido.`
+                  );
+              }}
+              onNextVersion={(req) => lantifyBridge.nextCandidate(req)}
+              onReject={async (req, reason) => {
+                await lantifyBridge.reject(req, reason);
+                useLantifyStore.getState().setNote(null);
+              }}
+              conflictFor={(req) => {
+                const cand = currentCandidate(req);
+                const conflict = cand ? queueEngineRef.current.requestConflict(cand) : null;
+                return conflict === 'queued'
+                  ? 'Ya está en la cola'
+                  : conflict === 'played'
+                    ? 'Sonó hace menos de una hora'
+                    : null;
+              }}
+              tableCountFor={(table) => lantifyBridge.countsFor(table).table}
+              onToggleAutoApprove={async (enabled) => {
+                const res = await window.tubedeckAPI?.lantifySetPrefs({ autoApprove: enabled });
+                if (res?.success) useLantifyStore.getState().setStatus(res.data);
+              }}
+              onOpenSettings={() => setSettingsDrawerOpen(true)}
+            />
+          ) : (
             <QueueTab
+              hideTitle={showRequestsTab}
               onLoadFromQueue={async (deck, queueId) => {
                 const item = queueEngineRef.current.dequeueById(queueId);
                 if (!item) return;
@@ -2718,6 +2861,7 @@ export function App(): ReactElement {
                 }
               }}
             />
+          )}
         </aside>
         </div>
       </section>

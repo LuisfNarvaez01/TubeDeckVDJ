@@ -8,6 +8,7 @@ import {
   Film,
   HardDrive,
   Music,
+  QrCode,
   Radio,
   Settings2,
   Shuffle,
@@ -40,6 +41,8 @@ interface QueueTabProps {
   onFetchSuggestionsNow: () => void;
   onTrackFeedback: (queueId: string, signal: 'like' | 'dislike' | 'block-channel') => void;
   onOpenTasteSetup: () => void;
+  /** The column's tab bar already says "Siguiente". */
+  hideTitle?: boolean;
 }
 
 const selectClass =
@@ -64,7 +67,8 @@ export function QueueTab({
   onPreloadModeChange,
   onFetchSuggestionsNow,
   onTrackFeedback,
-  onOpenTasteSetup
+  onOpenTasteSetup,
+  hideTitle = false
 }: QueueTabProps): ReactElement {
   const queue = useLibraryStore((s) => s.queue);
   const automixEnabled = useLibraryStore((s) => s.automixEnabled);
@@ -115,7 +119,7 @@ export function QueueTab({
       {/* Header: title + live toggles */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-baseline gap-2">
-          <h2 className="text-sm font-semibold text-ink">Siguiente</h2>
+          {hideTitle ? null : <h2 className="text-sm font-semibold text-ink">Siguiente</h2>}
           <span className="truncate font-mono-tabular text-[11px] text-faint">
             {queue.length} {queue.length === 1 ? 'canción' : 'canciones'}
             {totalSec > 0 ? ` · ${formatTrackDuration(totalSec)}` : ''}
@@ -406,6 +410,14 @@ export function QueueTab({
                         <span className="truncate text-danger-soft">
                           No se pudo cargar: {item.errorMessage ?? 'omitida'}
                         </span>
+                      ) : item.source === 'request' && item.request ? (
+                        <>
+                          <QrCode className="h-2.5 w-2.5 shrink-0 text-ink-soft" />
+                          <span className="truncate text-ink-soft">
+                            {/^\d+$/.test(item.request.table) ? `Mesa ${item.request.table}` : item.request.table}
+                            {item.request.guest ? ` · ${item.request.guest}` : ''}
+                          </span>
+                        </>
                       ) : isRadio ? (
                         <>
                           <Radio className="h-2.5 w-2.5 shrink-0" />

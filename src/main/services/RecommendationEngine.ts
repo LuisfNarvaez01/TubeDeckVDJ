@@ -57,6 +57,23 @@ const LIVE_TITLE = /\b(en vivo|live|concierto|concert|session en vivo)\b/i;
 const COVER_TITLE = /\b(cover|versi[oó]n (ac[uú]stica|piano)|acoustic cover)\b/i;
 const KARAOKE_TITLE = /\b(karaoke|instrumental|pista)\b/i;
 
+/**
+ * The radio's hard filters, shared with guest song requests (Lantify): a real song of
+ * 90–600 s, not live, not a reaction / tutorial / short / long mix, not disliked and not
+ * from a blocked channel or artist.
+ */
+export function passesSongFilter(t: YouTubeTrack, snapshot: Pick<TasteSnapshot, 'dislikedVideoIds' | 'blockedNames'>): boolean {
+  if (snapshot.dislikedVideoIds.has(t.videoId)) return false;
+  if (t.isLive) return false;
+  if (t.durationSec < MIN_DURATION_SEC || t.durationSec > MAX_DURATION_SEC) return false;
+  if (JUNK_TITLE.test(t.title)) return false;
+  const artistKeys = splitArtistKeys(t.channel, t.artists);
+  if (artistKeys.some((k) => snapshot.blockedNames.has(k)) || snapshot.blockedNames.has(nameKey(t.channel))) {
+    return false;
+  }
+  return true;
+}
+
 /** Song identity used to drop duplicate uploads of the same track. */
 export function songKey(track: YouTubeTrack): string {
   const base = track.title
@@ -154,18 +171,8 @@ export function rankRadioCandidates(
   }
 
   // ---- Filters (cheap → specific) ----
-  const passesHard = (c: { track: YouTubeTrack }): boolean => {
-    const t = c.track;
-    if (hardExcluded.has(t.videoId) || snapshot.dislikedVideoIds.has(t.videoId)) return false;
-    if (t.isLive) return false;
-    if (t.durationSec < MIN_DURATION_SEC || t.durationSec > MAX_DURATION_SEC) return false;
-    if (JUNK_TITLE.test(t.title)) return false;
-    const artistKeys = splitArtistKeys(t.channel, t.artists);
-    if (artistKeys.some((k) => snapshot.blockedNames.has(k)) || snapshot.blockedNames.has(nameKey(t.channel))) {
-      return false;
-    }
-    return true;
-  };
+  const passesHard = (c: { track: YouTubeTrack }): boolean =>
+    !hardExcluded.has(c.track.videoId) && passesSongFilter(c.track, snapshot);
   const all = Array.from(merged.values()).filter(passesHard);
   let pool = all.filter((c) => !recent.has(c.track.videoId));
   if (pool.length < Math.min(limit, 4)) pool = all;
