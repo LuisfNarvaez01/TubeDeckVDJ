@@ -90,7 +90,17 @@ export const IPC_CHANNELS = {
   CLOUD_REQUESTS_LINK: 'cloud-requests:link',
   CLOUD_REQUESTS_UNREGISTER: 'cloud-requests:unregister',
   LOCAL_REQUESTS_SETTINGS: 'local-requests:settings',
-  LOCAL_REQUESTS_ROTATE_KEY: 'local-requests:rotate-key'
+  LOCAL_REQUESTS_ROTATE_KEY: 'local-requests:rotate-key',
+  REQUESTS_SET_DJ_PRESENT: 'requests:set-dj-present',
+  REQUESTS_ALERT: 'requests:alert',
+  REQUESTS_PICK_LOGO: 'requests:pick-logo',
+  CLOUD_REQUESTS_LINK_ACCOUNT: 'cloud-requests:link-account',
+  ACCOUNT_STATUS: 'account:status',
+  ACCOUNT_EVENT: 'account:event',
+  ACCOUNT_SIGN_IN: 'account:sign-in',
+  ACCOUNT_SIGN_IN_POS: 'account:sign-in-pos',
+  ACCOUNT_SIGN_OUT: 'account:sign-out',
+  ACCOUNT_OPEN_SIGNUP: 'account:open-signup'
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

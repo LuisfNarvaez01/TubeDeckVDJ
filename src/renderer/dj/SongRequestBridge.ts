@@ -3,8 +3,14 @@
  * applies "Aprobar automáticamente" with its limits, and reports PLAYING / PLAYED and
  * now-playing as the song on air changes. The DJ always decides: nothing here removes
  * or reorders what is already in the queue, it only adds approved requests at the end.
+ *
+ * Who approves on their own: with a DJ in the booth, "Aprobar automáticamente" with the
+ * DJ's limits; without a DJ, the autopilot set from Lantify POS (its own limits). Requests
+ * approved from the POS while no DJ is in the booth (`approvedBy`) are queued right away.
  */
 import type {
+  AutopilotRules,
+  DeskState,
   SongRequestDecision,
   NowPlayingInfo,
   SongRequestPrefs,
@@ -48,6 +54,7 @@ export class SongRequestBridge {
   /** A request source is active (Lantify or the local QR): now-playing is worth sending. */
   private active = false;
   private prefs: SongRequestPrefs | null = null;
+  private desk: DeskState | null = null;
   private approvals: Array<{ table: string; atMs: number }> = [];
   private byVideoId = new Map<string, TrackedRequest>();
   private autoHandled = new Set<string>();
@@ -70,6 +77,7 @@ export class SongRequestBridge {
   async sync(snapshot: SongRequestsSnapshot): Promise<void> {
     this.active = snapshot.mode !== 'off';
     this.prefs = snapshot.prefs;
+    this.desk = snapshot.desk ?? null;
     for (const req of snapshot.requests) {
       if ((req.state === 'queued' || req.state === 'playing') && req.chosenVideoId && !this.byVideoId.has(req.chosenVideoId)) {
         this.byVideoId.set(req.chosenVideoId, {
@@ -80,13 +88,32 @@ export class SongRequestBridge {
         });
       }
     }
-    if (!this.active || !this.prefs.autoApprove) return;
+    if (!this.active) return;
+    // Approved from Lantify POS (no DJ in the booth): no limits, the POS already decided.
     for (const req of snapshot.requests) {
-      if (req.state !== 'pending' || this.autoHandled.has(req.id)) continue;
-      if (this.overLimit(req.table)) continue; // waits for the DJ; retried on the next snapshot
+      if (req.state !== 'pending' || !req.approvedBy || this.autoHandled.has(req.id)) continue;
       this.autoHandled.add(req.id);
       await this.approve(req);
     }
+    if (!this.autoRules()) return;
+    for (const req of snapshot.requests) {
+      if (req.state !== 'pending' || this.autoHandled.has(req.id)) continue;
+      if (this.overLimit(this.whoKey(req))) continue; // waits for the DJ / the POS; retried on the next snapshot
+      this.autoHandled.add(req.id);
+      await this.approve(req);
+    }
+  }
+
+  /** Limits of whoever approves on their own right now; null = a person decides. */
+  autoRules(): Pick<AutopilotRules, 'maxPerHour' | 'maxPerTable'> | null {
+    if (!this.prefs) return null;
+    if (!this.desk || this.desk.djPresent) return this.prefs.autoApprove ? this.prefs : null;
+    return this.desk.autopilot.enabled ? this.desk.autopilot : null;
+  }
+
+  /** Per-table limit: the table, or the guest's name when the table is unknown. */
+  private whoKey(req: SongRequest): string {
+    return req.table || (req.guest ? `@${req.guest.toLowerCase()}` : '');
   }
 
   /** Approved requests in the last hour: all tables and this table. */
@@ -96,11 +123,12 @@ export class SongRequestBridge {
     return { hour: this.approvals.length, table: this.approvals.filter((a) => a.table === table).length };
   }
 
-  /** True when auto-approve must leave this table's request to the DJ. */
+  /** True when auto-approve must leave this table's request to the DJ (or the POS). */
   overLimit(table: string): boolean {
-    if (!this.prefs) return false;
+    const rules = this.autoRules() ?? this.prefs;
+    if (!rules) return false;
     const counts = this.countsFor(table);
-    return counts.hour >= this.prefs.maxPerHour || counts.table >= this.prefs.maxPerTable;
+    return counts.hour >= rules.maxPerHour || counts.table >= rules.maxPerTable;
   }
 
   /** Queues the request's current candidate, or rejects it with ALREADY_PLAYED if it would repeat. */
@@ -117,7 +145,7 @@ export class SongRequestBridge {
     const info: QueueRequestInfo = { requestId: req.id, table: req.table, guest: req.guest };
     this.deps.queue.enqueue({ ...track, recommendReason: undefined }, 'request', info);
     this.byVideoId.set(track.videoId, { ...info, state: 'queued' });
-    this.approvals.push({ table: req.table, atMs: this.now() });
+    this.approvals.push({ table: this.whoKey(req), atMs: this.now() });
     this.deps.onQueueChanged();
     return 'queued';
   }

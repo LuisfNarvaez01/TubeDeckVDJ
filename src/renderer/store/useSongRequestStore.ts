@@ -13,7 +13,7 @@ interface SongRequestStore {
 const INITIAL: SongRequestsSnapshot = {
   mode: 'off',
   prefs: { autoApprove: false, maxPerHour: 12, maxPerTable: 3, overlayEnabled: true, autoPlay: true },
-  page: { venueName: '', wifiName: '', qrOnScreen: true },
+  page: { venueName: '', wifiName: '', qrOnScreen: true, logoDataUrl: '' },
   cloud: {
     registered: false,
     venueId: null,
@@ -35,7 +35,12 @@ const INITIAL: SongRequestsSnapshot = {
     settings: { address: '' }
   },
   requests: [],
-  chat: []
+  chat: [],
+  desk: {
+    djPresent: true,
+    autopilot: { enabled: false, maxPerHour: 12, maxPerTable: 3, skipOnLoadError: true },
+    posLinked: false
+  }
 };
 
 export const useSongRequestStore = create<SongRequestStore>((set) => ({

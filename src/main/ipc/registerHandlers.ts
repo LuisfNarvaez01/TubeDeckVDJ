@@ -33,6 +33,8 @@ import { isPrivateRequestSetting } from '../services/SongRequestsService';
 import { LocalSettingsPatchSchema } from '../services/LocalRequestServer';
 import { GuestPageSettingsSchema } from '../services/SongRequestsService';
 import type { SongRequestsModule } from '../services/songRequestsModule';
+import { LOGO_DATA_URL, MAX_LOGO_DATA_URL } from '../services/SongRequestsService';
+import { PROYECTA_SIGNUP_URL, type LantifyAccountService } from '../services/LantifyAccountService';
 
 const VideoIdSchema = z.string().regex(/^[A-Za-z0-9_-]{11}$/, 'ID de video inválido');
 
@@ -166,6 +168,7 @@ export interface MainServices {
   taste?: TasteFeedbackService;
   recommender?: RecommendationEngine;
   songRequests?: SongRequestsModule;
+  account?: LantifyAccountService;
 }
 
 /** Endpoints served from the media cache through the local proxy (no network needed). */
@@ -444,6 +447,54 @@ export function registerIpcHandlers(services: MainServices): void {
     snapshotAfter(() => requireRequests().local.updateSettings(LocalSettingsPatchSchema.parse(raw)))
   );
   ipcMain.handle(IPC_CHANNELS.LOCAL_REQUESTS_ROTATE_KEY, () => snapshotAfter(() => requireRequests().local.rotateKey()));
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_SET_DJ_PRESENT, (_event, raw: unknown) =>
+    snapshotAfter(() => requireRequests().hub.setDjPresent(z.boolean().parse(raw)))
+  );
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_ALERT, (_event, raw: unknown) =>
+    wrapResult(() => {
+      const a = z.object({ kind: z.enum(['load_failed', 'skipped', 'info']), text: z.string().max(300) }).parse(raw);
+      requireRequests().cloud.sendAlert(a.kind, a.text);
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.REQUESTS_PICK_LOGO, () =>
+    wrapResult(async () => {
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: 'Logo del local',
+        properties: ['openFile'],
+        filters: [{ name: 'Imagen', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+      });
+      if (canceled || !filePaths[0]) return requireRequests().snapshot();
+      const file = filePaths[0];
+      const ext = path.extname(file).toLowerCase();
+      const mime = ext === '.png' ? 'png' : ext === '.webp' ? 'webp' : 'jpeg';
+      const size = fs.statSync(file).size;
+      if (size > 400_000) throw new Error('El logo pesa más de 400 KB. Usa una imagen más pequeña (por ejemplo 512 × 512 px).');
+      const dataUrl = `data:image/${mime};base64,${fs.readFileSync(file).toString('base64')}`;
+      if (dataUrl.length > MAX_LOGO_DATA_URL || !LOGO_DATA_URL.test(dataUrl)) throw new Error('Ese archivo no es una imagen PNG, JPG o WebP.');
+      requireRequests().hub.setPageSettings({ logoDataUrl: dataUrl });
+      return requireRequests().snapshot();
+    })
+  );
+  ipcMain.handle(IPC_CHANNELS.CLOUD_REQUESTS_LINK_ACCOUNT, () =>
+    snapshotAfter(() => requireRequests().cloud.linkWithAccount(services.account?.licenseToken() ?? null))
+  );
+
+  const requireAccount = (): LantifyAccountService => {
+    if (!services.account) throw new Error('La cuenta de Lantify no está disponible');
+    return services.account;
+  };
+  ipcMain.handle(IPC_CHANNELS.ACCOUNT_STATUS, () => wrapResult(() => requireAccount().getStatus()));
+  ipcMain.handle(IPC_CHANNELS.ACCOUNT_SIGN_IN, (_event, raw: unknown) =>
+    wrapResult(() =>
+      requireAccount().signIn(
+        z.object({ tenantCode: z.string().max(40), username: z.string().max(64), password: z.string().max(256) }).parse(raw)
+      )
+    )
+  );
+  ipcMain.handle(IPC_CHANNELS.ACCOUNT_SIGN_IN_POS, () => wrapResult(() => requireAccount().signInWithLocalPos(false)));
+  ipcMain.handle(IPC_CHANNELS.ACCOUNT_SIGN_OUT, () => wrapResult(() => requireAccount().signOut()));
+  ipcMain.handle(IPC_CHANNELS.ACCOUNT_OPEN_SIGNUP, () => wrapResult(() => shell.openExternal(PROYECTA_SIGNUP_URL)));
+
   ipcMain.handle(IPC_CHANNELS.REQUESTS_PRINT_SHEET, (_event, raw: unknown) =>
     wrapResult(async () => {
       const tables = z.number().int().min(0).max(100).parse(raw);

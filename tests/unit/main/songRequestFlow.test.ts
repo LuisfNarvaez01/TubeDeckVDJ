@@ -73,7 +73,8 @@ function wireBridge(hub: SongRequestsService) {
       qrPngDataUrl: null,
       error: null,
       settings: { address: '' }
-    }
+    },
+    desk: { ...hub.getDesk(), posLinked: true }
   });
   return { engine, bridge, settle, snapshot, advance: (ms: number) => (clock += ms) };
 }

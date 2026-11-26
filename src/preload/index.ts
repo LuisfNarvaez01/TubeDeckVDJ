@@ -35,7 +35,8 @@ import type {
   SongRequestDecision,
   SongRequestMode,
   SongRequestPrefs,
-  SongRequestsSnapshot
+  SongRequestsSnapshot,
+  AccountStatus
 } from '../shared/types';
 
 export interface TubeDeckAPI {
@@ -148,6 +149,21 @@ export interface TubeDeckAPI {
   unregisterCloudRequests: () => Promise<Result<SongRequestsSnapshot>>;
   setLocalRequestSettings: (patch: Partial<LocalRequestSettings>) => Promise<Result<SongRequestsSnapshot>>;
   rotateLocalRequestKey: () => Promise<Result<SongRequestsSnapshot>>;
+  /** The booth: with a DJ (decides in Proyecta) or without (Lantify POS decides / autopilot). */
+  setDjPresent: (present: boolean) => Promise<Result<SongRequestsSnapshot>>;
+  /** Tells Lantify POS about a song that failed to load (only when no DJ is in the booth). */
+  sendRequestAlert: (alert: { kind: 'load_failed' | 'skipped' | 'info'; text: string }) => Promise<Result<void>>;
+  /** Venue logo for the Screen 2 QR card (file picker). */
+  pickVenueLogo: () => Promise<Result<SongRequestsSnapshot>>;
+  /** Links Lantify Música with the signed-in Lantify account (no code). */
+  linkCloudRequestsWithAccount: () => Promise<Result<SongRequestsSnapshot>>;
+  /** Lantify account (Proyecta opens with it). */
+  accountStatus: () => Promise<Result<AccountStatus>>;
+  onAccountEvent: (cb: (status: AccountStatus) => void) => () => void;
+  signIn: (input: { tenantCode: string; username: string; password: string }) => Promise<Result<AccountStatus>>;
+  signInWithLocalPos: () => Promise<Result<AccountStatus>>;
+  signOut: () => Promise<Result<AccountStatus>>;
+  openProyectaSignup: () => Promise<Result<void>>;
   printRequestSheet: (tables: number) => Promise<Result<string>>;
 }
 
@@ -261,6 +277,16 @@ const api: TubeDeckAPI = {
   registerCloudRequests: () => ipcRenderer.invoke(IPC_CHANNELS.CLOUD_REQUESTS_REGISTER),
   linkCloudRequests: (code) => ipcRenderer.invoke(IPC_CHANNELS.CLOUD_REQUESTS_LINK, { code }),
   unregisterCloudRequests: () => ipcRenderer.invoke(IPC_CHANNELS.CLOUD_REQUESTS_UNREGISTER),
+  setDjPresent: (present) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_SET_DJ_PRESENT, present),
+  sendRequestAlert: (alert) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_ALERT, alert),
+  pickVenueLogo: () => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_PICK_LOGO),
+  linkCloudRequestsWithAccount: () => ipcRenderer.invoke(IPC_CHANNELS.CLOUD_REQUESTS_LINK_ACCOUNT),
+  accountStatus: () => ipcRenderer.invoke(IPC_CHANNELS.ACCOUNT_STATUS),
+  onAccountEvent: (cb) => subscribeChannel(IPC_CHANNELS.ACCOUNT_EVENT, cb),
+  signIn: (input) => ipcRenderer.invoke(IPC_CHANNELS.ACCOUNT_SIGN_IN, input),
+  signInWithLocalPos: () => ipcRenderer.invoke(IPC_CHANNELS.ACCOUNT_SIGN_IN_POS),
+  signOut: () => ipcRenderer.invoke(IPC_CHANNELS.ACCOUNT_SIGN_OUT),
+  openProyectaSignup: () => ipcRenderer.invoke(IPC_CHANNELS.ACCOUNT_OPEN_SIGNUP),
   setLocalRequestSettings: (patch) => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REQUESTS_SETTINGS, patch),
   rotateLocalRequestKey: () => ipcRenderer.invoke(IPC_CHANNELS.LOCAL_REQUESTS_ROTATE_KEY),
   printRequestSheet: (tables) => ipcRenderer.invoke(IPC_CHANNELS.REQUESTS_PRINT_SHEET, tables)

@@ -131,7 +131,7 @@ describe('SongRequestsService (hub)', () => {
     settings.setSetting('requests.local', { venueName: 'Bar X', wifiName: 'BarX', qrOnScreen: false });
     const { hub } = makeHub({ settings });
     expect(hub.getMode()).toBe('cloud');
-    expect(hub.getPageSettings()).toEqual({ venueName: 'Bar X', wifiName: 'BarX', qrOnScreen: false });
+    expect(hub.getPageSettings()).toEqual({ venueName: 'Bar X', wifiName: 'BarX', qrOnScreen: false, logoDataUrl: '' });
     expect(makeHub().hub.getMode()).toBe('off');
   });
 

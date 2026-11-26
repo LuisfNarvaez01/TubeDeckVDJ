@@ -345,6 +345,8 @@ export interface SongRequest {
   /** The song that went to the queue. */
   chosenVideoId?: string;
   rejectReason?: string;
+  /** Approved from Lantify POS while no DJ was in the booth (name of who approved). */
+  approvedBy?: string;
 }
 
 export interface SongRequestPrefs {
@@ -366,6 +368,43 @@ export interface GuestPageSettings {
   wifiName: string;
   /** QR shown in a corner of Screen 2. */
   qrOnScreen: boolean;
+  /** Venue logo on the Screen 2 QR card (PNG/JPEG/WebP data URL, max ~400 KB); empty = the name. */
+  logoDataUrl: string;
+}
+
+/** Proyecta opens with the business's Lantify account (v3.5). */
+export interface AccountStatus {
+  state: 'signed-in' | 'signed-out' | 'checking';
+  business: { code: string; name: string } | null;
+  user: { name: string; username: string; role: string } | null;
+  /** 'proyecta' = pays only Proyecta; anything else = a Lantify POS plan (Proyecta included). */
+  plan: string | null;
+  subscription: 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'GRACE' | 'SUSPENDED' | null;
+  /** Proyecta keeps working offline until then. */
+  offlineUntil: string | null;
+  /** Signed in through Lantify POS on this computer. */
+  viaPos: boolean;
+  error: string | null;
+}
+
+/** Autopilot set from Lantify POS; Proyecta applies it only while no DJ is in the booth. */
+export interface AutopilotRules {
+  enabled: boolean;
+  maxPerHour: number;
+  maxPerTable: number;
+  skipOnLoadError: boolean;
+}
+
+/**
+ * The booth: is a DJ deciding? With a DJ, everything happens in Proyecta and Lantify POS
+ * gets no notifications. Without one, pending requests and load errors go to the POS,
+ * which decides (or leaves it to the autopilot).
+ */
+export interface DeskState {
+  djPresent: boolean;
+  autopilot: AutopilotRules;
+  /** Linked to a Lantify POS business and connected: the POS can see the booth. */
+  posLinked: boolean;
 }
 
 export type CloudConnection = 'unregistered' | 'connecting' | 'online' | 'offline' | 'revoked';
@@ -419,6 +458,7 @@ export interface SongRequestsSnapshot {
   requests: SongRequest[];
   /** DJ ↔ Lantify POS messages (only when linked to a business). */
   chat: ChatMessage[];
+  desk: DeskState;
 }
 
 /** A song a guest can pick on the phone page (already filtered like the radio). */

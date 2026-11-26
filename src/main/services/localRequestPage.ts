@@ -19,6 +19,16 @@ export const GUEST_HTML = `<!doctype html>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+<nav class="pnav" aria-label="Proyecta">
+  <div class="pnav-in">
+    <span class="pnav-brand">
+      <svg class="pnav-mark" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false"><rect width="1024" height="1024" rx="232" fill="#111114"/><circle cx="630" cy="420" r="282" fill="#2A2A31"/><circle cx="630" cy="420" r="236" fill="none" stroke="#000" stroke-width="10"/><circle cx="630" cy="420" r="190" fill="none" stroke="#000" stroke-width="10"/><circle cx="630" cy="420" r="144" fill="none" stroke="#000" stroke-width="10"/><circle cx="630" cy="420" r="96" fill="#FF4FA8"/><circle cx="630" cy="420" r="16" fill="#000"/><rect x="120" y="520" width="520" height="320" rx="72" fill="#22E1F0" stroke="#000" stroke-width="28"/><g fill="#000"><rect x="232" y="640" width="40" height="80" rx="20"/><rect x="300" y="596" width="40" height="168" rx="20"/><rect x="368" y="620" width="40" height="120" rx="20"/><rect x="436" y="572" width="40" height="216" rx="20"/><rect x="504" y="628" width="40" height="104" rx="20"/></g></svg>
+      <span class="pnav-word">Proyecta</span>
+    </span>
+    <!--nav-extra-->
+    <span class="pnav-by">by Lantify</span>
+  </div>
+</nav>
 <div class="app" id="app">
   <header class="top">
     <div class="brand">
@@ -114,6 +124,13 @@ p{margin:0}
 h1{font-size:24px;line-height:1.2;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
 h2{font-size:15px;margin:28px 0 10px;font-weight:650}
 .muted{color:var(--muted);font-weight:400}.small{font-size:13px}
+.pnav{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 78%,transparent);-webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2);border-bottom:1px solid var(--line);padding-top:env(safe-area-inset-top)}
+.pnav-in{max-width:560px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:10px}
+.pnav-brand{display:inline-flex;align-items:center;gap:8px;min-width:0;margin-right:auto}
+.pnav-mark{width:26px;height:26px;flex:none}
+.pnav-word{font-size:16px;font-weight:800;letter-spacing:-.02em}
+.pnav-by{font-size:11px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 9px;white-space:nowrap}
+.pnav + .app{padding-top:14px}
 .top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 0 14px}
 .brand{display:flex;align-items:center;gap:10px;min-width:0}
 .logo{width:40px;height:40px;border-radius:10px;object-fit:cover;background:var(--raised)}

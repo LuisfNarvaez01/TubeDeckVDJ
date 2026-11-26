@@ -61,6 +61,8 @@ import { VideoPreviewBar } from './components/VideoPreviewBar';
 import { PhaseMeter } from './components/ui/PhaseMeter';
 import { RundownColumn } from './components/RundownColumn';
 import { RecordButton } from './components/RecordButton';
+import { MessagesCenter } from './components/MessagesCenter';
+import { AccountWarning } from './components/AccountGate';
 import { useYouTubeAccess, YouTubeBlockedBanner } from './components/YouTubeAccess';
 import { NetworkBanner, useNetworkStatus } from './components/NetworkStatus';
 import { mergeOverlayConfig, OVERLAY_SETTING_KEY, persistOverlayConfig } from './video/overlayPersistence';
@@ -154,6 +156,9 @@ function NextCountdown(): ReactElement | null {
 
 /** How long a loaded deck may take to receive its first data before it is retried. */
 const LOAD_DATA_WAIT_MS = 15_000;
+/** A song that does not load is tried this many times (fresh URL each time) before showing the error. */
+const LOAD_ATTEMPTS = 3;
+const LOAD_RETRY_PAUSE_MS = 1500;
 
 type FeedbackTrack = Pick<YouTubeTrack, 'videoId' | 'title' | 'channel' | 'artists'>;
 
@@ -338,6 +343,8 @@ export function App(): ReactElement {
   const requestQrPng = useSongRequestStore((s) =>
     s.snapshot.page.qrOnScreen ? (activeQr(s.snapshot)?.png ?? null) : null
   );
+  const requestQrLogo = useSongRequestStore((s) => s.snapshot.page.logoDataUrl);
+  const requestQrVenue = useSongRequestStore((s) => s.snapshot.page.venueName || s.snapshot.cloud.business?.name || '');
   const showRequestsTab = requestMode !== 'off' || hasRequests;
   /** Mirrors the network banner for the Automix engine (read inside the render loop). */
   const offlineRef = useRef(false);
@@ -362,22 +369,28 @@ export function App(): ReactElement {
     };
   }, [requestBridge]);
 
-  // Stand-alone mode: Proyecta's own QR in a corner of Screen 2 (PNG keeps the canvas untainted).
+  // The "pide tu canción" QR card in a corner of Screen 2 (PNG images keep the canvas
+  // untainted): the venue's logo, or its name, on top.
   useEffect(() => {
     if (!requestQrPng) {
       overlayCompRef.current.setRequestQr(null);
       return;
     }
     let cancelled = false;
-    const img = new Image();
-    img.onload = () => {
-      if (!cancelled) overlayCompRef.current.setRequestQr(img, 'Pide tu canción');
-    };
-    img.src = requestQrPng;
+    const load = (src: string): Promise<HTMLImageElement | null> =>
+      new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = src;
+      });
+    void Promise.all([load(requestQrPng), requestQrLogo ? load(requestQrLogo) : Promise.resolve(null)]).then(([qr, logo]) => {
+      if (!cancelled && qr) overlayCompRef.current.setRequestQr(qr, 'Pide tu canción', { name: requestQrVenue, logo });
+    });
     return () => {
       cancelled = true;
     };
-  }, [requestQrPng]);
+  }, [requestQrPng, requestQrLogo, requestQrVenue]);
 
   const masterCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const compositorRef = useRef<WebGLVideoCompositor | null>(null);
@@ -811,24 +824,15 @@ export function App(): ReactElement {
       dsp.setDeckAutoGain(deck, 1);
       dsp.setKeyShift(deck, 0);
 
-      const resolvePromise =
-        track.source === 'local' && track.localFilePath && window.tubedeckAPI.resolveLocalFile
-          ? window.tubedeckAPI.resolveLocalFile(track.localFilePath)
-          : window.tubedeckAPI.resolveStream(track.videoId, cacheMetaOf(track));
+      const isLocal = track.source === 'local' && Boolean(track.localFilePath) && Boolean(window.tubedeckAPI.resolveLocalFile);
+      const resolve = () =>
+        isLocal ? window.tubedeckAPI.resolveLocalFile(track.localFilePath!) : window.tubedeckAPI.resolveStream(track.videoId, cacheMetaOf(track));
 
-      const [streamRes, metaRes] = await Promise.all([
-        resolvePromise,
-        window.tubedeckAPI.getTrackMeta(track.videoId)
-      ]);
-
+      const [firstRes, metaRes] = await Promise.all([resolve(), window.tubedeckAPI.getTrackMeta(track.videoId)]);
       if (isStale()) throw new DeckLoadSupersededError(deck);
-      if (!streamRes.success) {
-        setDeckPatch(deck, { loading: false, error: streamRes.error });
-        throw new Error(streamRes.error);
-      }
 
       const preferredQuality = useSettingsStore.getState().videoQuality;
-      const loadEndpoints = (endpoints: typeof streamRes.data) =>
+      const loadEndpoints = (endpoints: Extract<typeof firstRes, { success: true }>['data']) =>
         decks[deck].load({
           ...endpoints,
           preferredQuality,
@@ -839,31 +843,50 @@ export function App(): ReactElement {
             st.setQualityNotice(`Deck ${deck}: ${reason}`);
           }
         });
-      try {
-        await loadEndpoints(streamRes.data);
-        if (isStale()) throw new DeckLoadSupersededError(deck);
-        // The first load of a song used to "finish" with no data and stay at 00:00 until it
-        // was loaded again. Wait for real data; if none comes, retry once with a fresh URL.
-        let ready = await decks[deck].waitUntilReady(LOAD_DATA_WAIT_MS);
-        if (!ready && !isStale() && track.source !== 'local') {
-          await window.tubedeckAPI.invalidateStream(track.videoId);
-          const retry = await window.tubedeckAPI.resolveStream(track.videoId, cacheMetaOf(track));
+
+      // A song that does not load is retried on its own (fresh URL each time, short pauses)
+      // before the DJ sees an error: YouTube links expire and the first try sometimes gets
+      // no data and stays at 00:00.
+      let res = firstRes;
+      let ready = false;
+      let lastError = 'La canción no respondió a tiempo.';
+      for (let attempt = 1; attempt <= LOAD_ATTEMPTS; attempt += 1) {
+        if (attempt > 1) {
+          useSettingsStore.getState().setQualityNotice(`Deck ${deck}: reintentando la canción (${attempt}/${LOAD_ATTEMPTS})`);
+          await new Promise((r) => window.setTimeout(r, LOAD_RETRY_PAUSE_MS * (attempt - 1)));
           if (isStale()) throw new DeckLoadSupersededError(deck);
-          if (retry.success) {
-            await loadEndpoints(retry.data);
-            ready = await decks[deck].waitUntilReady(LOAD_DATA_WAIT_MS);
-          }
+          if (!isLocal) await window.tubedeckAPI.invalidateStream(track.videoId);
+          res = await resolve();
+          if (isStale()) throw new DeckLoadSupersededError(deck);
+        }
+        if (!res.success) {
+          lastError = res.error;
+          if (isLocal) break; // a missing local file will not appear by retrying
+          continue;
+        }
+        try {
+          await loadEndpoints(res.data);
+        } catch (err) {
+          if (isStale()) throw new DeckLoadSupersededError(deck);
+          lastError = err instanceof Error ? err.message : String(err);
+          continue;
         }
         if (isStale()) throw new DeckLoadSupersededError(deck);
-        if (!ready) {
-          const message = 'La canción no respondió a tiempo. Toca Reintentar o carga otra.';
-          setDeckPatch(deck, { loading: false, error: message });
-          throw new Error(message);
-        }
-      } catch (err) {
+        ready = await decks[deck].waitUntilReady(LOAD_DATA_WAIT_MS);
         if (isStale()) throw new DeckLoadSupersededError(deck);
-        throw err;
+        if (ready) break;
+        if (isLocal) break;
       }
+      if (!ready) {
+        const message = `${lastError} Se intentó ${isLocal ? 'abrir' : `${LOAD_ATTEMPTS} veces`}: carga otra canción o toca Reintentar.`;
+        setDeckPatch(deck, { loading: false, error: message });
+        // Without a DJ in the booth, the register hears about it (Lantify POS)
+        if (!useSongRequestStore.getState().snapshot.desk.djPresent) {
+          void window.tubedeckAPI.sendRequestAlert?.({ kind: 'load_failed', text: `«${track.title.slice(0, 80)}» no cargó en el deck ${deck}.` });
+        }
+        throw new Error(message);
+      }
+      if (useSettingsStore.getState().qualityNotice?.includes('reintentando')) useSettingsStore.getState().setQualityNotice(null);
       if (isStale()) throw new DeckLoadSupersededError(deck);
       queueEngineRef.current.recordPlayed(track.videoId, track.title);
       useLibraryStore.getState().markTrackPlayed(track.videoId);
@@ -1178,9 +1201,12 @@ export function App(): ReactElement {
           }
           const requestStarted = requestBridge.observeOnAir(loudest, Date.now());
           if (requestStarted && useSongRequestStore.getState().snapshot.prefs.overlayEnabled) {
+            // The guest's name first; the table only when they did not give a name
             const t = requestStarted.table;
-            const label = /^\d+$/.test(t) ? `la mesa ${t}` : t || requestStarted.guest || 'el público';
-            overlayCompRef.current.triggerRequestBanner(`Pedida por ${label}`, now, 10_000);
+            const table = /^\d+$/.test(t) ? `Mesa ${t}` : t;
+            const guest = requestStarted.guest.trim();
+            const who = guest || (table ? (/^\d+$/.test(t) ? `la mesa ${t}` : table) : 'el público');
+            overlayCompRef.current.triggerRequestBanner(who, now, 10_000, guest ? table : '');
           }
         }
 
@@ -1213,6 +1239,12 @@ export function App(): ReactElement {
               automixTargetRef.current = null;
               stallEndedRef.current[activeDeck] = true;
               lib.setAutomixStatusNote(`Deck ${activeDeck} no arrancó: pasando a la siguiente.`);
+              if (!useSongRequestStore.getState().snapshot.desk.djPresent && deckState.track) {
+                void window.tubedeckAPI.sendRequestAlert?.({
+                  kind: 'skipped',
+                  text: `«${deckState.track.title.slice(0, 80)}» no arrancó: Proyecta pasó a la siguiente.`
+                });
+              }
             } else if (!deckState.loading && now - target.lastTryMs > 2500) {
               target.lastTryMs = now;
               void syncs[activeDeck]
@@ -2281,6 +2313,8 @@ export function App(): ReactElement {
 
         {/* Right: Live Badges + KEYS Overlay Toggle + Drawers */}
         <div className="flex shrink-0 items-center gap-1.5 text-[11px]">
+          <AccountWarning />
+          <MessagesCenter />
           <RecordButton
             recording={recording}
             getElapsedSec={getRecordingElapsed}
@@ -2808,13 +2842,6 @@ export function App(): ReactElement {
                 if (res?.success) useSongRequestStore.getState().setSnapshot(res.data);
               }}
               onOpenSettings={() => setSettingsDrawerOpen(true)}
-              onSendChat={async (text) => {
-                const res = await window.tubedeckAPI?.sendRequestChat(text);
-                if (!res) return 'Sin conexión con el proceso principal';
-                if (!res.success) return res.error;
-                useSongRequestStore.getState().setSnapshot(res.data);
-                return null;
-              }}
             />
           ) : (
             <QueueTab
@@ -2971,13 +2998,13 @@ export function App(): ReactElement {
           <aside
             role="dialog"
             aria-label="Ajustes del Sistema"
-            className="animate-drawer-in flex h-full w-[540px] max-w-[95vw] flex-col border-l border-white/[0.08] bg-surface/95 backdrop-blur-md shadow-2xl"
+            className="animate-drawer-in flex h-full w-[880px] max-w-[95vw] flex-col border-l border-white/[0.08] bg-surface/95 backdrop-blur-md shadow-2xl"
           >
             <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
               <div className="flex items-center gap-2">
                 <Sliders className="h-4 w-4 text-muted" />
                 <h2 className="text-sm font-bold text-ink">
-                  Ajustes (Audio / Pantalla / MIDI / Actualizaciones)
+                  Ajustes
                 </h2>
               </div>
               <button

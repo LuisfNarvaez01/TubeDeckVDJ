@@ -8,6 +8,11 @@
  *
  * The host secret lives in `app_settings` (`requests.cloud`, private to the main process)
  * and is never sent to the renderer or logged.
+ *
+ * Linked to a business, it also tells the POS about the booth (`desk`): with a DJ in the
+ * booth, nothing; without one, the requests waiting for a decision (the POS approves or
+ * rejects them, `decide`) and load errors (`alert`). The POS's autopilot rules come back
+ * as `autopilot` and the hub applies them only while no DJ is in the booth.
  */
 import { z } from 'zod';
 import type { ChatMessage, CloudConnection, CloudRequestStatus, NowPlayingInfo } from '../../shared/types';
@@ -22,6 +27,7 @@ const SETTING_CLOUD = 'requests.cloud';
 const PING_MS = 30_000;
 const MAX_BACKOFF_MS = 60_000;
 const MAX_CHAT = 200;
+const DESK_PENDING = 30;
 export const MAX_CHAT_TEXT = 280;
 
 export interface MusicHttpResponse {
@@ -100,6 +106,7 @@ export class CloudMusicConnector implements RequestConnector {
   private pingTimer: unknown = null;
   private wanted = false;
   private chat: ChatMessage[] = [];
+  private lastDesk = '';
   private qrSvg: string | null = null;
   private qrPng: string | null = null;
   private readonly apiBase: string;
@@ -117,6 +124,12 @@ export class CloudMusicConnector implements RequestConnector {
     this.connection = this.stored ? 'offline' : 'unregistered';
     deps.hub.registerConnector(this);
     deps.hub.onPageChange(() => this.sendInfo());
+    deps.hub.onChange(() => this.sendDesk());
+  }
+
+  /** Linked to Lantify POS and connected: the POS can see the booth and chat. */
+  posLinked(): boolean {
+    return Boolean(this.stored?.business) && this.connection === 'online';
   }
 
   // ---------------------------------------------------------------- status
@@ -168,6 +181,23 @@ export class CloudMusicConnector implements RequestConnector {
       throw new Error('Código no válido o vencido. Genera uno nuevo en Lantify → Proyecta · música.');
     }
     if (res.status === 429) throw new Error('Demasiados intentos. Espera 15 minutos.');
+    await this.adopt(res, 'No se pudo vincular con Lantify POS.');
+    return this.getStatus();
+  }
+
+  /** Linked with the Lantify account Proyecta is signed in with: no code needed (v3.5). */
+  async linkWithAccount(licenseToken: string | null): Promise<CloudRequestStatus> {
+    if (!licenseToken) throw new Error('Entra con tu cuenta de Lantify para vincular sin código.');
+    let res: MusicHttpResponse;
+    try {
+      res = await this.deps.http(`${this.apiBase}/v1/music/link-license`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${licenseToken}` },
+        body: '{}'
+      });
+    } catch {
+      throw new Error('No hay conexión a internet. Revisa la red e intenta de nuevo.');
+    }
     await this.adopt(res, 'No se pudo vincular con Lantify POS.');
     return this.getStatus();
   }
@@ -363,7 +393,21 @@ export class CloudMusicConnector implements RequestConnector {
         this.startPing();
         this.sendInfo();
         this.pushOpenViews();
+        if (frame.autopilot) this.deps.hub.setAutopilot(frame.autopilot);
+        this.lastDesk = '';
+        this.sendDesk();
         this.emit();
+        return;
+      }
+      case 'autopilot':
+        this.deps.hub.setAutopilot(frame.rules);
+        return;
+      case 'decide': {
+        const id = typeof frame.id === 'string' ? frame.id.slice(0, 64) : '';
+        const action = frame.action === 'approve' || frame.action === 'reject' ? frame.action : null;
+        if (!id || !action) return;
+        const by = typeof frame.by === 'string' ? frame.by.replace(/\s+/g, ' ').trim().slice(0, 40) : 'Caja';
+        await this.deps.hub.remoteDecide('cloud', id, action, by);
         return;
       }
       case 'req':
@@ -406,6 +450,43 @@ export class CloudMusicConnector implements RequestConnector {
       const view = this.deps.hub.view('cloud', r.externalId);
       if (view) this.sendRaw({ t: 'view', view });
     }
+  }
+
+  // ---------------------------------------------------------------- the booth
+
+  /** What the POS sees of the booth; sent only when it changes and only when linked. */
+  private sendDesk(): void {
+    if (!this.stored?.business || this.connection !== 'online') return;
+    const desk = this.deps.hub.getDesk();
+    const pending = desk.djPresent
+      ? []
+      : this.deps.hub
+          .getRequests()
+          .filter((r) => r.origin === 'cloud' && r.state === 'pending' && !r.approvedBy)
+          .slice(-DESK_PENDING)
+          .map((r) => {
+            const t = r.candidates[r.candidateIndex] ?? r.candidates[0];
+            return {
+              id: r.externalId,
+              title: t?.title ?? r.query,
+              artist: t ? (t.artists?.[0] ?? t.channel) : undefined,
+              table: r.table || undefined,
+              guest: r.guest || undefined,
+              thumbnailUrl: t?.thumbnailUrl,
+              at: r.createdAt
+            };
+          });
+    const payload = JSON.stringify({ djPresent: desk.djPresent, pending });
+    if (payload === this.lastDesk) return;
+    this.lastDesk = payload;
+    this.sendRaw({ t: 'desk', desk: { djPresent: desk.djPresent, pending } });
+  }
+
+  /** A song failed to load or was skipped: the POS hears about it only when no DJ is in the booth. */
+  sendAlert(kind: 'load_failed' | 'skipped' | 'info', rawText: string): void {
+    if (this.deps.hub.getDesk().djPresent || !this.posLinked()) return;
+    const text = rawText.replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (text) this.sendRaw({ t: 'alert', alert: { kind, text } });
   }
 
   // ---------------------------------------------------------------- chat

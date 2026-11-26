@@ -1,4 +1,5 @@
 import { app, BrowserWindow, net, session } from 'electron';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { IPC_CHANNELS } from '../shared/ipcChannels';
@@ -13,6 +14,7 @@ import { DisplayWindowManager } from './services/DisplayWindowManager';
 import { HistoryAndCratesService } from './services/HistoryAndCratesService';
 import { LocalLibraryService } from './services/LocalLibraryService';
 import { createSongRequestsModule, type SongRequestsModule } from './services/songRequestsModule';
+import { LantifyAccountService } from './services/LantifyAccountService';
 import type { HostSocket } from './services/CloudMusicConnector';
 import { MixRecordingService } from './services/MixRecordingService';
 import { RecommendationEngine } from './services/RecommendationEngine';
@@ -82,6 +84,7 @@ let updaterService: AutoUpdaterService | null = null;
 let batchDownloaderService: BatchDownloadService | null = null;
 let recordingService: MixRecordingService | null = null;
 let songRequestsModule: SongRequestsModule | null = null;
+let accountService: LantifyAccountService | null = null;
 
 function buildContentSecurityPolicy(isDev: boolean): string {
   const scriptSrc = isDev ? "'self' 'unsafe-inline'" : "'self'";
@@ -245,6 +248,26 @@ app.whenReady().then(async () => {
     }
   });
   songRequestsModule = songRequests;
+  // Lantify account: Proyecta opens with it (or by itself when Lantify POS runs on this computer).
+  const account = new LantifyAccountService({
+    settings: db,
+    deviceName: os.hostname(),
+    http: async (url, init) => {
+      const res = await fetch(url, {
+        method: init.method,
+        headers: init.headers,
+        body: init.body,
+        signal: AbortSignal.timeout(init.timeoutMs ?? 15_000)
+      });
+      return { status: res.status, json: () => res.json() };
+    },
+    onChange: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.ACCOUNT_EVENT, status);
+      }
+    }
+  });
+  accountService = account;
   const exporter = new SessionExporter();
   const localLibrary = new LocalLibraryService(db);
   const recordings = new MixRecordingService(path.join(app.getPath('music'), 'Proyecta Grabaciones'));
@@ -288,6 +311,7 @@ app.whenReady().then(async () => {
     taste,
     recommender,
     songRequests,
+    account,
     recordings,
     network,
     mediaCache,
@@ -315,6 +339,7 @@ app.whenReady().then(async () => {
   updater.scheduleStartupCheck(8000);
   network.start();
   songRequests.start();
+  void account.start();
   // Re-export cookies (Google rotates them) and find out early if YouTube is blocking us.
   setTimeout(() => {
     void ytAuth
@@ -349,6 +374,7 @@ app.whenReady().then(async () => {
 app.on('will-quit', () => {
   void recordingService?.stopAll();
   void songRequestsModule?.stop();
+  accountService?.dispose();
   batchDownloaderService?.cancel();
   updaterService?.cancelStartupCheck();
   displayManager?.dispose();

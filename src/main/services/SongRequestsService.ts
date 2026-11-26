@@ -7,6 +7,8 @@
  */
 import { z } from 'zod';
 import type {
+  AutopilotRules,
+  DeskState,
   GuestPageSettings,
   GuestRequestView,
   NowPlayingInfo,
@@ -29,15 +31,28 @@ const SETTING_MODE = 'requests.mode';
 const SETTING_PREFS = 'requests.prefs';
 const SETTING_ITEMS = 'requests.items';
 const SETTING_PAGE = 'requests.page';
+const SETTING_DESK = 'requests.desk';
 const LEGACY_PREFS = 'lantify.prefs';
 const LEGACY_LOCAL = 'requests.local';
 
-export const DEFAULT_PAGE_SETTINGS: GuestPageSettings = { venueName: '', wifiName: '', qrOnScreen: true };
+export const DEFAULT_PAGE_SETTINGS: GuestPageSettings = { venueName: '', wifiName: '', qrOnScreen: true, logoDataUrl: '' };
+/** PNG, JPEG or WebP as a data URL; about 400 KB of image at most. */
+export const LOGO_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+export const MAX_LOGO_DATA_URL = 560_000;
+
+export const DEFAULT_AUTOPILOT: AutopilotRules = { enabled: false, maxPerHour: 12, maxPerTable: 3, skipOnLoadError: true };
+export const AutopilotRulesSchema = z.object({
+  enabled: z.boolean(),
+  maxPerHour: z.number().int().min(1).max(60),
+  maxPerTable: z.number().int().min(1).max(20),
+  skipOnLoadError: z.boolean()
+});
 
 export const GuestPageSettingsSchema = z.object({
   venueName: z.string().trim().max(60),
   wifiName: z.string().trim().max(60),
-  qrOnScreen: z.boolean()
+  qrOnScreen: z.boolean(),
+  logoDataUrl: z.union([z.literal(''), z.string().max(MAX_LOGO_DATA_URL).regex(LOGO_DATA_URL)])
 });
 
 /** Readable text for guests (never the internal code). */
@@ -76,6 +91,12 @@ export const SongRequestPrefsSchema = z.object({
   overlayEnabled: z.boolean(),
   autoPlay: z.boolean()
 });
+
+/** Autopilot rules from the relay, cleaned (anything odd falls back to the defaults). */
+export function cleanAutopilot(raw: unknown): AutopilotRules {
+  const parsed = AutopilotRulesSchema.safeParse(raw);
+  return parsed.success ? parsed.data : { ...DEFAULT_AUTOPILOT };
+}
 
 export interface SettingsStore {
   getSetting<T>(key: string, fallback: T): T;
@@ -163,6 +184,9 @@ export class SongRequestsService {
   private retryTimer: unknown = null;
   private readonly modeListeners: Array<(mode: SongRequestMode) => void> = [];
   private readonly pageListeners: Array<(page: GuestPageSettings) => void> = [];
+  private readonly changeListeners: Array<() => void> = [];
+  private djPresent: boolean;
+  private autopilot: AutopilotRules;
 
   constructor(private readonly deps: SongRequestsDeps) {
     this.settings = deps.settings;
@@ -190,6 +214,10 @@ export class SongRequestsService {
       ...this.settings.getSetting<Partial<GuestPageSettings>>(SETTING_PAGE, {})
     });
     this.page = page.success ? page.data : { ...DEFAULT_PAGE_SETTINGS };
+    const desk = this.settings.getSetting<Partial<{ djPresent: boolean; autopilot: unknown }>>(SETTING_DESK, {});
+    // A DJ is in the booth unless they said otherwise: the POS never gets surprise notifications.
+    this.djPresent = desk.djPresent !== false;
+    this.autopilot = cleanAutopilot(desk.autopilot);
     // Requests of the old polling connector cannot be answered any more.
     this.requests = this.requests.filter((r) => r.origin === 'cloud' || r.origin === 'local');
   }
@@ -208,6 +236,53 @@ export class SongRequestsService {
 
   onPageChange(listener: (page: GuestPageSettings) => void): void {
     this.pageListeners.push(listener);
+  }
+
+  /** Any change (requests, booth, page). Connectors use it to keep the relay up to date. */
+  onChange(listener: () => void): void {
+    this.changeListeners.push(listener);
+  }
+
+  // ---------------------------------------------------------------- the booth
+
+  getDesk(): Omit<DeskState, 'posLinked'> {
+    return { djPresent: this.djPresent, autopilot: { ...this.autopilot } };
+  }
+
+  setDjPresent(present: boolean): void {
+    if (present === this.djPresent) return;
+    this.djPresent = present;
+    this.persistDesk();
+    this.emit();
+  }
+
+  /** New rules from Lantify POS (through the relay). */
+  setAutopilot(raw: unknown): AutopilotRules {
+    this.autopilot = cleanAutopilot(raw);
+    this.persistDesk();
+    this.emit();
+    return { ...this.autopilot };
+  }
+
+  /**
+   * Lantify POS decided a request while no DJ was in the booth. A rejection happens here;
+   * an approval is marked so the renderer queues it (the queue lives there).
+   */
+  async remoteDecide(origin: SongRequestOrigin, externalId: string, action: 'approve' | 'reject', by: string): Promise<boolean> {
+    const req = this.requests.find((r) => r.origin === origin && r.externalId === externalId);
+    if (!req || req.state !== 'pending' || this.djPresent) return false;
+    if (action === 'reject') {
+      await this.decide(req.id, { action: 'reject', reason: 'DJ_DECLINED' });
+      return true;
+    }
+    req.approvedBy = by.slice(0, 40) || 'Caja';
+    this.persist();
+    this.emit();
+    return true;
+  }
+
+  private persistDesk(): void {
+    this.settings.setSetting(SETTING_DESK, { djPresent: this.djPresent, autopilot: this.autopilot });
   }
 
   /** What the guest's phone shows about one of its requests. */
@@ -444,5 +519,6 @@ export class SongRequestsService {
 
   private emit(): void {
     this.deps.onChange?.();
+    for (const l of this.changeListeners) l();
   }
 }

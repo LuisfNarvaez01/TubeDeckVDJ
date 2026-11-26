@@ -69,7 +69,8 @@ export function createSongRequestsModule(deps: SongRequestsModuleDeps): SongRequ
     cloud: cloud.getStatus(),
     local: local.getStatus(),
     requests: hub.getRequests(),
-    chat: cloud.getChat()
+    chat: cloud.getChat(),
+    desk: { ...hub.getDesk(), posLinked: cloud.posLinked() }
   });
 
   let applying: Promise<void> = Promise.resolve();

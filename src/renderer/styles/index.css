@@ -224,3 +224,109 @@
   outline: 1px solid rgb(255 255 255 / 0.35);
   outline-offset: 1px;
 }
+
+/* ── Apertura de Proyecta (v3.5) ─────────────────────────────────────────────
+   El logo se arma como suena: los surcos del disco salen en ondas desde el centro rosa,
+   la pantalla cian sube y sus barras laten como un ecualizador. Al entrar, la app se
+   abre en una onda circular desde el disco (no en cortina). */
+@layer components {
+  .px-splash {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(60% 55% at 50% 42%, rgba(255, 79, 168, 0.1) 0%, transparent 60%),
+      radial-gradient(70% 60% at 50% 70%, rgba(34, 225, 240, 0.07) 0%, transparent 65%),
+      var(--color-ground);
+    -webkit-app-region: drag;
+  }
+  .px-splash .px-ring {
+    transform-box: fill-box;
+    transform-origin: center;
+    opacity: 0;
+    animation: px-ring-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  .px-splash .px-ring:nth-of-type(2) { animation-delay: 0.08s; }
+  .px-splash .px-ring:nth-of-type(3) { animation-delay: 0.16s; }
+  .px-splash .px-ring:nth-of-type(4) { animation-delay: 0.24s; }
+  .px-splash .px-core {
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: scale(0);
+    animation: px-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.05s forwards;
+  }
+  .px-splash .px-screen {
+    transform-box: fill-box;
+    transform-origin: center bottom;
+    opacity: 0;
+    transform: translateY(18%);
+    animation: px-rise 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.42s forwards;
+  }
+  .px-splash .px-bar {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: px-eq 0.9s ease-in-out 1s infinite alternate;
+  }
+  .px-splash .px-bar:nth-of-type(2) { animation-delay: 1.12s; animation-duration: 0.7s; }
+  .px-splash .px-bar:nth-of-type(3) { animation-delay: 1.05s; animation-duration: 1.05s; }
+  .px-splash .px-bar:nth-of-type(4) { animation-delay: 1.2s; animation-duration: 0.8s; }
+  .px-splash .px-bar:nth-of-type(5) { animation-delay: 1.08s; animation-duration: 0.95s; }
+  .px-splash .px-spin {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: px-spin 6s linear 0.7s infinite;
+  }
+  /* Ondas que salen del disco mientras carga */
+  .px-splash .px-wave {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 9rem;
+    height: 9rem;
+    margin: -4.5rem 0 0 -4.5rem;
+    border-radius: 9999px;
+    border: 1px solid rgba(255, 79, 168, 0.35);
+    opacity: 0;
+    animation: px-wave 2.4s cubic-bezier(0.16, 1, 0.3, 1) 0.9s infinite;
+    pointer-events: none;
+  }
+  .px-splash .px-wave:nth-of-type(2) { animation-delay: 1.7s; border-color: rgba(34, 225, 240, 0.3); }
+  .px-splash .px-word {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(8px);
+    animation: px-word 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.75s forwards;
+  }
+  .px-splash .px-fade-in {
+    opacity: 0;
+    animation: px-fade 0.5s ease 1.1s forwards;
+  }
+  /* La app aparece en una onda desde el centro del disco, por encima de la apertura */
+  .px-reveal {
+    position: relative;
+    z-index: 101;
+    animation: px-reveal 0.95s cubic-bezier(0.65, 0, 0.35, 1) both;
+  }
+  @keyframes px-ring-in { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: scale(1); } }
+  @keyframes px-pop { to { transform: scale(1); } }
+  @keyframes px-rise { to { opacity: 1; transform: none; } }
+  @keyframes px-eq { from { transform: scaleY(1); } to { transform: scaleY(0.45); } }
+  @keyframes px-spin { to { transform: rotate(360deg); } }
+  @keyframes px-wave { 0% { opacity: 0.9; transform: scale(0.6); } 100% { opacity: 0; transform: scale(3.4); } }
+  @keyframes px-word { to { opacity: 1; filter: blur(0); transform: none; } }
+  @keyframes px-fade { to { opacity: 1; } }
+  @keyframes px-reveal {
+    0% { clip-path: circle(0% at 50% 42%); filter: brightness(1.4); }
+    100% { clip-path: circle(150% at 50% 42%); filter: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .px-splash *, .px-reveal {
+      animation-duration: 0.01s !important;
+      animation-delay: 0s !important;
+      animation-iteration-count: 1 !important;
+    }
+    .px-splash .px-wave { display: none; }
+  }
+}

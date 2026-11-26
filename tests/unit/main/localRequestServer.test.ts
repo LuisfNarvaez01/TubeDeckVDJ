@@ -64,7 +64,12 @@ describe('LocalRequestServer ("Solo red del local")', () => {
     const csp = res.headers.get('content-security-policy')!;
     expect(csp).toContain("default-src 'none'");
     expect(csp).toContain('https://i.ytimg.com');
-    expect(await res.text()).toContain('Pide tu canción');
+    const html = await res.text();
+    expect(html).toContain('Pide tu canción');
+    // Proyecta nav with its mark; Lantify puts its carta link in the slot
+    expect(html).toContain('class="pnav"');
+    expect(html).toContain('by Lantify');
+    expect(html).toContain('<!--nav-extra-->');
     expect((await fetch(`${base}/app.js`)).headers.get('content-type')).toContain('javascript');
     expect(status.qrSvgDataUrl).toMatch(/^data:image\/svg\+xml;base64,/);
     expect(status.qrPngDataUrl).toMatch(/^data:image\/png;base64,/);

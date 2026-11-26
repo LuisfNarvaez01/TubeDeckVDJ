@@ -140,11 +140,15 @@ export class OverlayCompositor {
   private osdTriggeredAtMs = -Infinity;
   /** "Pedida por la mesa 7" (Lantify request), shown for the first seconds of the song. */
   private requestBannerText = '';
+  /** Second line of the banner ("Mesa 7" when the guest also gave the table). */
+  private requestBannerDetail = '';
   private requestBannerAtMs = -Infinity;
   private requestBannerDurationMs = 10_000;
   /** Proyecta's own song-request QR (stand-alone mode), drawn in a free corner. */
   private requestQr: CanvasImageSource | null = null;
   private requestQrCaption = '';
+  private requestQrVenue = '';
+  private requestQrLogo: CanvasImageSource | null = null;
 
   private marqueeOffsetPx = 0;
   private lastMarqueeTickMs: number | null = null;
@@ -292,16 +296,31 @@ export class OverlayCompositor {
     this.osdTriggeredAtMs = -Infinity;
   }
 
-  triggerRequestBanner(text: string, nowMs: number, durationMs = 10_000): void {
-    this.requestBannerText = text.trim().slice(0, 60);
+  /**
+   * "Pedida por Ana": the guest's name when they gave one, otherwise the table
+   * ("la mesa 7"). `detail` is a quieter second line (the table, next to a name).
+   */
+  triggerRequestBanner(who: string, nowMs: number, durationMs = 10_000, detail = ''): void {
+    this.requestBannerText = who.trim().slice(0, 40);
+    this.requestBannerDetail = detail.trim().slice(0, 30);
     this.requestBannerAtMs = nowMs;
     this.requestBannerDurationMs = durationMs;
   }
 
-  /** Shows (or hides with null) the "pide tu canción" QR in a corner of Screen 2. */
-  setRequestQr(image: CanvasImageSource | null, caption = 'Pide tu canción'): void {
+  /**
+   * Shows (or hides with null) the "pide tu canción" QR card in a corner of Screen 2: the
+   * venue's logo (or its name) on top, the QR, the call to action and a small
+   * "Proyecta · Lantify" signature.
+   */
+  setRequestQr(
+    image: CanvasImageSource | null,
+    caption = 'Pide tu canción',
+    venue: { name?: string; logo?: CanvasImageSource | null } = {}
+  ): void {
     this.requestQr = image;
     this.requestQrCaption = caption.trim().slice(0, 32);
+    this.requestQrVenue = (venue.name ?? '').trim().slice(0, 40);
+    this.requestQrLogo = venue.logo ?? null;
   }
 
   hasRequestQr(): boolean {
@@ -527,13 +546,18 @@ export class OverlayCompositor {
       drewAnything = true;
     }
 
-    // 5. Song-request QR (stand-alone mode): white tile with a caption, in a free corner
+    // 5. Song-request QR card: venue logo (or name), the QR, the call to action and a small
+    //    "Proyecta · Lantify" signature, in a free corner
     if (this.requestQr) {
       const size = Math.round(Math.min(this.width, this.height) * 0.2);
-      const pad = 8;
-      const captionH = this.requestQrCaption ? 26 : 0;
+      const pad = 10;
       const boxW = size + pad * 2;
-      const boxH = size + pad * 2 + captionH;
+      const logo = this.requestQrLogo;
+      const venue = this.requestQrVenue;
+      const headH = logo ? Math.round(size * 0.26) + 8 : venue ? 26 : 0;
+      const captionH = this.requestQrCaption ? 24 : 0;
+      const footH = 16;
+      const boxH = pad + headH + size + captionH + footH + 6;
       const corner = this.requestQrCorner();
       let { x, y } = cornerCoords(corner, this.width, this.height, boxW, boxH);
       if (corner.startsWith('bottom') && this.config.marquee.enabled && this.config.marquee.position === 'bottom') {
@@ -543,43 +567,118 @@ export class OverlayCompositor {
         y += 48;
       }
       ctx2d.save();
-      ctx2d.globalAlpha = 0.96;
+      ctx2d.shadowColor = 'rgba(0, 0, 0, 0.35)';
+      ctx2d.shadowBlur = 18;
       ctx2d.fillStyle = '#FFFFFF';
       ctx2d.beginPath();
-      ctx2d.roundRect(x, y, boxW, boxH, 10);
+      ctx2d.roundRect(x, y, boxW, boxH, 14);
       ctx2d.fill();
+      ctx2d.shadowBlur = 0;
+      ctx2d.textAlign = 'center';
+      ctx2d.textBaseline = 'middle';
+      let cy = y + pad;
+      if (logo) {
+        // Logo fitted inside the header band, keeping its proportions
+        const lw = (logo as { width?: number }).width || 1;
+        const lh = (logo as { height?: number }).height || 1;
+        const maxW = boxW - pad * 2;
+        const maxH = headH - 8;
+        const scale = Math.min(maxW / lw, maxH / lh);
+        const dw = lw * scale;
+        const dh = lh * scale;
+        ctx2d.imageSmoothingEnabled = true;
+        ctx2d.drawImage(logo, x + (boxW - dw) / 2, cy + (maxH - dh) / 2, dw, dh);
+        cy += headH;
+      } else if (venue) {
+        ctx2d.fillStyle = '#0B0B0D';
+        ctx2d.font = '800 16px Inter, sans-serif';
+        ctx2d.fillText(venue, x + boxW / 2, cy + 10, boxW - pad * 2);
+        cy += headH;
+      }
       ctx2d.imageSmoothingEnabled = false;
-      ctx2d.drawImage(this.requestQr, x + pad, y + pad, size, size);
+      ctx2d.drawImage(this.requestQr, x + pad, cy, size, size);
+      cy += size;
       if (this.requestQrCaption) {
         ctx2d.fillStyle = '#0B0B0D';
         ctx2d.font = '700 15px Inter, sans-serif';
-        ctx2d.textBaseline = 'middle';
-        const tw = ctx2d.measureText(this.requestQrCaption).width;
-        ctx2d.fillText(this.requestQrCaption, x + (boxW - Math.min(tw, boxW - 12)) / 2, y + size + pad + captionH / 2 + 2, boxW - 12);
+        ctx2d.fillText(this.requestQrCaption, x + boxW / 2, cy + captionH / 2 + 2, boxW - 12);
+        cy += captionH;
       }
+      // Signature: tiny, grey, with the brand dots (pink record, cyan screen)
+      ctx2d.font = '600 9.5px Inter, sans-serif';
+      const sig = 'Proyecta · by Lantify';
+      const sw = ctx2d.measureText(sig).width;
+      const sx = x + boxW / 2 - sw / 2;
+      const sy = cy + footH / 2;
+      ctx2d.fillStyle = '#FF4FA8';
+      ctx2d.beginPath();
+      ctx2d.arc(sx - 10, sy, 2.5, 0, Math.PI * 2);
+      ctx2d.fill();
+      ctx2d.fillStyle = '#22E1F0';
+      ctx2d.beginPath();
+      ctx2d.arc(sx - 4, sy, 2.5, 0, Math.PI * 2);
+      ctx2d.fill();
+      ctx2d.fillStyle = '#6B6B76';
+      ctx2d.fillText(sig, x + boxW / 2 + 3, sy, boxW - 24);
       ctx2d.restore();
       drewAnything = true;
     }
 
-    // 6. Song request banner: a pill above the OSD slot, bottom-left
+    // 6. Song request banner, above the OSD slot (bottom-left): a dark glass card with a
+    //    cyan→pink edge, a small live equaliser, "PEDIDA POR" and the guest's name
     if (this.isRequestBannerVisible(nowMs)) {
       const t = nowMs - this.requestBannerAtMs;
-      const alpha = Math.max(0, Math.min(1, t / 350, (this.requestBannerDurationMs - t) / 450));
+      const enter = Math.min(1, t / 420);
+      const ease = 1 - Math.pow(1 - enter, 3);
+      const alpha = Math.max(0, Math.min(1, t / 300, (this.requestBannerDurationMs - t) / 450));
       ctx2d.save();
       ctx2d.globalAlpha = alpha;
-      ctx2d.font = '600 20px Inter, sans-serif';
-      ctx2d.textBaseline = 'middle';
-      const textW = ctx2d.measureText(this.requestBannerText).width;
-      const boxH = 42;
-      const boxW = Math.min(this.width - 64, textW + 40);
-      const x = 32;
+      ctx2d.textBaseline = 'alphabetic';
+      ctx2d.font = '800 26px Inter, sans-serif';
+      const nameW = ctx2d.measureText(this.requestBannerText).width;
+      ctx2d.font = '700 12px Inter, sans-serif';
+      const label = this.requestBannerDetail ? `PEDIDA POR  ·  ${this.requestBannerDetail.toUpperCase()}` : 'PEDIDA POR';
+      const labelW = ctx2d.measureText(label).width;
+      const boxH = 68;
+      const iconW = 56;
+      const boxW = Math.min(this.width - 64, Math.max(nameW, labelW) + iconW + 36);
+      const x = 32 - (1 - ease) * 40;
       const y = this.height - 74 - 58 - boxH - 14;
-      ctx2d.fillStyle = 'rgba(8, 9, 12, 0.88)';
+      // Card
+      ctx2d.fillStyle = 'rgba(8, 9, 12, 0.9)';
       ctx2d.beginPath();
-      ctx2d.roundRect(x, y, boxW, boxH, boxH / 2);
+      ctx2d.roundRect(x, y, boxW, boxH, 16);
       ctx2d.fill();
+      // Brand edge
+      const edge = ctx2d.createLinearGradient(x, y, x, y + boxH);
+      edge.addColorStop(0, '#22E1F0');
+      edge.addColorStop(1, '#FF4FA8');
+      ctx2d.fillStyle = edge;
+      ctx2d.beginPath();
+      ctx2d.roundRect(x, y, 5, boxH, [16, 0, 0, 16]);
+      ctx2d.fill();
+      // Live equaliser in a round badge
+      const cx = x + 18 + 18;
+      const cyc = y + boxH / 2;
+      ctx2d.fillStyle = 'rgba(255, 79, 168, 0.16)';
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cyc, 18, 0, Math.PI * 2);
+      ctx2d.fill();
+      ctx2d.fillStyle = '#FF4FA8';
+      for (let i = 0; i < 4; i += 1) {
+        const h = 6 + Math.abs(Math.sin(nowMs / 170 + i * 1.3)) * 12;
+        ctx2d.beginPath();
+        ctx2d.roundRect(cx - 9 + i * 5, cyc - h / 2, 3, h, 1.5);
+        ctx2d.fill();
+      }
+      // Text
+      const tx = x + iconW + 8;
+      ctx2d.fillStyle = '#22E1F0';
+      ctx2d.font = '700 12px Inter, sans-serif';
+      ctx2d.fillText(label, tx, y + 26, boxW - iconW - 24);
       ctx2d.fillStyle = '#F8FAFC';
-      ctx2d.fillText(this.requestBannerText, x + 20, y + boxH / 2 + 1, boxW - 40);
+      ctx2d.font = '800 26px Inter, sans-serif';
+      ctx2d.fillText(this.requestBannerText, tx, y + 54, boxW - iconW - 24);
       ctx2d.restore();
       drewAnything = true;
     }
